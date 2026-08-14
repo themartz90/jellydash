@@ -5,11 +5,13 @@
     const dialog = document.querySelector('[data-release-dialog]');
 
     if (!root || !openButton || !openLabel || !dialog || typeof dialog.showModal !== 'function') {
+        document.dispatchEvent(new CustomEvent('jellydash:release-dialog-settled'));
         return;
     }
 
     const version = String(root.dataset.appVersion || '').trim();
     if (!/^\d+\.\d+\.\d+$/.test(version)) {
+        document.dispatchEvent(new CustomEvent('jellydash:release-dialog-settled'));
         return;
     }
 
@@ -21,10 +23,15 @@
     const closeButtons = dialog.querySelectorAll('[data-release-close]');
 
     if (!versionLabel || !title || !summary || !highlights || !links || closeButtons.length === 0) {
+        settled();
         return;
     }
 
     const storageKey = 'jellydash.release-highlights.seen.' + version;
+
+    function settled() {
+        document.dispatchEvent(new CustomEvent('jellydash:release-dialog-settled'));
+    }
 
     function wasSeen() {
         try {
@@ -102,11 +109,6 @@
         openButton.addEventListener('click', () => {
             dialog.showModal();
         });
-
-        if (payload.auto_show && !wasSeen()) {
-            rememberSeen();
-            dialog.showModal();
-        }
     }
 
     closeButtons.forEach((button) => {
@@ -131,9 +133,20 @@
             return response.json();
         })
         .then((payload) => {
-            if (validPayload(payload)) {
-                render(payload);
+            if (!validPayload(payload)) {
+                settled();
+                return;
             }
+
+            render(payload);
+            if (payload.auto_show && !wasSeen()) {
+                rememberSeen();
+                dialog.addEventListener('close', settled, { once: true });
+                dialog.showModal();
+                return;
+            }
+
+            settled();
         })
-        .catch(() => {});
+        .catch(() => settled());
 }());

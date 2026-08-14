@@ -1,0 +1,10 @@
+2023-12-03 15:20:49.2801629	0e394f8a9bc64abeba29f63cdc7a12a0	634a03fb052a65d75c47ea2cd7080d05	AudioBook	Sample Book-01 Chapter 1	DirectPlay	Jellyfin Android	Pixel 8	174
+2023-12-04 21:13:05.7987873	0e394f8a9bc64abeba29f63cdc7a12a0	39a0947d67b322cdd58788d1dff5567b	Movie	Sample Movie (2018)	Transcode (v:h264 a:direct)	Android TV	Living Room	127
+2023-12-06 20:03:14.231805	e6f86694d1604ca0a335d497effd8e2b	78f8162ea997c4da87ea42a58ef8aa30	Movie	Another Film (2015)	DirectPlay	Jellyfin Media Player	Office PC	5949
+2024-01-06 21:09:13.4694399	e6f86694d1604ca0a335d497effd8e2b	31b295c96d33b76afd711814cb86fdef	Episode	Game of Thrones - s01e01 - Winter Is Coming	DirectPlay	Jellyfin Media Player	Office PC	138
+2024-02-02 22:03:58.7711796	0e394f8a9bc64abeba29f63cdc7a12a0	3587dc68386d793021400cbd62db0cd8	TvChannel	M6	Transcode (v:h264 a:aac)	Android TV	Living Room	153
+2024-02-05 19:47:27.8223976	e6f86694d1604ca0a335d497effd8e2b	645c984e3615a7fb7dc7453c5462b86e	Movie	Rango	Transcode (v:direct a:aac)	Jellyfin Web	Edge Chromium	2084
+2024-02-06 20:13:06.0974398	e6f86694d1604ca0a335d497effd8e2b	046d83f11891d3d80f6d1f27668a8668	Movie	The Gentlemen	Transcode (v:direct a:direct)	Jellyfin Web	Edge Chromium	155
+incomplete-line	only-eight-fields	item	Movie	Title	DirectPlay	Web	Device
+2024-02-07 10:00:00.0000000	0e394f8a9bc64abeba29f63cdc7a12a0	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	Movie	Skipped Zero	DirectPlay	Web	Device	0
+2024-02-08 11:00:00.0000000	0e394f8a9bc64abeba29f63cdc7a12a0	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	Movie	Too Short	DirectPlay	Web	Device	119

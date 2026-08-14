@@ -3,7 +3,7 @@
 {% block dashboard_header %}
     <div class="header-copy">
         <h1>History</h1>
-        <p>{% if summary.shown > 0 %}Showing {{ summary.from }}-{{ summary.to }} of {{ summary.filtered_total }} plays{% else %}Showing 0 of {{ summary.filtered_total }} plays{% endif %}</p>
+        <p data-history-summary>{% if summary.shown > 0 %}Showing {{ summary.from }}-{{ summary.to }} of {{ summary.filtered_total }} plays{% else %}Showing 0 of {{ summary.filtered_total }} plays{% endif %}</p>
     </div>
     <form class="filter-bar" method="get" action="/history">
         <label class="search-control">
@@ -18,10 +18,9 @@
         </select>
         <select name="library" aria-label="Library">
             <option value="" {{ filters.library == '' ? 'selected' : '' }}>All libraries</option>
-            <option value="Movies" {{ filters.library == 'Movies' ? 'selected' : '' }}>Movies</option>
-            <option value="TV Shows" {{ filters.library == 'TV Shows' ? 'selected' : '' }}>TV Shows</option>
-            <option value="Music" {{ filters.library == 'Music' ? 'selected' : '' }}>Music</option>
-            <option value="Videos" {{ filters.library == 'Videos' ? 'selected' : '' }}>Videos</option>
+            {% for library in libraries %}
+                <option value="{{ library }}" {{ filters.library == library ? 'selected' : '' }}>{{ library }}</option>
+            {% endfor %}
         </select>
         <select name="range" aria-label="Range">
             <option value="7" {{ filters.range == '7' ? 'selected' : '' }}>Last 7 days</option>
@@ -33,21 +32,32 @@
 {% endblock %}
 
 {% block dashboard_content %}
-    {% if groups is empty %}
-        {% include "history/_empty.twig" %}
-    {% else %}
-        {% include "history/_pager.twig" %}
-        {% for group in groups %}
-            {% include "history/_day_group.twig" with { group: group } %}
-        {% endfor %}
-        {% include "history/_pager.twig" %}
-    {% endif %}
+    <div class="history-import-banner" data-import-history-banner hidden>
+        <strong>Importing play history</strong>
+        <div class="import-progress">
+            <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-import-history-progress-track>
+                <span data-import-history-progress-bar style="width: 0%"></span>
+            </div>
+            <p class="import-progress-label" data-import-history-progress-label>Preparing…</p>
+        </div>
+    </div>
+    <div data-history-live>
+        {% if groups is empty %}
+            {% include "history/_empty.twig" %}
+        {% else %}
+            {% include "history/_pager.twig" %}
+            {% for group in groups %}
+                {% include "history/_day_group.twig" with { group: group } %}
+            {% endfor %}
+            {% include "history/_pager.twig" %}
+        {% endif %}
+    </div>
 {% endblock %}
 
 {% block dashboard_footer %}
     <div class="stat-cell">
         <span><i class="dot-purple"></i>Plays shown</span>
-        <strong>{% if summary.shown > 0 %}{{ summary.from }}-{{ summary.to }} <small>of {{ summary.filtered_total }}</small>{% else %}0 <small>of {{ summary.filtered_total }}</small>{% endif %}</strong>
+        <strong data-history-shown>{% if summary.shown > 0 %}{{ summary.from }}-{{ summary.to }} <small>of {{ summary.filtered_total }}</small>{% else %}0 <small>of {{ summary.filtered_total }}</small>{% endif %}</strong>
     </div>
     <div class="stat-cell">
         <span><i class="dot-green"></i>Unique users</span>

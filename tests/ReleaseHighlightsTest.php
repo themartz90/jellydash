@@ -42,4 +42,37 @@ final class ReleaseHighlightsTest extends TestCase
             $this->assertStringStartsWith('/themartz90/jellydash/', (string) ($parts['path'] ?? ''));
         }
     }
+
+    public function testReleaseScriptSignalsWhenStartupDialogIsSettled(): void
+    {
+        $js = (string) file_get_contents(ROOT_DIR . '/public/assets/js/release-highlights.js');
+        $importJs = (string) file_get_contents(ROOT_DIR . '/public/assets/js/history-import.js');
+
+        $this->assertStringContainsString('jellydash:release-dialog-settled', $js);
+        $this->assertStringContainsString('jellydash:release-dialog-settled', $importJs);
+        $this->assertStringContainsString('/api/playback-reporting.php', $importJs);
+        $this->assertStringContainsString('data-import-alt', $importJs);
+        $this->assertStringContainsString('payload.broken', $importJs);
+        $this->assertStringContainsString('X-CSRF-Token', $importJs);
+        $this->assertStringContainsString('method: \'POST\'', $importJs);
+        $this->assertStringContainsString('commit', $importJs);
+        $this->assertStringContainsString('application/x-ndjson', $importJs);
+        $this->assertStringContainsString('data-import-history-progress', $importJs);
+        $this->assertStringContainsString('data-history-live', $importJs);
+        $this->assertStringContainsString('Import ', $importJs);
+        $this->assertStringContainsString('Checking the import', $importJs);
+        $this->assertStringContainsString('Importing history', $importJs);
+
+        $api = (string) file_get_contents(ROOT_DIR . '/public/api/playback-reporting.php');
+        $this->assertStringContainsString('Csrf::checkHeader()', $api);
+        $this->assertStringContainsString('previewFile', $api);
+        $this->assertStringContainsString('previewPlugin', $api);
+        $this->assertStringContainsString('streamImport', $api);
+        $this->assertStringContainsString('application/x-ndjson', $api);
+
+        $dialog = (string) file_get_contents(TEMPLATES_DIR . '/_import_history_dialog.twig');
+        $this->assertStringContainsString('data-import-history-confirm', $dialog);
+        $this->assertStringContainsString('data-import-history-title', $dialog);
+        $this->assertStringContainsString('data-import-history-progress', $dialog);
+    }
 }

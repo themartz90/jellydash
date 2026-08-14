@@ -99,6 +99,56 @@ use Mk\Framework\View;
         exit;
     }
 
+    // PLAYBACK REPORTING IMPORT ---------------------------------------------------------------------------------------
+    if ($requests->requestIs("import-history") && $isPost) {
+        Csrf::check();
+
+        if (\Mk\Framework\Config::bool('AUTH_ENABLED', false) && !(new Authorization())->isUserLoggedIn()) {
+            http_response_code(403);
+            exit('Forbidden');
+        }
+
+        $redirectImport = static function (array $query): never {
+            header('Location: /settings?' . http_build_query($query));
+            exit;
+        };
+
+        $source = (string) ($_POST['import_source'] ?? 'file');
+        $importer = new \Mk\Framework\Jellyfin\PlaybackReportingImporter();
+        set_time_limit(120);
+
+        try {
+            if ($source === 'plugin') {
+                $result = $importer->importFromPlugin();
+            } else {
+                $file = $_FILES['playback_reporting'] ?? null;
+                $error = is_array($file) ? (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE) : UPLOAD_ERR_NO_FILE;
+                if ($error !== UPLOAD_ERR_OK || !is_array($file) || !is_uploaded_file((string) ($file['tmp_name'] ?? ''))) {
+                    $redirectImport(['import_error' => 'Drop a Playback Reporting TSV backup or playback_reporting.db first.']);
+                }
+
+                $size = (int) ($file['size'] ?? 0);
+                if ($size <= 0 || $size > 20 * 1024 * 1024) {
+                    $redirectImport(['import_error' => 'The file is empty or larger than 20 MB. Use the CLI for bigger backups.']);
+                }
+
+                $tmp = (string) $file['tmp_name'];
+                $result = $importer->importFile($tmp, false, $importer->detectKind($tmp));
+            }
+
+            if ($result['parsed'] === 0) {
+                $redirectImport(['import_error' => 'No playback rows found. Use a Playback Reporting TSV backup or playback_reporting.db.']);
+            }
+
+            $redirectImport([
+                'imported' => $result['inserted'],
+                'skipped' => $result['skipped'],
+            ]);
+        } catch (\Throwable $e) {
+            $redirectImport(['import_error' => mb_substr($e->getMessage(), 0, 180)]);
+        }
+    }
+
     // LOGOUT ----------------------------------------------------------------------------------------------------------
     if ($requests->authIs("logout") && $isPost) {
         Csrf::check();

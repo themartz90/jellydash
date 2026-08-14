@@ -2,6 +2,7 @@
 
 use Mk\Framework\Container;
 use Mk\Framework\Jellyfin\HistoryFilters;
+use Mk\Framework\Jellyfin\PlaybackReportingParser;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
 use PHPUnit\Framework\TestCase;
 
@@ -134,6 +135,8 @@ final class PlayHistoryRepositoryTest extends TestCase
         $this->assertSame(1, $this->repository->historyTotal(new HistoryFilters(user: 'PHPUnit Viewer', range: 'all'), $now));
         $this->assertContains('Jon Bell', $this->repository->users());
         $this->assertContains('PHPUnit Viewer', $this->repository->users());
+        $this->assertContains('Movies', $this->repository->libraries());
+        $this->assertContains('TV Shows', $this->repository->libraries());
     }
 
     public function testHistoryRowsHonorLimitAndOffset(): void
@@ -195,6 +198,180 @@ final class PlayHistoryRepositoryTest extends TestCase
         $this->assertCount(2, $rows);
         $this->assertSame('Second inserted', $rows[0]['item_name']);
         $this->assertSame('First inserted', $rows[1]['item_name']);
+    }
+
+    public function testImportHistoricalPlaysInsertsThenSkipsDuplicates(): void
+    {
+        $parser = new PlaybackReportingParser();
+        $rows = $parser->parseTsv(
+            "2024-01-01 12:00:00.1234567\t0e394f8a9bc64abeba29f63cdc7a12a0\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tMovie\tDune\tDirectPlay\tWeb\tChrome\t120"
+        );
+        $rows[0]['user_name'] = 'PHPUnit Import';
+
+        $first = $this->repository->importHistoricalPlays($rows);
+        $second = $this->repository->importHistoricalPlays($rows);
+
+        $this->assertSame(1, $first['inserted']);
+        $this->assertSame(0, $first['skipped']);
+        $this->assertSame(0, $second['inserted']);
+        $this->assertSame(1, $second['skipped']);
+
+        $stored = $this->dibi->select('*')
+            ->from('play_history')
+            ->where('session_key = %s', $rows[0]['session_key'])
+            ->fetch();
+
+        $this->assertNotNull($stored);
+        $this->assertSame('Dune', $stored['item_name']);
+        $this->assertSame(1, (int) $stored['notified']);
+        $this->assertSame(120, (int) $stored['watched_sec']);
+        $this->assertSame(0, (int) $stored['runtime_sec']);
+        $this->assertSame(0, (int) $stored['is_finished']);
+    }
+
+    public function testImportSkipsPlaysAlreadyRecordedByThePoller(): void
+    {
+        $itemId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+        $userId = '0e394f8a-9bc6-4abe-ba29-f63cdc7a12a0';
+        $started = new \DateTimeImmutable('2024-01-01 12:00:00');
+
+        $stream = $this->stream(400, 3600);
+        $stream['id'] = 'phpunit-live-overlap';
+        $stream['itemId'] = $itemId;
+        $stream['userId'] = $userId;
+        $this->repository->logActiveStreams([$stream], $started);
+
+        $parser = new PlaybackReportingParser();
+        $rows = $parser->parseTsv(
+            "2024-01-01 12:02:00.1234567\t0e394f8a9bc64abeba29f63cdc7a12a0\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tMovie\tDune\tDirectPlay\tWeb\tChrome\t180"
+        );
+        $rows[0]['runtime_sec'] = 3600;
+        $rows[0]['user_name'] = 'PHPUnit Import';
+
+        $result = $this->repository->importHistoricalPlays($rows);
+
+        $this->assertSame(0, $result['inserted']);
+        $this->assertSame(1, $result['skipped']);
+        $this->assertSame(
+            1,
+            (int) $this->dibi->select('COUNT(*)')->from('play_history')->where('item_id = %s', $itemId)->fetchSingle()
+        );
+        $this->assertSame(
+            0,
+            (int) $this->dibi->select('COUNT(*)')->from('play_history')
+                ->where('item_id = %s', $itemId)
+                ->where('session_key LIKE %s', PlaybackReportingParser::SESSION_PREFIX . '%')
+                ->fetchSingle()
+        );
+    }
+
+    public function testImportRepairsRuntimeOnDuplicateWhenStoredRuntimeIsZero(): void
+    {
+        $parser = new PlaybackReportingParser();
+        $rows = $parser->parseTsv(
+            "2024-01-01 12:00:00.1234567\t0e394f8a9bc64abeba29f63cdc7a12a0\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tMovie\tDune\tDirectPlay\tWeb\tChrome\t200"
+        );
+
+        $this->repository->importHistoricalPlays($rows);
+        $rows[0]['runtime_sec'] = 3600;
+        $rows[0]['watched_sec'] = 200;
+        $rows[0]['is_finished'] = 0;
+
+        $second = $this->repository->importHistoricalPlays($rows);
+        $this->assertSame(0, $second['inserted']);
+        $this->assertSame(1, $second['skipped']);
+
+        $stored = $this->dibi->select('*')
+            ->from('play_history')
+            ->where('session_key = %s', $rows[0]['session_key'])
+            ->fetch();
+
+        $this->assertSame(3600, (int) $stored['runtime_sec']);
+        $this->assertSame(200, (int) $stored['watched_sec']);
+        $this->assertSame(0, (int) $stored['is_finished']);
+    }
+
+    public function testImportRepairsGenericLibraryOnDuplicate(): void
+    {
+        $parser = new PlaybackReportingParser();
+        $rows = $parser->parseTsv(
+            "2024-01-09 12:00:00.1234567\t0e394f8a9bc64abeba29f63cdc7a12a0\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tEpisode\tShow - s1e1 - Pilot\tDirectPlay\tWeb\tChrome\t180"
+        );
+
+        $this->assertSame('TV Shows', $rows[0]['library']);
+        $this->assertSame(1, $this->repository->importHistoricalPlays($rows)['inserted']);
+
+        $rows[0]['library'] = 'Anime';
+        $second = $this->repository->importHistoricalPlays($rows);
+        $this->assertSame(0, $second['inserted']);
+        $this->assertSame(1, $second['skipped']);
+        $this->assertSame(1, $second['repaired']);
+
+        $stored = $this->dibi->select('library')
+            ->from('play_history')
+            ->where('session_key = %s', $rows[0]['session_key'])
+            ->fetch();
+
+        $this->assertSame('Anime', $stored['library']);
+    }
+
+    public function testImportDoesNotReplaceResolvedLibraryWithGenericLabel(): void
+    {
+        $parser = new PlaybackReportingParser();
+        $rows = $parser->parseTsv(
+            "2024-01-10 12:00:00.1234567\t0e394f8a9bc64abeba29f63cdc7a12a0\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tEpisode\tShow - s1e1 - Pilot\tDirectPlay\tWeb\tChrome\t180"
+        );
+        $rows[0]['library'] = 'Anime';
+        $this->assertSame(1, $this->repository->importHistoricalPlays($rows)['inserted']);
+
+        $rows[0]['library'] = 'TV Shows';
+        $second = $this->repository->importHistoricalPlays($rows);
+        $this->assertSame(0, $second['repaired']);
+
+        $stored = $this->dibi->select('library')
+            ->from('play_history')
+            ->where('session_key = %s', $rows[0]['session_key'])
+            ->fetch();
+
+        $this->assertSame('Anime', $stored['library']);
+    }
+
+    public function testDryRunCountsExistingDuplicatesWithoutWriting(): void
+    {
+        $parser = new PlaybackReportingParser();
+        $rows = $parser->parseTsv(
+            "2024-01-07 12:00:00.1234567\t0e394f8a9bc64abeba29f63cdc7a12a0\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tMovie\tDune\tDirectPlay\tWeb\tChrome\t120"
+        );
+
+        $this->assertSame(1, $this->repository->importHistoricalPlays($rows)['inserted']);
+        $dry = $this->repository->importHistoricalPlays($rows, true);
+
+        $this->assertSame(0, $dry['inserted']);
+        $this->assertSame(1, $dry['skipped']);
+        $this->assertSame(
+            1,
+            (int) $this->dibi->select('COUNT(*)')->from('play_history')->where('item_id = %s', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')->fetchSingle()
+        );
+    }
+
+    public function testImportReportsProgressAsRowsAreWritten(): void
+    {
+        $parser = new PlaybackReportingParser();
+        $rows = $parser->parseTsv(
+            "2024-01-08 12:00:00.1234567\t0e394f8a9bc64abeba29f63cdc7a12a0\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tMovie\tDune\tDirectPlay\tWeb\tChrome\t120"
+        );
+        $calls = [];
+
+        $this->repository->importHistoricalPlays($rows, false, static function (array $payload) use (&$calls): void {
+            $calls[] = $payload;
+        });
+
+        $this->assertNotEmpty($calls);
+        $last = $calls[array_key_last($calls)];
+        $this->assertSame('importing', $last['phase']);
+        $this->assertSame(1, $last['processed']);
+        $this->assertSame(1, $last['total']);
+        $this->assertSame(1, $last['inserted']);
     }
 
     /**
@@ -261,6 +438,9 @@ final class PlayHistoryRepositoryTest extends TestCase
     {
         $this->dibi->delete('play_history')
             ->where('session_key LIKE %s', 'phpunit-%')
+            ->execute();
+        $this->dibi->delete('play_history')
+            ->where('item_id = %s', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
             ->execute();
     }
 }

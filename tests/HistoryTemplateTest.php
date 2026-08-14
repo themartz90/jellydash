@@ -24,6 +24,10 @@ final class HistoryTemplateTest extends TestCase
             $template
         );
         $this->assertStringContainsString('history/_pager.twig', $template);
+        $this->assertStringContainsString('data-import-history-banner', $template);
+        $this->assertStringContainsString('data-history-live', $template);
+        $this->assertStringContainsString('{% for library in libraries %}', $template);
+        $this->assertStringNotContainsString('option value="Movies"', $template);
     }
 
     public function testHistoryRowsUseSharedAvatarPartial(): void

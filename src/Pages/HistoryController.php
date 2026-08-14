@@ -38,6 +38,7 @@ final class HistoryController extends Controller
             'summary' => $this->summary($rows, $totalFiltered, $repository->totalRows(), $filters->offset),
             'pager' => $this->pager($page, $pages, $filters),
             'users' => $repository->users(),
+            'libraries' => $repository->libraries(),
             'filters' => [
                 'search' => $filters->search,
                 'user' => $filters->user,

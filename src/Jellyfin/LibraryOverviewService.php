@@ -58,14 +58,31 @@ final class LibraryOverviewService
         }
 
         $historyRows = $this->historyRows();
-        $libraries = [];
+        $scanned = [];
+        $itemLibrary = [];
 
         foreach ($folders as $folder) {
             try {
-                $libraries[] = $this->libraryCard($client, $folder, $historyRows);
+                $meta = is_array($folder['DashboardMeta'] ?? null) ? $folder['DashboardMeta'] : [];
+                $id = (string) ($folder['Id'] ?? '');
+                $kind = (string) ($meta['kind'] ?? 'mixed');
+                $items = $this->mediaItems($client, $id, $kind);
+                $actualName = (string) ($folder['DashboardName'] ?? ($meta['display'] ?? ''));
+                foreach ($items as $item) {
+                    $itemId = $this->normalizedItemId((string) ($item['Id'] ?? ''));
+                    if ($itemId !== '') {
+                        $itemLibrary[$itemId] = $actualName;
+                    }
+                }
+                $scanned[] = ['folder' => $folder, 'items' => $items];
             } catch (\Throwable) {
                 continue;
             }
+        }
+
+        $libraries = [];
+        foreach ($scanned as $entry) {
+            $libraries[] = $this->libraryCard($client, $entry['folder'], $entry['items'], $historyRows, $itemLibrary);
         }
 
         return [
@@ -258,14 +275,7 @@ final class LibraryOverviewService
     private function historyRows(): array
     {
         try {
-            return ($this->history ?? new PlayHistoryRepository())->rowsForLibraries([
-                'TV Shows',
-                'Movies',
-                'Stand-Up',
-                'Stand-Up Comedy',
-                'Anime',
-                'PPV & Events',
-            ]);
+            return ($this->history ?? new PlayHistoryRepository())->rowsForLibraries([]);
         } catch (\Throwable) {
             return [];
         }
@@ -273,10 +283,12 @@ final class LibraryOverviewService
 
     /**
      * @param array<string, mixed> $folder
+     * @param array<int, array<string, mixed>> $items
      * @param array<int, \Dibi\Row> $historyRows
+     * @param array<string, string> $itemLibrary
      * @return array<string, mixed>
      */
-    private function libraryCard(JellyfinClient $client, array $folder, array $historyRows): array
+    private function libraryCard(JellyfinClient $client, array $folder, array $items, array $historyRows, array $itemLibrary): array
     {
         /** @var array<string, string> $meta */
         $meta = $folder['DashboardMeta'];
@@ -284,9 +296,9 @@ final class LibraryOverviewService
         $name = (string) $meta['display'];
         $kind = (string) $meta['kind'];
         $accent = (string) $meta['accent'];
-        $items = $this->mediaItems($client, $id, $kind);
+        $actualName = (string) ($folder['DashboardName'] ?? $name);
         $breakdown = $this->breakdown($client, $id, $kind, $accent);
-        $libraryHistory = $this->libraryHistory($historyRows, $name, (string) ($folder['DashboardName'] ?? $name));
+        $libraryHistory = $this->libraryHistory($historyRows, $name, $actualName, $itemLibrary);
         $totalSeconds = 0;
         $totalBytes = 0;
         $totalFiles = count($items);
@@ -401,18 +413,30 @@ final class LibraryOverviewService
     }
 
     /**
-     * @param array<int, \Dibi\Row> $rows
+     * Plays whose item still lives in this library, or whose stored library
+     * name matches when the item is gone (deleted / no longer in Jellyfin).
+     *
+     * @param array<int, \Dibi\Row|array<string, mixed>> $rows
+     * @param array<string, string> $itemLibrary normalized item id => library name
      * @return array{plays: int, watch_sec: int, last_activity: string, last_played: string, last_user: string}
      */
-    private function libraryHistory(array $rows, string $displayName, string $actualName): array
+    public function libraryHistory(array $rows, string $displayName, string $actualName, array $itemLibrary = []): array
     {
         $plays = 0;
         $watchSec = 0;
         $last = null;
+        $wanted = array_map(
+            static fn (string $name): string => mb_strtolower($name),
+            array_values(array_filter([$displayName, $actualName], static fn (string $name): bool => $name !== ''))
+        );
 
         foreach ($rows as $row) {
-            $library = (string) ($row['library'] ?? '');
-            if (!in_array($library, [$displayName, $actualName], true)) {
+            $resolved = $this->resolvedLibraryName(
+                (string) ($row['item_id'] ?? ''),
+                (string) ($row['library'] ?? ''),
+                $itemLibrary,
+            );
+            if (!in_array(mb_strtolower($resolved), $wanted, true)) {
                 continue;
             }
 
@@ -591,5 +615,26 @@ final class LibraryOverviewService
     private function comma(int $value): string
     {
         return number_format($value);
+    }
+
+    /**
+     * Prefer the library that currently owns the item; fall back to the name
+     * stored on the play (type-based import labels, deleted items).
+     *
+     * @param array<string, string> $itemLibrary
+     */
+    public function resolvedLibraryName(string $itemId, string $storedLibrary, array $itemLibrary): string
+    {
+        $key = $this->normalizedItemId($itemId);
+        if ($key !== '' && isset($itemLibrary[$key])) {
+            return $itemLibrary[$key];
+        }
+
+        return $storedLibrary;
+    }
+
+    private function normalizedItemId(string $id): string
+    {
+        return strtolower(str_replace('-', '', trim($id)));
     }
 }

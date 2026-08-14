@@ -1,0 +1,28 @@
+<dialog class="release-dialog" data-import-history-dialog aria-labelledby="import-history-title" aria-describedby="import-history-summary">
+    <section class="release-dialog-card">
+        <button class="release-dialog-close" type="button" data-import-history-close aria-label="Close import history">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M6 6l12 12"></path>
+                <path d="M18 6L6 18"></path>
+            </svg>
+        </button>
+
+        <span class="release-dialog-kicker">Playback Reporting</span>
+        <h2 id="import-history-title" data-import-history-title>Import your Jellyfin history?</h2>
+        <p id="import-history-summary" class="release-dialog-summary" data-import-history-summary>The Playback Reporting plugin is still installed. Jellydash can copy that history so History and Statistics are not empty. Imported plays never trigger notifications.</p>
+
+        <div class="import-progress" data-import-history-progress hidden>
+            <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-import-history-progress-track>
+                <span data-import-history-progress-bar style="width: 0%"></span>
+            </div>
+            <p class="import-progress-label" data-import-history-progress-label>Preparing…</p>
+        </div>
+
+        <form class="release-dialog-actions" action="/settings?req=import-history" method="post" data-import-history-form>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="import_source" value="plugin">
+            <button type="submit" class="release-dialog-import" data-import-history-confirm>Import history</button>
+            <button class="release-dialog-dismiss" type="button" data-import-history-close>Not now</button>
+        </form>
+    </section>
+</dialog>

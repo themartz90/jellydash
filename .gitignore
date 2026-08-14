@@ -65,3 +65,6 @@ Thumbs.db
 
 # Internal notes and docs, never shipped
 /internal/
+
+# Local Playback Reporting backups (personal watch history)
+/PlaybackReportingBackup-*.tsv

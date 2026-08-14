@@ -61,7 +61,7 @@ The project is very young and in very active development.
 
 - **Now Playing.** Live cards for every active stream: artwork, user, quality, progress and the playback method (Direct Play, Remux or Transcode, including the reason why). Live TV channels from tuners like Tunarr show up too, with real program progress and a red on-air badge.
 
-- **History.** Every play gets recorded by a background poller, so history is complete even when nobody has the dashboard open. Search it, filter by user or library, and enjoy the poster art.
+- **History.** Every play gets recorded by a background poller, so history is complete even when nobody has the dashboard open. Search it, filter by user or library, and enjoy the poster art. Existing Jellyfin Playback Reporting backups can be imported from Settings or the CLI.
 
 - **Statistics.** Watch time trends, top users, clients, codecs and transcode reasons. There is a Trending strip for what is hot right now, and all-time Most Watched charts for both shows and movies.
 
@@ -248,6 +248,33 @@ AUTH_ADMIN_PASSWORD=pick-a-strong-one
 ```
 
 The password needs at least 8 characters. The admin user is created automatically on the next start. More users can be added with `docker compose exec app php bin/console.php user:add`.
+
+## Importing Playback Reporting history
+
+Jellydash only records plays from the moment it starts. If you already used the [Playback Reporting](https://github.com/jellyfin/jellyfin-plugin-playbackreporting) plugin, you can import that history.
+
+The plugin backup is a TSV file (no header row): Dashboard → Playback Reporting → Save Backup Data. You can also point at `playback_reporting.db` in the Jellyfin data folder, or pull live from the plugin API.
+
+From the Settings page, drop a TSV backup or `playback_reporting.db`. The file type is detected automatically. Jellydash counts the plays first, then asks you to confirm before writing anything. If the plugin is still installed, **Import from Jellyfin (API)** appears too. On first visit, with an empty history, Jellydash also offers that import after the What's new dialog.
+
+```bash
+docker compose cp PlaybackReportingBackup-YYYYMMDD-HHMMSS.tsv app:/tmp/history.tsv
+docker compose exec app php bin/console.php history:import /tmp/history.tsv
+```
+
+If the plugin is still installed on Jellyfin:
+
+```bash
+docker compose exec app php bin/console.php history:import --from-plugin
+```
+
+Preview without writing:
+
+```bash
+docker compose exec app php bin/console.php history:import /tmp/history.tsv --dry-run
+```
+
+User names are resolved via the Jellyfin `/Users` API (admin token). Media runtime is looked up from Jellyfin (`RunTimeTicks`) so the completion bar matches live history; plays are marked finished at 95% of that runtime, same as the poller. If an item no longer exists, runtime stays empty and the play is left unfinished. `PlayDuration` in the backup is session length, not playback position: a resume that ran 20 minutes shows 20 minutes watched, not 90% of the film. Dates are kept as the plugin recorded them (Jellyfin server local time). Plays shorter than 2 minutes are skipped. Each play is attached to the Jellyfin library that currently owns the item (from its file path); if the item is gone, the type is used as a fallback (Movie → Movies, Episode → TV Shows). Imported plays never trigger notifications. Re-importing skips duplicates, but will fill in a missing runtime and replace a generic library label if Jellyfin is reachable the second time.
 
 ## Good to know
 

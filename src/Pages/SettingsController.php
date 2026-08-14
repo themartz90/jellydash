@@ -9,6 +9,7 @@ use Mk\Framework\Config;
 use Mk\Framework\Controller;
 use Mk\Framework\Jellyfin\JellyfinClient;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
+use Mk\Framework\Main;
 
 /**
  * The Settings page: user preferences stored in the DB (AppSettings), as
@@ -74,6 +75,11 @@ final class SettingsController extends Controller
             'users' => $users,
             'ignored_users' => $ignoredUsers,
             'extra_ignored' => implode(', ', $extraIgnored),
+            'import' => [
+                'inserted' => max(0, (int) (Main::captureGetString('imported') ?? 0)),
+                'skipped' => max(0, (int) (Main::captureGetString('skipped') ?? 0)),
+                'error' => trim((string) (Main::captureGetString('import_error') ?? '')),
+            ],
         ]);
     }
 
