@@ -438,10 +438,7 @@ final class PlaybackStatisticsService
                 'user' => $user['user'],
                 'initials' => $this->initials((string) $user['user']),
                 'avatarBg' => $avatarBg,
-                'avatarUrl' => $this->avatars()->url(
-                    (string) $user['user_id'],
-                    (string) $user['user'],
-                ) ?? '',
+                'avatarUrl' => $this->avatars()->url((string) $user['user_id']) ?? '',
                 'color' => $color,
                 'watch' => $this->duration(((int) $user['min']) * 60),
                 'plays' => $this->comma((int) $user['plays']),
@@ -867,7 +864,7 @@ final class PlaybackStatisticsService
 
     private function avatars(): JellyfinUserAvatars
     {
-        return $this->avatars ??= new JellyfinUserAvatars($this->client);
+        return $this->avatars ??= new JellyfinUserAvatars();
     }
 
     private function initials(string $name): string

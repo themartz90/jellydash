@@ -168,7 +168,7 @@ final class HistoryController extends Controller
             'user' => $user,
             'initials' => $this->initials($user),
             'avatarBg' => $this->avatarBg($userId !== '' ? $userId : $user),
-            'avatarUrl' => $avatars->url($userId, $user) ?? '',
+            'avatarUrl' => $avatars->url($userId) ?? '',
             'title' => $itemType === 'Episode' && $seriesName !== '' ? $seriesName : $itemName,
             'sub' => $itemType === 'Episode'
                 ? trim((string) ($row['season_ep'] ?? '') . ' - ' . $itemName, ' -')

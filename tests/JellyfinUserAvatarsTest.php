@@ -36,29 +36,11 @@ final class JellyfinUserAvatarsTest extends TestCase
         $this->assertNull($avatars->url('user/1'));
     }
 
-    public function testUrlResolvesAMissingIdFromTheUserDirectory(): void
+    public function testUrlKeepsInitialsWhenTheUserIdIsMissing(): void
     {
         $avatars = new JellyfinUserAvatars();
-        $avatars->loadFrom([
-            [
-                'Id' => 'user-with-photo',
-                'Name' => 'Maya Okafor',
-            ],
-            [
-                'Id' => 'user-2',
-                'Name' => 'Sam',
-            ],
-        ]);
 
-        $this->assertSame(
-            '/api/image.php?user=user-with-photo&maxWidth=80',
-            $avatars->url('', 'Maya Okafor')
-        );
-        $this->assertSame(
-            '/api/image.php?user=user-2&maxWidth=80',
-            $avatars->url('', 'sam')
-        );
-        $this->assertNull($avatars->url('', 'Nobody'));
-        $this->assertNull($avatars->url('', ''));
+        $this->assertNull($avatars->url(''));
+        $this->assertNull($avatars->url(null));
     }
 }
