@@ -19,6 +19,10 @@ final class HistoryTemplateTest extends TestCase
             '{{ summary.from }}-{{ summary.to }} <small>of {{ summary.filtered_total }}</small>',
             $template
         );
+        $this->assertStringContainsString(
+            '0 <small>of {{ summary.filtered_total }}</small>',
+            $template
+        );
         $this->assertStringContainsString('history/_pager.twig', $template);
     }
 }

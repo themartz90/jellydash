@@ -47,7 +47,7 @@
 {% block dashboard_footer %}
     <div class="stat-cell">
         <span><i class="dot-purple"></i>Plays shown</span>
-        <strong>{{ summary.from }}-{{ summary.to }} <small>of {{ summary.filtered_total }}</small></strong>
+        <strong>{% if summary.shown > 0 %}{{ summary.from }}-{{ summary.to }} <small>of {{ summary.filtered_total }}</small>{% else %}0 <small>of {{ summary.filtered_total }}</small>{% endif %}</strong>
     </div>
     <div class="stat-cell">
         <span><i class="dot-green"></i>Unique users</span>
