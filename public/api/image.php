@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Dotenv\Dotenv;
 use Mk\Framework\Config;
 use Mk\Framework\Http\ImageContentType;
+use Mk\Framework\Http\UserAvatarResponse;
 use Mk\Framework\Log;
 
 define('ROOT_DIR', dirname(__DIR__, 2));
@@ -54,15 +55,15 @@ if ($userId !== '') {
     }
 
     $image = fetchJellyfinImage($url, $token, $verifySsl);
-    if ($image === null) {
-        header('Cache-Control: public, max-age=300');
-        http_response_code(404);
+    $response = UserAvatarResponse::fromImage($image);
+    header('Cache-Control: ' . $response['cacheControl']);
+    http_response_code($response['status']);
+    if ($response['body'] === null || $response['contentType'] === null) {
         exit;
     }
 
-    header('Content-Type: ' . $image['contentType']);
-    header('Cache-Control: public, max-age=3600');
-    echo $image['body'];
+    header('Content-Type: ' . $response['contentType']);
+    echo $response['body'];
     exit;
 }
 
