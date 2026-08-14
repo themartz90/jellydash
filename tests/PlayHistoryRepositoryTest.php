@@ -170,6 +170,33 @@ final class PlayHistoryRepositoryTest extends TestCase
         $this->assertSame('Middle', $pageTwo[0]['item_name']);
     }
 
+    public function testHistoryRowsBreakTimestampTiesByIdDesc(): void
+    {
+        $now = new \DateTimeImmutable('2026-06-19 12:00:00');
+        $user = 'PHPUnit History Tiebreak';
+        $startedAt = '2026-06-19 12:00:00';
+
+        $this->insertPlay([
+            'user_name' => $user,
+            'item_name' => 'First inserted',
+            'started_at' => $startedAt,
+        ]);
+        $this->insertPlay([
+            'user_name' => $user,
+            'item_name' => 'Second inserted',
+            'started_at' => $startedAt,
+        ]);
+
+        $rows = $this->repository->historyRows(new HistoryFilters(
+            user: $user,
+            range: 'all',
+        ), $now);
+
+        $this->assertCount(2, $rows);
+        $this->assertSame('Second inserted', $rows[0]['item_name']);
+        $this->assertSame('First inserted', $rows[1]['item_name']);
+    }
+
     /**
      * @return array<string, mixed>
      */

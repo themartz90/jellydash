@@ -218,6 +218,7 @@ final class PlayHistoryRepository
     {
         $selection = $this->filteredSelection($filters, $now)
             ->orderBy('started_at')->desc()
+            ->orderBy('id')->desc()
             ->limit($filters->limit)
             ->offset($filters->offset);
 
