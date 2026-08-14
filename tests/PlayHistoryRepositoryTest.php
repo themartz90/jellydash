@@ -139,23 +139,28 @@ final class PlayHistoryRepositoryTest extends TestCase
     public function testHistoryRowsHonorLimitAndOffset(): void
     {
         $now = new \DateTimeImmutable('2026-06-19 12:00:00');
+        $user = 'PHPUnit History Pager';
         $this->insertPlay([
             'session_key' => 'phpunit-page-a',
+            'user_name' => $user,
             'item_name' => 'Newest',
             'started_at' => '2026-06-19 12:00:00',
         ]);
         $this->insertPlay([
             'session_key' => 'phpunit-page-b',
+            'user_name' => $user,
             'item_name' => 'Middle',
             'started_at' => '2026-06-19 11:00:00',
         ]);
         $this->insertPlay([
             'session_key' => 'phpunit-page-c',
+            'user_name' => $user,
             'item_name' => 'Oldest',
             'started_at' => '2026-06-19 10:00:00',
         ]);
 
         $pageTwo = $this->repository->historyRows(new HistoryFilters(
+            user: $user,
             range: 'all',
             limit: 1,
             offset: 1,
