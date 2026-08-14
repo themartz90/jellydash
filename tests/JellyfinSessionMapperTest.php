@@ -35,6 +35,10 @@ final class JellyfinSessionMapperTest extends TestCase
         $this->assertSame('S3 - E8 - It Reaches Out', $stream['subtitle']);
         $this->assertSame('Maya Okafor', $stream['user']);
         $this->assertSame('MO', $stream['initials']);
+        $this->assertSame(
+            '/api/image.php?user=user-1&maxWidth=80&tag=maya-face',
+            $stream['avatarUrl']
+        );
         $this->assertSame('Living Room Shield - Android TV', $stream['deviceLine']);
         $this->assertSame('4K HEVC HDR', $stream['quality']);
         $this->assertTrue($stream['isTranscode']);
@@ -67,6 +71,7 @@ final class JellyfinSessionMapperTest extends TestCase
         $this->assertFalse($stream['isTranscode']);
         $this->assertTrue($stream['isDirect']);
         $this->assertSame('Direct Play', $stream['methodLabel']);
+        $this->assertSame('', $stream['avatarUrl']);
         $this->assertStringContainsString('/api/image.php?item=item-2&type=Backdrop', $stream['backdrop']);
     }
 
@@ -79,6 +84,7 @@ final class JellyfinSessionMapperTest extends TestCase
             'Id' => 'session-1',
             'UserId' => 'user-1',
             'UserName' => 'Maya Okafor',
+            'UserPrimaryImageTag' => 'maya-face',
             'Client' => 'Android TV',
             'DeviceName' => 'Living Room Shield',
             'PlayState' => [

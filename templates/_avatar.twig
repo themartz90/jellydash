@@ -1,0 +1,8 @@
+{% set avatar_initials = initials|default('U') %}
+{% set avatar_bg = bg|default('linear-gradient(135deg, #7c5cff, #b06bff)') %}
+{% set avatar_url = url|default('') %}
+<span class="watcher-avatar{% if large|default(false) %} is-large{% endif %}"
+    {% if bg is defined or avatar_url %}
+        style="background: {{ avatar_bg }}"
+    {% endif %}
+>{{ avatar_initials }}{% if avatar_url %}<img class="watcher-avatar-image" data-avatar-img src="{{ avatar_url }}" alt="">{% endif %}</span>

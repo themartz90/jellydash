@@ -120,6 +120,10 @@ final class JellyfinSessionMapper
             'subtitle' => $this->subtitle($item, $type),
             'user' => $user,
             'initials' => $this->initials($user),
+            'avatarUrl' => $this->avatarUrl(
+                (string) ($session['UserId'] ?? ''),
+                (string) ($session['UserPrimaryImageTag'] ?? ''),
+            ),
             'deviceLine' => trim((string) ($session['DeviceName'] ?? 'Unknown device') . ' - ' . (string) ($session['Client'] ?? 'Unknown client')),
             'quality' => $this->quality($item, $session, $isTranscode),
             'isTranscode' => $isTranscode,
@@ -664,6 +668,19 @@ final class JellyfinSessionMapper
         $device = (string) ($session['DeviceName'] ?? '');
 
         return trim($client . ($client !== '' && $device !== '' ? ' - ' : '') . $device) ?: 'Unknown session';
+    }
+
+    /**
+     * Sessions include UserPrimaryImageTag when the account has a photo.
+     * Skip the proxy otherwise so the poller does not 404 every 5 seconds.
+     */
+    private function avatarUrl(string $userId, string $imageTag): string
+    {
+        if (trim($imageTag) === '') {
+            return '';
+        }
+
+        return JellyfinUserAvatars::proxyUrl($userId, $imageTag) ?? '';
     }
 
     private function initials(string $name): string

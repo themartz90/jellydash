@@ -101,7 +101,7 @@
                 <div class="stats-user-list">
                     {% for user in stats.topUsers %}
                         <div class="stats-user-row">
-                            <span class="watcher-avatar" style="background: {{ user.avatarBg }}">{{ user.initials }}</span>
+                            {% include "_avatar.twig" with { initials: user.initials, bg: user.avatarBg, url: user.avatarUrl } only %}
                             <div>
                                 <p><strong>{{ user.user }}</strong><small>{{ user.watch }}</small></p>
                                 <span class="stats-track"><i style="width: {{ user.w }}; background: {{ user.color }}"></i></span>
@@ -281,7 +281,7 @@
             {% for user in stats.usersTable %}
                 <article class="stats-user-table-row">
                     <div class="stats-user-name">
-                        <span class="watcher-avatar" style="background: {{ user.avatarBg }}">{{ user.initials }}</span>
+                        {% include "_avatar.twig" with { initials: user.initials, bg: user.avatarBg, url: user.avatarUrl } only %}
                         <strong>{{ user.user }}</strong>
                     </div>
                     <span class="history-mono">{{ user.watch }}</span>

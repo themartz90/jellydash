@@ -30,6 +30,8 @@ final class PlaybackStatisticsService
     /** @var array<string, array<int, string>>|null Excluded-library locations, fetched once per render. */
     private ?array $locationsCache = null;
 
+    private ?JellyfinUserAvatars $avatars = null;
+
     /**
      * @return array<string, mixed>
      */
@@ -409,7 +411,15 @@ final class PlaybackStatisticsService
         foreach ($rows as $row) {
             $name = (string) ($row['user_name'] ?? 'Unknown user');
             $key = $name !== '' ? $name : 'Unknown user';
-            $users[$key] ??= ['user' => $key, 'min' => 0, 'plays' => 0];
+            $users[$key] ??= [
+                'user' => $key,
+                'user_id' => trim((string) ($row['user_id'] ?? '')),
+                'min' => 0,
+                'plays' => 0,
+            ];
+            if ($users[$key]['user_id'] === '') {
+                $users[$key]['user_id'] = trim((string) ($row['user_id'] ?? ''));
+            }
             $users[$key]['min'] += (int) floor(((int) $row['watched_sec']) / 60);
             $users[$key]['plays']++;
         }
@@ -422,11 +432,16 @@ final class PlaybackStatisticsService
             $color = self::COLORS[$index % count(self::COLORS)];
             $index++;
             $avg = (int) round((int) $user['min'] / max(1, (int) $user['plays']));
+            $avatarBg = 'linear-gradient(135deg,' . $color . ',#3b9eff)';
 
             return [
                 'user' => $user['user'],
                 'initials' => $this->initials((string) $user['user']),
-                'avatarBg' => 'linear-gradient(135deg,' . $color . ',#3b9eff)',
+                'avatarBg' => $avatarBg,
+                'avatarUrl' => $this->avatars()->url(
+                    (string) $user['user_id'],
+                    (string) $user['user'],
+                ) ?? '',
                 'color' => $color,
                 'watch' => $this->duration(((int) $user['min']) * 60),
                 'plays' => $this->comma((int) $user['plays']),
@@ -848,6 +863,11 @@ final class PlaybackStatisticsService
     private function comma(int $value): string
     {
         return number_format($value);
+    }
+
+    private function avatars(): JellyfinUserAvatars
+    {
+        return $this->avatars ??= new JellyfinUserAvatars($this->client);
     }
 
     private function initials(string $name): string

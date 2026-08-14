@@ -25,4 +25,13 @@ final class HistoryTemplateTest extends TestCase
         );
         $this->assertStringContainsString('history/_pager.twig', $template);
     }
+
+    public function testHistoryRowsUseSharedAvatarPartial(): void
+    {
+        $template = file_get_contents(TEMPLATES_DIR . '/history/_history_row.twig');
+
+        $this->assertIsString($template);
+        $this->assertStringContainsString('_avatar.twig', $template);
+        $this->assertStringContainsString('play.avatarUrl', $template);
+    }
 }

@@ -21,7 +21,7 @@
         </div>
 
         <div class="watcher-row">
-            <span class="watcher-avatar" style="background: {{ stream.avatarBg }}">{{ stream.initials }}</span>
+            {% include "_avatar.twig" with { initials: stream.initials, bg: stream.avatarBg, url: stream.avatarUrl } only %}
             <span>
                 <strong>{{ stream.user }}</strong>
                 <small>{{ stream.deviceLine }}</small>

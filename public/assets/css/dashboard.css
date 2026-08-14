@@ -1360,10 +1360,12 @@ svg {
 }
 
 .watcher-avatar {
+    position: relative;
     display: grid;
     flex: 0 0 30px;
     width: 30px;
     height: 30px;
+    overflow: hidden;
     place-items: center;
     color: #fff;
     font-size: 11px;
@@ -1371,6 +1373,24 @@ svg {
     border-radius: 999px;
     background: linear-gradient(135deg, #7c5cff, #b06bff);
     box-shadow: 0 2px 8px rgba(0, 0, 0, .45);
+}
+
+.watcher-avatar.has-image {
+    color: transparent;
+}
+
+.watcher-avatar-image {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: inherit;
+    opacity: 0;
+}
+
+.watcher-avatar.has-image .watcher-avatar-image {
+    opacity: 1;
 }
 
 .watcher-avatar.is-large,

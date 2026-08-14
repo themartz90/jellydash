@@ -81,6 +81,19 @@ final class JellyfinClient
     }
 
     /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function users(): array
+    {
+        $payload = $this->getJson('/Users');
+        if (!is_array($payload)) {
+            return [];
+        }
+
+        return array_values(array_filter($payload, 'is_array'));
+    }
+
+    /**
      * @param array<string, string|int|bool> $query
      */
     public function itemCount(array $query): int

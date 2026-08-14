@@ -43,9 +43,15 @@
     }
 
     function watcher(stream, large) {
+        const avatarUrl = stream.avatarUrl || '';
+        const avatarClass = 'watcher-avatar' + (large ? ' is-large' : '');
+        const img = avatarUrl
+            ? `<img class="watcher-avatar-image" data-avatar-img src="${escapeAttr(avatarUrl)}" alt="">`
+            : '';
+
         return `
             <div class="watcher-row ${large ? 'is-large' : ''}">
-                <span class="watcher-avatar" style="background: ${escapeAttr(stream.avatarBg || '')}">${escapeHtml(stream.initials || 'U')}</span>
+                <span class="${avatarClass}" style="background: ${escapeAttr(stream.avatarBg || '')}">${escapeHtml(stream.initials || 'U')}${img}</span>
                 <span>
                     <strong>${escapeHtml(stream.user || 'Unknown user')}</strong>
                     <small>${escapeHtml(stream.deviceLine || '')}</small>

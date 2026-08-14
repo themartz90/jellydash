@@ -6,6 +6,7 @@ namespace Mk\Framework\Pages;
 
 use Mk\Framework\Controller;
 use Mk\Framework\Jellyfin\HistoryFilters;
+use Mk\Framework\Jellyfin\JellyfinUserAvatars;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
 use Mk\Framework\Main;
 
@@ -108,6 +109,7 @@ final class HistoryController extends Controller
      */
     private function groups(array $rows): array
     {
+        $avatars = new JellyfinUserAvatars();
         $groups = [];
         $today = (new \DateTimeImmutable('today'))->format('Y-m-d');
         $yesterday = (new \DateTimeImmutable('yesterday'))->format('Y-m-d');
@@ -130,7 +132,7 @@ final class HistoryController extends Controller
                 ];
             }
 
-            $play = $this->rowView($row, $startedAt);
+            $play = $this->rowView($row, $startedAt, $avatars);
             $groups[$dayKey]['watch_sec'] += (int) $row['watched_sec'];
             $groups[$dayKey]['plays'][] = $play;
         }
@@ -149,7 +151,7 @@ final class HistoryController extends Controller
     /**
      * @return array<string, mixed>
      */
-    private function rowView(\Dibi\Row $row, \DateTimeImmutable $startedAt): array
+    private function rowView(\Dibi\Row $row, \DateTimeImmutable $startedAt, JellyfinUserAvatars $avatars): array
     {
         $itemType = (string) $row['item_type'];
         $isTranscode = (string) $row['play_method'] === 'Transcode';
@@ -158,11 +160,15 @@ final class HistoryController extends Controller
         $completion = $runtimeSec > 0 ? min(100, (int) round(($watchedSec / $runtimeSec) * 100)) : 0;
         $seriesName = (string) ($row['series_name'] ?? '');
         $itemName = (string) ($row['item_name'] ?? 'Unknown title');
+        $user = (string) ($row['user_name'] ?? 'Unknown user');
+        $userId = (string) ($row['user_id'] ?? '');
 
         return [
             'time' => $startedAt->format('H:i'),
-            'user' => (string) ($row['user_name'] ?? 'Unknown user'),
-            'initials' => $this->initials((string) ($row['user_name'] ?? 'Unknown user')),
+            'user' => $user,
+            'initials' => $this->initials($user),
+            'avatarBg' => $this->avatarBg($userId !== '' ? $userId : $user),
+            'avatarUrl' => $avatars->url($userId, $user) ?? '',
             'title' => $itemType === 'Episode' && $seriesName !== '' ? $seriesName : $itemName,
             'sub' => $itemType === 'Episode'
                 ? trim((string) ($row['season_ep'] ?? '') . ' - ' . $itemName, ' -')
@@ -239,6 +245,18 @@ final class HistoryController extends Controller
         }
 
         return substr($letters !== '' ? $letters : 'U', 0, 2);
+    }
+
+    private function avatarBg(string $seed): string
+    {
+        $gradients = [
+            'linear-gradient(135deg,#7c5cff,#b06bff)',
+            'linear-gradient(135deg,#f0913a,#f7b955)',
+            'linear-gradient(135deg,#1fb6a6,#34d8a6)',
+            'linear-gradient(135deg,#3b9eff,#6f7bff)',
+        ];
+
+        return $gradients[abs(crc32($seed)) % count($gradients)];
     }
 
     /**
