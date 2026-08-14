@@ -1,0 +1,15 @@
+{% if pager.pages > 1 %}
+    <nav class="history-pager" aria-label="History pages">
+        {% if pager.prev_url %}
+            <a class="history-pager-btn" href="{{ pager.prev_url }}">Previous</a>
+        {% else %}
+            <span class="history-pager-btn is-disabled">Previous</span>
+        {% endif %}
+        <span class="history-pager-status">Page {{ pager.page }} of {{ pager.pages }}</span>
+        {% if pager.next_url %}
+            <a class="history-pager-btn" href="{{ pager.next_url }}">Next</a>
+        {% else %}
+            <span class="history-pager-btn is-disabled">Next</span>
+        {% endif %}
+    </nav>
+{% endif %}

@@ -15,8 +15,18 @@ final class HistoryController extends Controller
     {
         $filters = $this->filters();
         $repository = new PlayHistoryRepository();
-        $rows = $repository->historyRows($filters);
         $totalFiltered = $repository->historyTotal($filters);
+        $page = $this->currentPage($totalFiltered, $filters->limit);
+        $filters = new HistoryFilters(
+            search: $filters->search,
+            user: $filters->user,
+            library: $filters->library,
+            range: $filters->range,
+            limit: $filters->limit,
+            offset: ($page - 1) * $filters->limit,
+        );
+        $rows = $repository->historyRows($filters);
+        $pages = max(1, (int) ceil($totalFiltered / max(1, $filters->limit)));
 
         $this->render('history/index', [
             'layout' => $this->layout([
@@ -24,7 +34,8 @@ final class HistoryController extends Controller
                 'page' => 'history',
             ]),
             'groups' => $this->groups($rows),
-            'summary' => $this->summary($rows, $totalFiltered, $repository->totalRows()),
+            'summary' => $this->summary($rows, $totalFiltered, $repository->totalRows(), $filters->offset),
+            'pager' => $this->pager($page, $pages, $filters),
             'users' => $repository->users(),
             'filters' => [
                 'search' => $filters->search,
@@ -48,6 +59,47 @@ final class HistoryController extends Controller
             library: trim((string) (Main::captureGetString('library') ?? '')),
             range: $range,
         );
+    }
+
+    private function currentPage(int $total, int $perPage): int
+    {
+        $page = (int) (Main::captureGetString('p') ?? '1');
+        if ($page < 1) {
+            $page = 1;
+        }
+
+        $pages = max(1, (int) ceil($total / max(1, $perPage)));
+
+        return min($page, $pages);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function pager(int $page, int $pages, HistoryFilters $filters): array
+    {
+        return [
+            'page' => $page,
+            'pages' => $pages,
+            'prev_url' => $page > 1 ? $this->historyUrl($filters, $page - 1) : '',
+            'next_url' => $page < $pages ? $this->historyUrl($filters, $page + 1) : '',
+        ];
+    }
+
+    private function historyUrl(HistoryFilters $filters, int $page): string
+    {
+        $query = array_filter([
+            'search' => $filters->search,
+            'user' => $filters->user,
+            'library' => $filters->library,
+            'range' => $filters->range !== '30' ? $filters->range : '',
+        ], static fn (string $value): bool => $value !== '');
+
+        if ($page > 1) {
+            $query['p'] = (string) $page;
+        }
+
+        return '/history' . ($query === [] ? '' : '?' . http_build_query($query));
     }
 
     /**
@@ -131,7 +183,7 @@ final class HistoryController extends Controller
      * @param array<int, \Dibi\Row> $rows
      * @return array<string, mixed>
      */
-    private function summary(array $rows, int $totalFiltered, int $totalRows): array
+    private function summary(array $rows, int $totalFiltered, int $totalRows, int $offset): array
     {
         $watchSec = 0;
         $users = [];
@@ -152,6 +204,8 @@ final class HistoryController extends Controller
 
         return [
             'shown' => $shown,
+            'from' => $shown === 0 ? 0 : $offset + 1,
+            'to' => $offset + $shown,
             'total' => $totalRows,
             'filtered_total' => $totalFiltered,
             'unique_users' => count($users),

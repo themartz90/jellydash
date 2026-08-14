@@ -136,6 +136,35 @@ final class PlayHistoryRepositoryTest extends TestCase
         $this->assertContains('PHPUnit Viewer', $this->repository->users());
     }
 
+    public function testHistoryRowsHonorLimitAndOffset(): void
+    {
+        $now = new \DateTimeImmutable('2026-06-19 12:00:00');
+        $this->insertPlay([
+            'session_key' => 'phpunit-page-a',
+            'item_name' => 'Newest',
+            'started_at' => '2026-06-19 12:00:00',
+        ]);
+        $this->insertPlay([
+            'session_key' => 'phpunit-page-b',
+            'item_name' => 'Middle',
+            'started_at' => '2026-06-19 11:00:00',
+        ]);
+        $this->insertPlay([
+            'session_key' => 'phpunit-page-c',
+            'item_name' => 'Oldest',
+            'started_at' => '2026-06-19 10:00:00',
+        ]);
+
+        $pageTwo = $this->repository->historyRows(new HistoryFilters(
+            range: 'all',
+            limit: 1,
+            offset: 1,
+        ), $now);
+
+        $this->assertCount(1, $pageTwo);
+        $this->assertSame('Middle', $pageTwo[0]['item_name']);
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -167,6 +196,33 @@ final class PlayHistoryRepositoryTest extends TestCase
             'isAudioDirect' => false,
             'transcodeReasons' => ['Audio codec not supported'],
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $overrides
+     */
+    private function insertPlay(array $overrides = []): int
+    {
+        $this->dibi->insert('play_history', array_merge([
+            'session_key' => 'phpunit-' . bin2hex(random_bytes(4)),
+            'user_id' => 'phpunit-user',
+            'user_name' => 'PHPUnit Viewer',
+            'item_id' => 'phpunit-item',
+            'item_type' => 'Movie',
+            'item_name' => 'Arrival',
+            'library' => 'Movies',
+            'play_method' => 'DirectPlay',
+            'client' => 'Web',
+            'device' => 'MacBook',
+            'watched_sec' => 600,
+            'runtime_sec' => 3600,
+            'started_at' => '2099-06-19 12:00:00',
+            'updated_at' => '2099-06-19 12:10:00',
+            'is_finished' => 0,
+            'notified' => 1,
+        ], $overrides))->execute();
+
+        return (int) $this->dibi->getInsertId();
     }
 
     private function cleanup(): void

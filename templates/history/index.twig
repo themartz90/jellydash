@@ -3,7 +3,7 @@
 {% block dashboard_header %}
     <div class="header-copy">
         <h1>History</h1>
-        <p>Showing {{ summary.shown }} of {{ summary.filtered_total }} plays</p>
+        <p>{% if summary.shown > 0 %}Showing {{ summary.from }}-{{ summary.to }} of {{ summary.filtered_total }} plays{% else %}Showing 0 of {{ summary.filtered_total }} plays{% endif %}</p>
     </div>
     <form class="filter-bar" method="get" action="/history">
         <label class="search-control">
@@ -36,16 +36,18 @@
     {% if groups is empty %}
         {% include "history/_empty.twig" %}
     {% else %}
+        {% include "history/_pager.twig" %}
         {% for group in groups %}
             {% include "history/_day_group.twig" with { group: group } %}
         {% endfor %}
+        {% include "history/_pager.twig" %}
     {% endif %}
 {% endblock %}
 
 {% block dashboard_footer %}
     <div class="stat-cell">
         <span><i class="dot-purple"></i>Plays shown</span>
-        <strong>{{ summary.shown }} <small>of {{ summary.filtered_total }}</small></strong>
+        <strong>{{ summary.from }}-{{ summary.to }} <small>of {{ summary.filtered_total }}</small></strong>
     </div>
     <div class="stat-cell">
         <span><i class="dot-green"></i>Unique users</span>

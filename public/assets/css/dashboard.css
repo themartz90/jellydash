@@ -1787,6 +1787,49 @@ svg {
     padding: 0 11px;
 }
 
+.history-pager {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin: 0 0 18px;
+}
+
+.history-pager:last-of-type {
+    margin: 22px 0 0;
+}
+
+.history-pager-status {
+    min-width: 7.5rem;
+    color: rgba(255, 255, 255, .58);
+    font-size: 13px;
+    font-weight: 700;
+    text-align: center;
+}
+
+.history-pager-btn {
+    min-height: 36px;
+    padding: 0 14px;
+    color: #e9e7f3;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 36px;
+    border: 1px solid rgba(255, 255, 255, .1);
+    border-radius: 9px;
+    background: rgba(255, 255, 255, .05);
+    text-decoration: none;
+}
+
+a.history-pager-btn:hover {
+    background: rgba(124, 92, 255, .18);
+    border-color: rgba(124, 92, 255, .4);
+}
+
+.history-pager-btn.is-disabled {
+    color: rgba(255, 255, 255, .32);
+    pointer-events: none;
+}
+
 .search-control span {
     color: rgba(255, 255, 255, .42);
     font-size: 12px;
