@@ -10,13 +10,12 @@ namespace Mk\Framework\Jellyfin;
  * line; Jellydash records live sessions, so imported rows get a synthetic
  * session key and are already-notified. PlayDuration is session length, not
  * media runtime: runtime_sec and is_finished are filled by the importer via
- * the Jellyfin API. Plays shorter than 2 minutes are dropped.
+ * the Jellyfin API. Recorded PlayDuration is kept as-is, including short
+ * sessions.
  */
 final class PlaybackReportingParser
 {
     public const SESSION_PREFIX = 'pr-';
-    public const MIN_WATCHED_SEC = 120;
-    private const MAX_WATCHED_SEC = 86400;
 
     /**
      * @return list<array<string, mixed>>
@@ -232,11 +231,11 @@ final class PlaybackReportingParser
         }
 
         $value = (int) $raw;
-        if ($value < self::MIN_WATCHED_SEC) {
+        if ($value < 0) {
             return null;
         }
 
-        return min($value, self::MAX_WATCHED_SEC);
+        return $value;
     }
 
     /**

@@ -21,7 +21,7 @@ final class PlaybackReportingParserTest extends TestCase
 
         $rows = $this->parser->parseTsv($contents);
 
-        $this->assertCount(7, $rows);
+        $this->assertCount(9, $rows);
 
         $movie = $rows[1];
         $this->assertSame('pr-', substr((string) $movie['session_key'], 0, 3));
@@ -169,12 +169,16 @@ final class PlaybackReportingParserTest extends TestCase
         $this->assertSame($first[0]['session_key'], $second[0]['session_key']);
     }
 
-    public function testParseTsvSkipsPlaysShorterThanTwoMinutes(): void
+    public function testParseTsvKeepsShortAndLongPlayDurations(): void
     {
+        $zero = "2024-01-01 12:00:00.1234567\t0e394f8a9bc64abeba29f63cdc7a12a0\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tMovie\tDune\tDirectPlay\tWeb\tChrome\t0";
         $short = "2024-01-01 12:00:00.1234567\t0e394f8a9bc64abeba29f63cdc7a12a0\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tMovie\tDune\tDirectPlay\tWeb\tChrome\t119";
-        $kept = "2024-01-01 12:00:00.1234567\t0e394f8a9bc64abeba29f63cdc7a12a0\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tMovie\tDune\tDirectPlay\tWeb\tChrome\t120";
+        $long = "2024-01-01 12:00:00.1234567\t0e394f8a9bc64abeba29f63cdc7a12a0\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tMovie\tDune\tDirectPlay\tWeb\tChrome\t90000";
+        $negative = "2024-01-01 12:00:00.1234567\t0e394f8a9bc64abeba29f63cdc7a12a0\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tMovie\tDune\tDirectPlay\tWeb\tChrome\t-12";
 
-        $this->assertSame([], $this->parser->parseTsv($short));
-        $this->assertCount(1, $this->parser->parseTsv($kept));
+        $this->assertSame(0, $this->parser->parseTsv($zero)[0]['watched_sec']);
+        $this->assertSame(119, $this->parser->parseTsv($short)[0]['watched_sec']);
+        $this->assertSame(90000, $this->parser->parseTsv($long)[0]['watched_sec']);
+        $this->assertSame([], $this->parser->parseTsv($negative));
     }
 }

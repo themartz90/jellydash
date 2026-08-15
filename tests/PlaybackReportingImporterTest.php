@@ -14,7 +14,7 @@ final class PlaybackReportingImporterTest extends TestCase
         $preview = (new PlaybackReportingImporter())->previewFile($path);
 
         $this->assertSame('tsv', $preview['kind']);
-        $this->assertSame(7, $preview['parsed']);
+        $this->assertSame(9, $preview['parsed']);
     }
 
     public function testPreviewFileDetectsSqliteWithoutParsingAsTsv(): void

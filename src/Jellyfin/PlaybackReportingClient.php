@@ -31,8 +31,7 @@ final class PlaybackReportingClient
         $limit = max(1, $limit);
         $offset = max(0, $offset);
         $sql = 'SELECT ' . self::ACTIVITY_COLUMNS
-            . ' FROM PlaybackActivity WHERE PlayDuration >= ' . PlaybackReportingParser::MIN_WATCHED_SEC
-            . ' ORDER BY DateCreated LIMIT ' . $limit . ' OFFSET ' . $offset;
+            . ' FROM PlaybackActivity ORDER BY DateCreated LIMIT ' . $limit . ' OFFSET ' . $offset;
 
         $payload = $this->customQuery($sql, 60);
 
@@ -49,7 +48,7 @@ final class PlaybackReportingClient
     public function count(): int
     {
         $payload = $this->customQuery(
-            'SELECT COUNT(*) FROM PlaybackActivity WHERE PlayDuration >= ' . PlaybackReportingParser::MIN_WATCHED_SEC,
+            'SELECT COUNT(*) FROM PlaybackActivity',
             30,
         );
 
