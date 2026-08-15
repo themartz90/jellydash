@@ -49,7 +49,7 @@ final class PlaybackReportingImporter
     {
         $path = $this->readablePath($path);
         $kind = $this->detectKind($path);
-        $rows = $this->parseFile($path, $kind);
+        $rows = $this->mergeSameDayPlays($this->parseFile($path, $kind));
 
         return [
             'parsed' => count($rows),
@@ -86,11 +86,7 @@ final class PlaybackReportingImporter
             ]);
         }
 
-        $parsed = 0;
-        $inserted = 0;
-        $skipped = 0;
-        $unresolved = 0;
-        $repaired = 0;
+        $merged = [];
         $offset = 0;
 
         while (true) {
@@ -99,26 +95,14 @@ final class PlaybackReportingImporter
                 break;
             }
 
-            $progress = $this->wrapPluginProgress($onProgress, $parsed, $inserted, $skipped, $total);
-            $result = $this->importRows($chunk['rows'], $dryRun, $progress, false, $userNames);
-            $parsed += $result['parsed'];
-            $inserted += $result['inserted'];
-            $skipped += $result['skipped'];
-            $unresolved += $result['unresolved'];
-            $repaired += $result['repaired'];
+            $merged = $this->mergeSameDayPlays(array_merge($merged, $chunk['rows']));
             $offset += PlaybackReportingClient::CHUNK_SIZE;
         }
 
-        if (!$dryRun && ($inserted > 0 || $repaired > 0)) {
-            $this->refreshLibraryOverview();
-        }
+        $result = $this->importRows($merged, $dryRun, $onProgress, true, $userNames);
+        unset($result['repaired']);
 
-        return [
-            'parsed' => $parsed,
-            'inserted' => $inserted,
-            'skipped' => $skipped,
-            'unresolved' => $unresolved,
-        ];
+        return $result;
     }
 
     /**
@@ -144,9 +128,9 @@ final class PlaybackReportingImporter
 
     /**
      * Fill runtime_sec from a map of item id => seconds. PlayDuration is
-     * session length, so a longer session is capped at the media runtime.
-     * is_finished uses the same 95% rule as live history. Missing items keep
-     * runtime_sec = 0.
+     * session length (or the summed length of same-day sessions) and is kept
+     * as recorded. is_finished uses the same 95% rule as live history.
+     * Missing items keep runtime_sec = 0.
      *
      * @param list<array<string, mixed>> $rows
      * @param array<string, int> $runtimes
@@ -165,9 +149,6 @@ final class PlaybackReportingImporter
         foreach ($rows as &$row) {
             $runtime = $lookup[$this->normalizedItemId((string) ($row['item_id'] ?? ''))] ?? 0;
             $watched = max(0, (int) ($row['watched_sec'] ?? 0));
-            if ($runtime > 0 && $watched > $runtime) {
-                $watched = $runtime;
-            }
 
             $finished = PlayHistoryRepository::isPlayFinished($watched, $runtime);
             $endedAt = $this->endedAt((string) ($row['started_at'] ?? ''), $watched);
@@ -180,6 +161,42 @@ final class PlaybackReportingImporter
         unset($row);
 
         return $rows;
+    }
+
+    /**
+     * Collapse sessions for the same user, item, and calendar day into one
+     * play. Watch time is summed; metadata comes from the earliest start.
+     *
+     * @param list<array<string, mixed>> $rows
+     * @return list<array<string, mixed>>
+     */
+    public function mergeSameDayPlays(array $rows): array
+    {
+        $groups = [];
+        $order = [];
+
+        foreach ($rows as $row) {
+            $key = $this->sameDayKey($row);
+            if ($key === '') {
+                $order[] = $row;
+                continue;
+            }
+
+            if (!isset($groups[$key])) {
+                $groups[$key] = $row;
+                $order[] = $key;
+                continue;
+            }
+
+            $groups[$key] = $this->combineSameDayPlays($groups[$key], $row);
+        }
+
+        $merged = [];
+        foreach ($order as $item) {
+            $merged[] = is_string($item) ? $groups[$item] : $item;
+        }
+
+        return $merged;
     }
 
     /**
@@ -246,7 +263,9 @@ final class PlaybackReportingImporter
         bool $refreshOverview = true,
         ?array $userNames = null,
     ): array {
-        $named = $this->parser->applyUserNames($rows, $userNames ?? $this->userNames());
+        $named = $this->mergeSameDayPlays(
+            $this->parser->applyUserNames($rows, $userNames ?? $this->userNames())
+        );
         if ($onProgress !== null && $refreshOverview) {
             $onProgress([
                 'phase' => 'preparing',
@@ -277,33 +296,35 @@ final class PlaybackReportingImporter
     }
 
     /**
-     * @param callable(array{phase: string, processed: int, total: int, inserted: int, skipped: int}): void|null $onProgress
-     * @return callable(array{phase: string, processed: int, total: int, inserted: int, skipped: int}): void|null
+     * @param array<string, mixed> $row
      */
-    private function wrapPluginProgress(
-        ?callable $onProgress,
-        int $parsed,
-        int $inserted,
-        int $skipped,
-        int $total,
-    ): ?callable {
-        if ($onProgress === null) {
-            return null;
+    private function sameDayKey(array $row): string
+    {
+        $day = substr((string) ($row['started_at'] ?? ''), 0, 10);
+        $item = $this->normalizedItemId((string) ($row['item_id'] ?? ''));
+        if ($item === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $day)) {
+            return '';
         }
 
-        return static function (array $payload) use ($onProgress, $parsed, $inserted, $skipped, $total): void {
-            if (($payload['phase'] ?? '') !== 'importing') {
-                return;
-            }
+        return $this->normalizedItemId((string) ($row['user_id'] ?? '')) . "\0" . $item . "\0" . $day;
+    }
 
-            $onProgress([
-                'phase' => 'importing',
-                'processed' => $parsed + (int) $payload['processed'],
-                'total' => $total,
-                'inserted' => $inserted + (int) $payload['inserted'],
-                'skipped' => $skipped + (int) $payload['skipped'],
-            ]);
-        };
+    /**
+     * @param array<string, mixed> $left
+     * @param array<string, mixed> $right
+     * @return array<string, mixed>
+     */
+    private function combineSameDayPlays(array $left, array $right): array
+    {
+        $leftStart = (string) ($left['started_at'] ?? '');
+        $rightStart = (string) ($right['started_at'] ?? '');
+        $earliest = $rightStart !== '' && ($leftStart === '' || $rightStart < $leftStart)
+            ? $right
+            : $left;
+        $earliest['watched_sec'] = max(0, (int) ($left['watched_sec'] ?? 0))
+            + max(0, (int) ($right['watched_sec'] ?? 0));
+
+        return $earliest;
     }
 
     /**

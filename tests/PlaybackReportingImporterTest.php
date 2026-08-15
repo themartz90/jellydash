@@ -75,10 +75,10 @@ final class PlaybackReportingImporterTest extends TestCase
         $this->assertNull($enriched[0]['ended_at']);
     }
 
-    public function testApplyRuntimesMarksFinishedAtNinetyFivePercentAndCapsWatchedSec(): void
+    public function testApplyRuntimesMarksFinishedAtNinetyFivePercentWithoutCappingWatchTime(): void
     {
         $finished = $this->parsedLine('2024-01-02 12:00:00.0000000', '22222222222222222222222222222222', 5700);
-        $capped = $this->parsedLine('2024-01-03 12:00:00.0000000', '33333333333333333333333333333333', 5000);
+        $longerThanRuntime = $this->parsedLine('2024-01-03 12:00:00.0000000', '33333333333333333333333333333333', 5000);
         $importer = new PlaybackReportingImporter();
 
         $finishedRow = $importer->applyRuntimes($finished, [$finished[0]['item_id'] => 6000])[0];
@@ -87,10 +87,10 @@ final class PlaybackReportingImporterTest extends TestCase
         $this->assertSame(1, $finishedRow['is_finished']);
         $this->assertSame('2024-01-02 13:35:00', $finishedRow['ended_at']);
 
-        $cappedRow = $importer->applyRuntimes($capped, [$capped[0]['item_id'] => 3600])[0];
-        $this->assertSame(3600, $cappedRow['watched_sec']);
-        $this->assertSame(3600, $cappedRow['runtime_sec']);
-        $this->assertSame(1, $cappedRow['is_finished']);
+        $longRow = $importer->applyRuntimes($longerThanRuntime, [$longerThanRuntime[0]['item_id'] => 3600])[0];
+        $this->assertSame(5000, $longRow['watched_sec']);
+        $this->assertSame(3600, $longRow['runtime_sec']);
+        $this->assertSame(1, $longRow['is_finished']);
     }
 
     public function testApplyRuntimesLeavesRuntimeEmptyWhenItemIsUnknown(): void
@@ -136,13 +136,84 @@ final class PlaybackReportingImporterTest extends TestCase
         $this->assertSame('Movies', $enriched[0]['library']);
     }
 
+    public function testMergeSameDayPlaysSumsWatchTimeAndKeepsEarliestSession(): void
+    {
+        $first = $this->parsedLine('2024-03-01 10:00:00.0000000', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 600);
+        $second = $this->parsedLine('2024-03-01 18:00:00.0000000', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 900);
+        $second[0]['client'] = 'Android';
+
+        $merged = (new PlaybackReportingImporter())->mergeSameDayPlays(array_merge($second, $first));
+
+        $this->assertCount(1, $merged);
+        $this->assertSame($first[0]['session_key'], $merged[0]['session_key']);
+        $this->assertSame('2024-03-01 10:00:00', $merged[0]['started_at']);
+        $this->assertSame(1500, $merged[0]['watched_sec']);
+        $this->assertSame('Web', $merged[0]['client']);
+    }
+
+    public function testMergeSameDayPlaysKeepsDifferentDaysAndUsersApart(): void
+    {
+        $dayOne = $this->parsedLine('2024-03-01 10:00:00.0000000', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 600);
+        $dayTwo = $this->parsedLine('2024-03-02 10:00:00.0000000', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 600);
+        $otherUser = $this->parsedLine(
+            '2024-03-01 11:00:00.0000000',
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            600,
+            'e6f86694d1604ca0a335d497effd8e2b',
+        );
+
+        $merged = (new PlaybackReportingImporter())->mergeSameDayPlays(array_merge($dayOne, $dayTwo, $otherUser));
+
+        $this->assertCount(3, $merged);
+        $this->assertSame(600, $merged[0]['watched_sec']);
+        $this->assertSame(600, $merged[1]['watched_sec']);
+        $this->assertSame(600, $merged[2]['watched_sec']);
+    }
+
+    public function testMergeSameDayThenApplyRuntimesKeepsSummedWatchTimeAndMarksFinished(): void
+    {
+        $first = $this->parsedLine('2024-03-03 09:00:00.0000000', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 2000);
+        $second = $this->parsedLine('2024-03-03 21:00:00.0000000', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 2500);
+        $importer = new PlaybackReportingImporter();
+        $merged = $importer->mergeSameDayPlays(array_merge($first, $second));
+        $enriched = $importer->applyRuntimes($merged, [$merged[0]['item_id'] => 3600]);
+
+        $this->assertCount(1, $enriched);
+        $this->assertSame(4500, $enriched[0]['watched_sec']);
+        $this->assertSame(3600, $enriched[0]['runtime_sec']);
+        $this->assertSame(1, $enriched[0]['is_finished']);
+    }
+
+    public function testPreviewFileCountsMergedSameDayRows(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'prtsv');
+        $this->assertNotFalse($path);
+
+        try {
+            $tsv = "2024-03-04 10:00:00.0000000\t0e394f8a9bc64abeba29f63cdc7a12a0\tcccccccccccccccccccccccccccccccc\tMovie\tDune\tDirectPlay\tWeb\tChrome\t600\n"
+                . "2024-03-04 20:00:00.0000000\t0e394f8a9bc64abeba29f63cdc7a12a0\tcccccccccccccccccccccccccccccccc\tMovie\tDune\tDirectPlay\tWeb\tChrome\t700\n"
+                . "2024-03-05 10:00:00.0000000\t0e394f8a9bc64abeba29f63cdc7a12a0\tcccccccccccccccccccccccccccccccc\tMovie\tDune\tDirectPlay\tWeb\tChrome\t800\n";
+            file_put_contents($path, $tsv);
+
+            $preview = (new PlaybackReportingImporter())->previewFile($path);
+            $this->assertSame('tsv', $preview['kind']);
+            $this->assertSame(2, $preview['parsed']);
+        } finally {
+            @unlink($path);
+        }
+    }
+
     /**
      * @return list<array<string, mixed>>
      */
-    private function parsedLine(string $startedAt, string $itemHex, int $duration): array
-    {
+    private function parsedLine(
+        string $startedAt,
+        string $itemHex,
+        int $duration,
+        string $userHex = '0e394f8a9bc64abeba29f63cdc7a12a0',
+    ): array {
         return (new PlaybackReportingParser())->parseTsv(
-            $startedAt . "\t0e394f8a9bc64abeba29f63cdc7a12a0\t" . $itemHex . "\tMovie\tDune\tDirectPlay\tWeb\tChrome\t" . $duration
+            $startedAt . "\t" . $userHex . "\t" . $itemHex . "\tMovie\tDune\tDirectPlay\tWeb\tChrome\t" . $duration
         );
     }
 }
