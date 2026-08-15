@@ -36,7 +36,7 @@ final class PlaybackReportingImporter
     {
         $path = $this->readablePath($path);
 
-        $result = $this->importRows($this->parseFile($path, $kind), $dryRun, $onProgress);
+        $result = $this->importRows($this->collectMergedPlays($this->iterateFile($path, $kind)), $dryRun, $onProgress);
         unset($result['repaired']);
 
         return $result;
@@ -49,10 +49,9 @@ final class PlaybackReportingImporter
     {
         $path = $this->readablePath($path);
         $kind = $this->detectKind($path);
-        $rows = $this->mergeSameDayPlays($this->parseFile($path, $kind));
 
         return [
-            'parsed' => count($rows),
+            'parsed' => count($this->collectMergedPlays($this->iterateFile($path, $kind))),
             'kind' => $kind,
         ];
     }
@@ -86,7 +85,8 @@ final class PlaybackReportingImporter
             ]);
         }
 
-        $merged = [];
+        $groups = [];
+        $order = [];
         $offset = 0;
 
         while (true) {
@@ -95,11 +95,13 @@ final class PlaybackReportingImporter
                 break;
             }
 
-            $merged = $this->mergeSameDayPlays(array_merge($merged, $chunk['rows']));
+            foreach ($chunk['rows'] as $row) {
+                $this->foldSameDayPlay($groups, $order, $row);
+            }
             $offset += PlaybackReportingClient::CHUNK_SIZE;
         }
 
-        $result = $this->importRows($merged, $dryRun, $onProgress, true, $userNames);
+        $result = $this->importRows($this->mergedFromGroups($groups, $order), $dryRun, $onProgress, true, $userNames);
         unset($result['repaired']);
 
         return $result;
@@ -176,27 +178,10 @@ final class PlaybackReportingImporter
         $order = [];
 
         foreach ($rows as $row) {
-            $key = $this->sameDayKey($row);
-            if ($key === '') {
-                $order[] = $row;
-                continue;
-            }
-
-            if (!isset($groups[$key])) {
-                $groups[$key] = $row;
-                $order[] = $key;
-                continue;
-            }
-
-            $groups[$key] = $this->combineSameDayPlays($groups[$key], $row);
+            $this->foldSameDayPlay($groups, $order, $row);
         }
 
-        $merged = [];
-        foreach ($order as $item) {
-            $merged[] = is_string($item) ? $groups[$item] : $item;
-        }
-
-        return $merged;
+        return $this->mergedFromGroups($groups, $order);
     }
 
     /**
@@ -230,24 +215,34 @@ final class PlaybackReportingImporter
     }
 
     /**
-     * @param 'tsv'|'sqlite'|null $kind
+     * @param iterable<int, array<string, mixed>> $rows
      * @return list<array<string, mixed>>
      */
-    private function parseFile(string $path, ?string $kind = null): array
+    private function collectMergedPlays(iterable $rows): array
+    {
+        $groups = [];
+        $order = [];
+        foreach ($rows as $row) {
+            $this->foldSameDayPlay($groups, $order, $row);
+        }
+
+        return $this->mergedFromGroups($groups, $order);
+    }
+
+    /**
+     * @param 'tsv'|'sqlite'|null $kind
+     * @return iterable<int, array<string, mixed>>
+     */
+    private function iterateFile(string $path, ?string $kind = null): iterable
     {
         $path = $this->readablePath($path);
         $kind ??= $this->detectKind($path);
 
         if ($kind === 'sqlite') {
-            return $this->parser->parseSqliteFile($path);
+            return $this->parser->iterateSqliteFile($path);
         }
 
-        $contents = file_get_contents($path);
-        if ($contents === false) {
-            throw new \RuntimeException('Could not read the Playback Reporting file.');
-        }
-
-        return $this->parser->parseTsv($contents);
+        return $this->parser->iterateTsvFile($path);
     }
 
     /**
@@ -266,33 +261,87 @@ final class PlaybackReportingImporter
         $named = $this->mergeSameDayPlays(
             $this->parser->applyUserNames($rows, $userNames ?? $this->userNames())
         );
+        $total = count($named);
         if ($onProgress !== null && $refreshOverview) {
             $onProgress([
                 'phase' => 'preparing',
                 'processed' => 0,
-                'total' => count($named),
+                'total' => $total,
                 'inserted' => 0,
                 'skipped' => 0,
             ]);
         }
 
-        $meta = $this->fetchItemMeta($named);
-        $enriched = $this->applyRuntimes($named, $this->runtimesFromMeta($meta));
-        $enriched = $this->applyLibraries($enriched, $this->librariesFromMeta($meta));
-        $unresolved = $this->unresolvedCount($enriched);
-        $result = $this->repository->importHistoricalPlays($enriched, $dryRun, $onProgress);
+        $inserted = 0;
+        $skipped = 0;
+        $repaired = 0;
+        $unresolved = 0;
+        $batchSize = PlaybackReportingClient::CHUNK_SIZE;
 
-        if ($refreshOverview && !$dryRun && ($result['inserted'] > 0 || $result['repaired'] > 0)) {
+        for ($offset = 0; $offset < $total; $offset += $batchSize) {
+            $batch = array_slice($named, $offset, $batchSize);
+            $meta = $this->fetchItemMeta($batch);
+            $enriched = $this->applyRuntimes($batch, $this->runtimesFromMeta($meta));
+            $enriched = $this->applyLibraries($enriched, $this->librariesFromMeta($meta));
+            $unresolved += $this->unresolvedCount($enriched);
+            $progress = $this->wrapBatchProgress($onProgress, $offset, $total, $inserted, $skipped);
+            $result = $this->repository->importHistoricalPlays($enriched, $dryRun, $progress);
+            $inserted += $result['inserted'];
+            $skipped += $result['skipped'];
+            $repaired += $result['repaired'];
+        }
+
+        if ($total === 0 && $onProgress !== null) {
+            $onProgress([
+                'phase' => 'importing',
+                'processed' => 0,
+                'total' => 0,
+                'inserted' => 0,
+                'skipped' => 0,
+            ]);
+        }
+
+        if ($refreshOverview && !$dryRun && ($inserted > 0 || $repaired > 0)) {
             $this->refreshLibraryOverview();
         }
 
         return [
-            'parsed' => count($enriched),
-            'inserted' => $result['inserted'],
-            'skipped' => $result['skipped'],
+            'parsed' => $total,
+            'inserted' => $inserted,
+            'skipped' => $skipped,
             'unresolved' => $unresolved,
-            'repaired' => $result['repaired'],
+            'repaired' => $repaired,
         ];
+    }
+
+    /**
+     * @param callable(array{phase: string, processed: int, total: int, inserted: int, skipped: int}): void|null $onProgress
+     * @return callable(array{phase: string, processed: int, total: int, inserted: int, skipped: int}): void|null
+     */
+    private function wrapBatchProgress(
+        ?callable $onProgress,
+        int $offset,
+        int $total,
+        int $inserted,
+        int $skipped,
+    ): ?callable {
+        if ($onProgress === null) {
+            return null;
+        }
+
+        return static function (array $payload) use ($onProgress, $offset, $total, $inserted, $skipped): void {
+            if (($payload['phase'] ?? '') !== 'importing') {
+                return;
+            }
+
+            $onProgress([
+                'phase' => 'importing',
+                'processed' => $offset + (int) $payload['processed'],
+                'total' => $total,
+                'inserted' => $inserted + (int) $payload['inserted'],
+                'skipped' => $skipped + (int) $payload['skipped'],
+            ]);
+        };
     }
 
     /**
@@ -307,6 +356,43 @@ final class PlaybackReportingImporter
         }
 
         return $this->normalizedItemId((string) ($row['user_id'] ?? '')) . "\0" . $item . "\0" . $day;
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $groups
+     * @param list<string|array<string, mixed>> $order
+     * @param array<string, mixed> $row
+     */
+    private function foldSameDayPlay(array &$groups, array &$order, array $row): void
+    {
+        $key = $this->sameDayKey($row);
+        if ($key === '') {
+            $order[] = $row;
+            return;
+        }
+
+        if (!isset($groups[$key])) {
+            $groups[$key] = $row;
+            $order[] = $key;
+            return;
+        }
+
+        $groups[$key] = $this->combineSameDayPlays($groups[$key], $row);
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $groups
+     * @param list<string|array<string, mixed>> $order
+     * @return list<array<string, mixed>>
+     */
+    private function mergedFromGroups(array $groups, array $order): array
+    {
+        $merged = [];
+        foreach ($order as $item) {
+            $merged[] = is_string($item) ? $groups[$item] : $item;
+        }
+
+        return $merged;
     }
 
     /**

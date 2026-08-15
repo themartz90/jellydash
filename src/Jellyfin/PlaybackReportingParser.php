@@ -26,11 +26,7 @@ final class PlaybackReportingParser
         $rows = [];
 
         foreach (preg_split("/\r\n|\n|\r/", $contents) ?: [] as $line) {
-            if (trim($line) === '') {
-                continue;
-            }
-
-            $mapped = $this->mapTokens(explode("\t", $line));
+            $mapped = $this->parseTsvLine($line);
             if ($mapped !== null) {
                 $rows[] = $mapped;
             }
@@ -40,9 +36,37 @@ final class PlaybackReportingParser
     }
 
     /**
-     * @return list<array<string, mixed>>
+     * @return \Generator<int, array<string, mixed>>
      */
-    public function parseSqliteFile(string $path): array
+    public function iterateTsvFile(string $path): \Generator
+    {
+        $handle = fopen($path, 'rb');
+        if ($handle === false) {
+            throw new \RuntimeException('Could not read the Playback Reporting file.');
+        }
+
+        try {
+            $first = true;
+            while (($line = fgets($handle)) !== false) {
+                if ($first) {
+                    $line = $this->stripBom($line);
+                    $first = false;
+                }
+
+                $mapped = $this->parseTsvLine($line);
+                if ($mapped !== null) {
+                    yield $mapped;
+                }
+            }
+        } finally {
+            fclose($handle);
+        }
+    }
+
+    /**
+     * @return \Generator<int, array<string, mixed>>
+     */
+    public function iterateSqliteFile(string $path): \Generator
     {
         if (!class_exists(\SQLite3::class)) {
             throw new \RuntimeException('The PHP sqlite3 extension is required to import a Playback Reporting database.');
@@ -68,18 +92,23 @@ final class PlaybackReportingParser
                 throw new \RuntimeException('Could not read PlaybackActivity from the SQLite file.');
             }
 
-            $rows = [];
             while ($row = $result->fetchArray(SQLITE3_NUM)) {
                 $mapped = $this->mapTokens(array_map(static fn (mixed $v): string => (string) $v, $row));
                 if ($mapped !== null) {
-                    $rows[] = $mapped;
+                    yield $mapped;
                 }
             }
-
-            return $rows;
         } finally {
             $sqlite->close();
         }
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function parseSqliteFile(string $path): array
+    {
+        return iterator_to_array($this->iterateSqliteFile($path), false);
     }
 
     /**
@@ -375,6 +404,16 @@ final class PlaybackReportingParser
         $hex = strtolower(str_replace('-', '', trim($id)));
 
         return preg_match('/^[0-9a-f]{32}$/', $hex) === 1 ? $hex : '';
+    }
+
+    private function parseTsvLine(string $line): ?array
+    {
+        $line = rtrim($line, "\r\n");
+        if (trim($line) === '') {
+            return null;
+        }
+
+        return $this->mapTokens(explode("\t", $line));
     }
 
     private function nullable(string $value): ?string

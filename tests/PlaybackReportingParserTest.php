@@ -41,6 +41,10 @@ final class PlaybackReportingParserTest extends TestCase
         $this->assertSame(0, $movie['runtime_sec']);
         $this->assertSame(0, $movie['is_finished']);
 
+        $fromFile = iterator_to_array($this->parser->iterateTsvFile(ROOT_DIR . '/tests/fixtures/playback-reporting.tsv'), false);
+        $this->assertCount(9, $fromFile);
+        $this->assertSame($rows[1]['session_key'], $fromFile[1]['session_key']);
+
         $sixDigitDate = $rows[2];
         $this->assertSame('2023-12-06 20:03:14', $sixDigitDate['started_at']);
         $this->assertSame('DirectPlay', $sixDigitDate['play_method']);
