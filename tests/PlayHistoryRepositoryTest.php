@@ -265,6 +265,43 @@ final class PlayHistoryRepositoryTest extends TestCase
         );
     }
 
+    public function testImportSkipsLiveOverlapWhenItemIdsDifferOnlyByDashes(): void
+    {
+        $undashedItemId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+        $started = new \DateTimeImmutable('2024-01-01 12:00:00');
+
+        $stream = $this->stream(400, 3600);
+        $stream['id'] = 'phpunit-live-overlap-undashed';
+        $stream['itemId'] = $undashedItemId;
+        $stream['userId'] = '0e394f8a9bc64abeba29f63cdc7a12a0';
+        $this->repository->logActiveStreams([$stream], $started);
+
+        $parser = new PlaybackReportingParser();
+        $rows = $parser->parseTsv(
+            "2024-01-01 12:02:00.1234567\t0e394f8a9bc64abeba29f63cdc7a12a0\t{$undashedItemId}\tMovie\tDune\tDirectPlay\tWeb\tChrome\t180"
+        );
+        $rows[0]['runtime_sec'] = 3600;
+        $rows[0]['user_name'] = 'PHPUnit Import';
+
+        $result = $this->repository->importHistoricalPlays($rows);
+
+        $this->assertSame('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', $rows[0]['item_id']);
+        $this->assertSame(0, $result['inserted']);
+        $this->assertSame(1, $result['skipped']);
+        $this->assertSame(
+            1,
+            (int) $this->dibi->select('COUNT(*)')->from('play_history')
+                ->where('session_key = %s', 'phpunit-live-overlap-undashed')
+                ->fetchSingle()
+        );
+        $this->assertSame(
+            0,
+            (int) $this->dibi->select('COUNT(*)')->from('play_history')
+                ->where('session_key LIKE %s', PlaybackReportingParser::SESSION_PREFIX . '%')
+                ->fetchSingle()
+        );
+    }
+
     public function testImportRepairsRuntimeOnDuplicateWhenStoredRuntimeIsZero(): void
     {
         $parser = new PlaybackReportingParser();

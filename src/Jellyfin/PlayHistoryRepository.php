@@ -533,7 +533,7 @@ final class PlayHistoryRepository
     private function livePlayKey(string $userId, string $itemId): string
     {
         $userKey = $this->normalizedUserKey($userId);
-        $itemKey = strtolower(trim($itemId));
+        $itemKey = $this->normalizedUserKey($itemId);
         if ($userKey === '' || $itemKey === '') {
             return '';
         }
