@@ -326,6 +326,46 @@ final class PlayHistoryRepositoryTest extends TestCase
         $this->assertSame(3600, (int) $stored['runtime_sec']);
         $this->assertSame(200, (int) $stored['watched_sec']);
         $this->assertSame(0, (int) $stored['is_finished']);
+        $this->assertNull($stored['ended_at']);
+    }
+
+    public function testImportRepairsEndedAtWhenRuntimeMakesThePlayFinished(): void
+    {
+        $parser = new PlaybackReportingParser();
+        $rows = $parser->parseTsv(
+            "2024-01-01 12:00:00.1234567\t0e394f8a9bc64abeba29f63cdc7a12a0\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tMovie\tDune\tDirectPlay\tWeb\tChrome\t5700"
+        );
+        $rows[0]['runtime_sec'] = 0;
+        $rows[0]['is_finished'] = 0;
+        $rows[0]['ended_at'] = null;
+
+        $this->repository->importHistoricalPlays($rows);
+        $this->assertSame(0, (int) $this->dibi->select('is_finished')
+            ->from('play_history')
+            ->where('session_key = %s', $rows[0]['session_key'])
+            ->fetchSingle());
+        $this->assertNull($this->dibi->select('ended_at')
+            ->from('play_history')
+            ->where('session_key = %s', $rows[0]['session_key'])
+            ->fetchSingle());
+
+        $rows[0]['runtime_sec'] = 6000;
+        $rows[0]['watched_sec'] = 5700;
+        $rows[0]['is_finished'] = 1;
+        $rows[0]['ended_at'] = '2024-01-01 13:35:00';
+
+        $second = $this->repository->importHistoricalPlays($rows);
+        $this->assertSame(1, $second['repaired']);
+
+        $stored = $this->dibi->select('*')
+            ->from('play_history')
+            ->where('session_key = %s', $rows[0]['session_key'])
+            ->fetch();
+
+        $this->assertSame(6000, (int) $stored['runtime_sec']);
+        $this->assertSame(1, (int) $stored['is_finished']);
+        $this->assertSame('2024-01-01 13:35:00', (string) $stored['ended_at']);
+        $this->assertSame('2024-01-01 13:35:00', (string) $stored['updated_at']);
     }
 
     public function testImportRepairsGenericLibraryOnDuplicate(): void

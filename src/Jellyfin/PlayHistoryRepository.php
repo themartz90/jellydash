@@ -396,7 +396,7 @@ final class PlayHistoryRepository
      */
     private function repairImportedRow(string $sessionKey, string $itemId, array $row): bool
     {
-        $existing = $this->db->select('id, runtime_sec, library')
+        $existing = $this->db->select('id, runtime_sec, library, started_at')
             ->from('play_history')
             ->where('session_key = %s', $sessionKey)
             ->where('item_id = %s', $itemId)
@@ -410,9 +410,13 @@ final class PlayHistoryRepository
         $incomingRuntime = max(0, (int) ($row['runtime_sec'] ?? 0));
         if ($incomingRuntime > 0 && (int) $existing['runtime_sec'] <= 0) {
             $watchedSec = max(0, (int) ($row['watched_sec'] ?? 0));
+            $finished = self::isPlayFinished($watchedSec, $incomingRuntime);
+            $endedAt = $this->endedAtFromStart((string) ($existing['started_at'] ?? ''), $watchedSec);
             $data['runtime_sec'] = $incomingRuntime;
             $data['watched_sec'] = $watchedSec;
-            $data['is_finished'] = self::isPlayFinished($watchedSec, $incomingRuntime) ? 1 : 0;
+            $data['is_finished'] = $finished ? 1 : 0;
+            $data['updated_at'] = $endedAt ?? ($row['updated_at'] ?? null);
+            $data['ended_at'] = $finished ? $endedAt : null;
         }
 
         $incomingLibrary = $this->nullableString($row['library'] ?? null);
@@ -443,6 +447,21 @@ final class PlayHistoryRepository
         }
 
         return in_array(mb_strtolower($stored), ['movies', 'tv shows', 'music', 'videos', 'live tv'], true);
+    }
+
+    private function endedAtFromStart(string $startedAt, int $watchedSec): ?string
+    {
+        if ($startedAt === '') {
+            return null;
+        }
+
+        try {
+            return (new \DateTimeImmutable($startedAt))
+                ->modify('+' . max(0, $watchedSec) . ' seconds')
+                ->format('Y-m-d H:i:s');
+        } catch (\Exception) {
+            return null;
+        }
     }
 
     /**
