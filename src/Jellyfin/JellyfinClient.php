@@ -128,119 +128,6 @@ final class JellyfinClient
     }
 
     /**
-     * Raw PlaybackActivity rows from the Playback Reporting plugin.
-     *
-     * @return list<array<string, mixed>>
-     */
-    public function playbackReportingActivity(?PlaybackReportingParser $parser = null): array
-    {
-        $parser ??= new PlaybackReportingParser();
-        $payload = $this->postJson(
-            '/user_usage_stats/submit_custom_query',
-            [
-                'CustomQueryString' => 'SELECT DateCreated, UserId, ItemId, ItemType, ItemName, PlaybackMethod, ClientName, DeviceName, PlayDuration FROM PlaybackActivity ORDER BY DateCreated',
-                'ReplaceUserId' => false,
-            ],
-            120,
-        );
-
-        if (!is_array($payload)) {
-            throw new \RuntimeException('Playback Reporting returned an invalid payload.');
-        }
-
-        $message = strtolower((string) ($payload['message'] ?? ''));
-        if ($message !== '' && !str_contains($message, 'query executed')) {
-            throw new \RuntimeException('Playback Reporting query failed: ' . (string) $payload['message']);
-        }
-
-        $columns = $payload['colums'] ?? $payload['columns'] ?? [];
-        $results = $payload['results'] ?? [];
-        if (!is_array($columns) || !is_array($results)) {
-            throw new \RuntimeException('Playback Reporting returned an invalid payload.');
-        }
-
-        return $parser->parseApiResults($columns, $results);
-    }
-
-    /**
-     * Number of PlaybackActivity rows the plugin can see. Used for the
-     * confirmation dialog; the actual import still maps each row.
-     */
-    public function playbackReportingCount(): int
-    {
-        $payload = $this->postJson(
-            '/user_usage_stats/submit_custom_query',
-            [
-                'CustomQueryString' => 'SELECT COUNT(*) FROM PlaybackActivity WHERE PlayDuration >= ' . PlaybackReportingParser::MIN_WATCHED_SEC,
-                'ReplaceUserId' => false,
-            ],
-            30,
-        );
-
-        if (!is_array($payload)) {
-            throw new \RuntimeException('Playback Reporting returned an invalid payload.');
-        }
-
-        $message = strtolower((string) ($payload['message'] ?? ''));
-        if ($message !== '' && !str_contains($message, 'query executed')) {
-            throw new \RuntimeException('Playback Reporting query failed: ' . (string) $payload['message']);
-        }
-
-        $results = $payload['results'] ?? [];
-        $first = is_array($results) ? ($results[0] ?? null) : null;
-        if (!is_array($first) || $first === []) {
-            throw new \RuntimeException('Playback Reporting returned an invalid count.');
-        }
-
-        return max(0, (int) reset($first));
-    }
-
-    /**
-     * Cheap probe: the Playback Reporting plugin is installed and answering.
-     */
-    public function playbackReportingAvailable(): bool
-    {
-        try {
-            $payload = $this->requestJson('/user_usage_stats/type_filter_list', 'GET', null, 4);
-
-            return is_array($payload);
-        } catch (\Throwable) {
-            return false;
-        }
-    }
-
-    /**
-     * Plugin presence plus whether CustomQuery can actually run.
-     * v17 on Jellyfin 10.11.9+ is a known broken combo; HTTP 500 is the fallback.
-     *
-     * @return array{available: bool, importable: bool, broken: bool, help_url: ?string}
-     */
-    public function playbackReportingStatus(bool $probeQuery = false): array
-    {
-        $available = $this->playbackReportingAvailable();
-        $jellyfinVersion = $available ? $this->jellyfinVersion() : null;
-        $pluginVersion = $available ? $this->playbackReportingPluginVersion() : null;
-        $customQueryOk = null;
-        if ($available && $probeQuery) {
-            $customQueryOk = $this->playbackReportingCustomQueryAlive();
-        }
-
-        $state = PlaybackReportingCompatibility::importState(
-            $available,
-            $jellyfinVersion,
-            $pluginVersion,
-            $customQueryOk,
-        );
-
-        return [
-            'available' => $available,
-            'importable' => $state['importable'],
-            'broken' => $state['broken'],
-            'help_url' => $state['broken'] ? PlaybackReportingCompatibility::HELP_URL : null,
-        ];
-    }
-
-    /**
      * Map of lowercased library name => its physical folder locations, from
      * Jellyfin's VirtualFolders. Used to map an item's path back to a library.
      * Cached per process. Requires an admin API token.
@@ -293,25 +180,6 @@ final class JellyfinClient
     }
 
     /**
-     * Media runtimes in seconds, keyed by item id without dashes. Missing or
-     * deleted items are omitted. Ids are fetched in batches.
-     *
-     * @param array<int, string> $ids
-     * @return array<string, int>
-     */
-    public function itemRuntimes(array $ids): array
-    {
-        $runtimes = [];
-        foreach ($this->itemImportMeta($ids) as $id => $meta) {
-            if ($meta['runtime_sec'] > 0) {
-                $runtimes[$id] = $meta['runtime_sec'];
-            }
-        }
-
-        return $runtimes;
-    }
-
-    /**
      * Runtime and real library name for items that still exist in Jellyfin.
      * Library is resolved from the item path against VirtualFolders. Missing
      * items are omitted; items with no matching folder keep library = ''.
@@ -334,7 +202,7 @@ final class JellyfinClient
         $librariesLoaded = false;
         $meta = [];
         foreach (array_chunk(array_values($unique), 100) as $chunk) {
-            $payload = $this->requestJson('/Items?' . http_build_query(
+            $payload = $this->getJson('/Items?' . http_build_query(
                 [
                     'Ids' => implode(',', $chunk),
                     'Fields' => 'RunTimeTicks,Path',
@@ -343,7 +211,7 @@ final class JellyfinClient
                 '',
                 '&',
                 PHP_QUERY_RFC3986
-            ), 'GET', null, 15);
+            ), 15);
 
             $items = is_array($payload) && is_array($payload['Items'] ?? null)
                 ? array_values(array_filter($payload['Items'], 'is_array'))
@@ -474,16 +342,16 @@ final class JellyfinClient
     /**
      * @return mixed
      */
-    private function getJson(string $path): mixed
+    public function getJson(string $path, int $timeout = 8): mixed
     {
-        return $this->requestJson($path);
+        return $this->requestJson($path, 'GET', null, $timeout);
     }
 
     /**
      * @param array<string, mixed> $payload
      * @return mixed
      */
-    private function postJson(string $path, array $payload, int $timeout = 8): mixed
+    public function postJson(string $path, array $payload, int $timeout = 8): mixed
     {
         return $this->requestJson($path, 'POST', $payload, $timeout);
     }
@@ -548,82 +416,8 @@ final class JellyfinClient
         }
     }
 
-    private function jellyfinVersion(): ?string
-    {
-        try {
-            $payload = $this->requestJson('/System/Info/Public', 'GET', null, 4);
-            if (!is_array($payload)) {
-                return null;
-            }
-            $version = PlaybackReportingCompatibility::normalizeVersion((string) ($payload['Version'] ?? ''));
-
-            return $version !== '' ? $version : null;
-        } catch (\Throwable) {
-            return null;
-        }
-    }
-
-    private function playbackReportingPluginVersion(): ?string
-    {
-        try {
-            $payload = $this->requestJson('/Plugins', 'GET', null, 4);
-            if (!is_array($payload)) {
-                return null;
-            }
-
-            $guid = strtolower(PlaybackReportingCompatibility::PLUGIN_GUID);
-            foreach ($payload as $plugin) {
-                if (!is_array($plugin)) {
-                    continue;
-                }
-                $id = strtolower(str_replace('-', '', (string) ($plugin['Id'] ?? '')));
-                $name = strtolower(trim((string) ($plugin['Name'] ?? '')));
-                if ($id !== str_replace('-', '', $guid) && $name !== 'playback reporting') {
-                    continue;
-                }
-                $version = PlaybackReportingCompatibility::normalizeVersion((string) ($plugin['Version'] ?? ''));
-                if ($version !== '') {
-                    return $version;
-                }
-            }
-        } catch (\Throwable) {
-            return null;
-        }
-
-        return null;
-    }
-
-    /**
-     * true = CustomQuery ran, false = known 500 incompatibility, null = other failure.
-     */
-    private function playbackReportingCustomQueryAlive(): ?bool
-    {
-        try {
-            $payload = $this->postJson(
-                '/user_usage_stats/submit_custom_query',
-                [
-                    'CustomQueryString' => 'SELECT DateCreated FROM PlaybackActivity LIMIT 1',
-                    'ReplaceUserId' => false,
-                ],
-                8,
-            );
-
-            return is_array($payload) ? true : null;
-        } catch (\Throwable $e) {
-            return PlaybackReportingCompatibility::isCustomQueryBrokenMessage($e->getMessage()) ? false : null;
-        }
-    }
-
     private function httpErrorMessage(string $path, int $status): string
     {
-        if ($status === 500 && str_contains($path, 'submit_custom_query')) {
-            return 'Playback Reporting API is incompatible with this Jellyfin (needs plugin v18+ on 10.11.9+). Drop a TSV backup instead.';
-        }
-
-        $hint = $status === 404 && str_contains($path, 'user_usage_stats')
-            ? ' Is the Playback Reporting plugin installed?'
-            : '';
-
-        return 'Jellyfin request failed with HTTP ' . $status . '.' . $hint;
+        return 'Jellyfin request failed with HTTP ' . $status . ' (' . $path . ').';
     }
 }

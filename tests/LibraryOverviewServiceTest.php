@@ -19,8 +19,8 @@ final class LibraryOverviewServiceTest extends TestCase
             'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' => 'TV Shows',
         ];
 
-        $anime = $service->libraryHistory($rows, 'Anime', 'Anime', $itemLibrary);
-        $tv = $service->libraryHistory($rows, 'TV Shows', 'TV Shows', $itemLibrary);
+        $anime = $this->libraryHistory($service, $rows, 'Anime', 'Anime', $itemLibrary);
+        $tv = $this->libraryHistory($service, $rows, 'TV Shows', 'TV Shows', $itemLibrary);
 
         $this->assertSame(1, $anime['plays']);
         $this->assertSame(300, $anime['watch_sec']);
@@ -37,18 +37,41 @@ final class LibraryOverviewServiceTest extends TestCase
             $this->play('cccccccccccccccccccccccccccccccc', 'Movies', 90, '2024-01-03 12:00:00', null, 'Deleted Film'),
         ];
 
-        $movies = $service->libraryHistory($rows, 'Movies', 'Movies', []);
+        $movies = $this->libraryHistory($service, $rows, 'Movies', 'Movies', []);
         $this->assertSame(1, $movies['plays']);
         $this->assertSame('Deleted Film', $movies['last_played']);
+    }
+
+    public function testLibraryHistoryCountsSummaryPlaysPerItem(): void
+    {
+        $service = new LibraryOverviewService();
+        $rows = [[
+            'item_id' => 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            'library' => 'TV Shows',
+            'plays' => 4,
+            'watch_sec' => 800,
+            'started_at' => '2024-01-02 12:00:00',
+            'series_name' => 'Naruto',
+            'item_name' => 'Pilot',
+            'season_ep' => 'S1 E1',
+            'user_name' => 'Maya',
+        ]];
+        $itemLibrary = ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' => 'Anime'];
+
+        $anime = $this->libraryHistory($service, $rows, 'Anime', 'Anime', $itemLibrary);
+        $this->assertSame(4, $anime['plays']);
+        $this->assertSame(800, $anime['watch_sec']);
     }
 
     public function testResolvedLibraryNameNormalizesDashedIds(): void
     {
         $service = new LibraryOverviewService();
+        $method = new \ReflectionMethod($service, 'resolvedLibraryName');
 
         $this->assertSame(
             'Anime',
-            $service->resolvedLibraryName(
+            $method->invoke(
+                $service,
                 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
                 'TV Shows',
                 ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' => 'Anime'],
@@ -56,8 +79,28 @@ final class LibraryOverviewServiceTest extends TestCase
         );
         $this->assertSame(
             'TV Shows',
-            $service->resolvedLibraryName('missing', 'TV Shows', [])
+            $method->invoke($service, 'missing', 'TV Shows', [])
         );
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $rows
+     * @param array<string, string> $itemLibrary
+     * @return array{plays: int, watch_sec: int, last_activity: string, last_played: string, last_user: string}
+     */
+    private function libraryHistory(
+        LibraryOverviewService $service,
+        array $rows,
+        string $displayName,
+        string $actualName,
+        array $itemLibrary,
+    ): array {
+        $method = new \ReflectionMethod($service, 'libraryHistory');
+
+        /** @var array{plays: int, watch_sec: int, last_activity: string, last_played: string, last_user: string} $result */
+        $result = $method->invoke($service, $rows, $displayName, $actualName, $itemLibrary);
+
+        return $result;
     }
 
     /**

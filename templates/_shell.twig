@@ -80,7 +80,6 @@
 </div>
 
 {% include "_release_dialog.twig" %}
-{% include "_import_history_dialog.twig" %}
 
 {% block page_scripts %}{% endblock %}
 <script src="/assets/js/pwa.js?v=20260624-pwa"></script>
@@ -91,7 +90,6 @@
 <script src="/assets/js/update-status.js?v=20260810-update"></script>
 <script src="/assets/js/avatars.js?v=20260814-avatars"></script>
 <script src="/assets/js/release-highlights.js?v=20260813-import"></script>
-<script src="/assets/js/history-import.js?v=20260814-progress"></script>
 {% for src in module_scripts %}
     <script src="{{ src }}"></script>
 {% endfor %}

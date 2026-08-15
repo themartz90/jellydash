@@ -150,6 +150,9 @@
             label = processed + ' of ' + playLabel(total) + ' written to History';
         } else if (phase === 'done') {
             label = 'Imported ' + playLabel(inserted) + (skipped ? ', skipped ' + skipped + ' already present' : '');
+            if (payload.unresolved) {
+                label += ', ' + payload.unresolved + ' without Jellyfin runtime';
+            }
         }
 
         document.querySelectorAll('[data-import-history-progress]').forEach(function (node) {
@@ -233,6 +236,7 @@
             window.location.href = '/settings?' + new URLSearchParams({
                 imported: String(inserted),
                 skipped: String(skipped),
+                unresolved: String(typeof payload.unresolved === 'number' ? payload.unresolved : 0),
             }).toString();
             return;
         }

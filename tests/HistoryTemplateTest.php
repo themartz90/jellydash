@@ -26,6 +26,7 @@ final class HistoryTemplateTest extends TestCase
         $this->assertStringContainsString('history/_pager.twig', $template);
         $this->assertStringContainsString('data-import-history-banner', $template);
         $this->assertStringContainsString('data-history-live', $template);
+        $this->assertStringContainsString('history-import.js?v=20260815-review', $template);
         $this->assertStringContainsString('{% for library in libraries %}', $template);
         $this->assertStringNotContainsString('option value="Movies"', $template);
     }

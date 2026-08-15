@@ -13,36 +13,33 @@ final class PlaybackReportingImporter
     private PlaybackReportingParser $parser;
     private PlayHistoryRepository $repository;
     private JellyfinClient $client;
+    private PlaybackReportingClient $plugin;
 
     public function __construct(
         ?PlaybackReportingParser $parser = null,
         ?PlayHistoryRepository $repository = null,
         ?JellyfinClient $client = null,
+        ?PlaybackReportingClient $plugin = null,
     ) {
         $this->parser = $parser ?? new PlaybackReportingParser();
         $this->repository = $repository ?? new PlayHistoryRepository();
         $this->client = $client ?? new JellyfinClient();
+        $this->plugin = $plugin ?? new PlaybackReportingClient($this->client);
     }
 
     /**
      * @param 'tsv'|'sqlite'|null $kind
      * @param callable(array{phase: string, processed: int, total: int, inserted: int, skipped: int}): void|null $onProgress
-     * @return array{parsed: int, inserted: int, skipped: int}
+     * @return array{parsed: int, inserted: int, skipped: int, unresolved: int}
      */
     public function importFile(string $path, bool $dryRun = false, ?string $kind = null, ?callable $onProgress = null): array
     {
         $path = $this->readablePath($path);
 
-        return $this->importRows($this->parseFile($path, $kind), $dryRun, $onProgress);
-    }
+        $result = $this->importRows($this->parseFile($path, $kind), $dryRun, $onProgress);
+        unset($result['repaired']);
 
-    /**
-     * @param callable(array{phase: string, processed: int, total: int, inserted: int, skipped: int}): void|null $onProgress
-     * @return array{parsed: int, inserted: int, skipped: int}
-     */
-    public function importTsvString(string $contents, bool $dryRun = false, ?callable $onProgress = null): array
-    {
-        return $this->importRows($this->parser->parseTsv($contents), $dryRun, $onProgress);
+        return $result;
     }
 
     /**
@@ -66,39 +63,62 @@ final class PlaybackReportingImporter
     public function previewPlugin(): array
     {
         return [
-            'parsed' => $this->client->playbackReportingCount(),
+            'parsed' => $this->plugin->count(),
             'kind' => 'plugin',
         ];
     }
 
     /**
      * @param callable(array{phase: string, processed: int, total: int, inserted: int, skipped: int}): void|null $onProgress
-     * @return array{parsed: int, inserted: int, skipped: int}
+     * @return array{parsed: int, inserted: int, skipped: int, unresolved: int}
      */
     public function importFromPlugin(bool $dryRun = false, ?callable $onProgress = null): array
     {
-        return $this->importRows($this->client->playbackReportingActivity($this->parser), $dryRun, $onProgress);
-    }
-
-    /**
-     * @param 'tsv'|'sqlite'|null $kind
-     * @return list<array<string, mixed>>
-     */
-    public function parseFile(string $path, ?string $kind = null): array
-    {
-        $path = $this->readablePath($path);
-        $kind ??= $this->detectKind($path);
-
-        if ($kind === 'sqlite') {
-            return $this->parser->parseSqliteFile($path);
+        $total = $this->plugin->count();
+        $userNames = $this->userNames();
+        if ($onProgress !== null) {
+            $onProgress([
+                'phase' => 'preparing',
+                'processed' => 0,
+                'total' => $total,
+                'inserted' => 0,
+                'skipped' => 0,
+            ]);
         }
 
-        $contents = file_get_contents($path);
-        if ($contents === false) {
-            throw new \RuntimeException('Could not read the Playback Reporting file.');
+        $parsed = 0;
+        $inserted = 0;
+        $skipped = 0;
+        $unresolved = 0;
+        $repaired = 0;
+        $offset = 0;
+
+        while (true) {
+            $chunk = $this->plugin->activityChunk($this->parser, $offset, PlaybackReportingClient::CHUNK_SIZE);
+            if ($chunk['fetched'] === 0) {
+                break;
+            }
+
+            $progress = $this->wrapPluginProgress($onProgress, $parsed, $inserted, $skipped, $total);
+            $result = $this->importRows($chunk['rows'], $dryRun, $progress, false, $userNames);
+            $parsed += $result['parsed'];
+            $inserted += $result['inserted'];
+            $skipped += $result['skipped'];
+            $unresolved += $result['unresolved'];
+            $repaired += $result['repaired'];
+            $offset += PlaybackReportingClient::CHUNK_SIZE;
         }
 
-        return $this->parser->parseTsv($contents);
+        if (!$dryRun && ($inserted > 0 || $repaired > 0)) {
+            $this->refreshLibraryOverview();
+        }
+
+        return [
+            'parsed' => $parsed,
+            'inserted' => $inserted,
+            'skipped' => $skipped,
+            'unresolved' => $unresolved,
+        ];
     }
 
     /**
@@ -120,40 +140,6 @@ final class PlaybackReportingImporter
         fclose($handle);
 
         return is_string($magic) && str_starts_with($magic, 'SQLite format 3') ? 'sqlite' : 'tsv';
-    }
-
-    /**
-     * @param list<array<string, mixed>> $rows
-     * @param callable(array{phase: string, processed: int, total: int, inserted: int, skipped: int}): void|null $onProgress
-     * @return array{parsed: int, inserted: int, skipped: int}
-     */
-    public function importRows(array $rows, bool $dryRun = false, ?callable $onProgress = null): array
-    {
-        $named = $this->parser->applyUserNames($rows, $this->userNames());
-        if ($onProgress !== null) {
-            $onProgress([
-                'phase' => 'preparing',
-                'processed' => 0,
-                'total' => count($named),
-                'inserted' => 0,
-                'skipped' => 0,
-            ]);
-        }
-
-        $meta = $this->fetchItemMeta($named);
-        $enriched = $this->applyRuntimes($named, $this->runtimesFromMeta($meta));
-        $enriched = $this->applyLibraries($enriched, $this->librariesFromMeta($meta));
-        $result = $this->repository->importHistoricalPlays($enriched, $dryRun, $onProgress);
-
-        if (!$dryRun && ($result['inserted'] > 0 || $result['repaired'] > 0)) {
-            $this->refreshLibraryOverview();
-        }
-
-        return [
-            'parsed' => count($enriched),
-            'inserted' => $result['inserted'],
-            'skipped' => $result['skipped'],
-        ];
     }
 
     /**
@@ -226,6 +212,117 @@ final class PlaybackReportingImporter
         return $rows;
     }
 
+    /**
+     * @param 'tsv'|'sqlite'|null $kind
+     * @return list<array<string, mixed>>
+     */
+    private function parseFile(string $path, ?string $kind = null): array
+    {
+        $path = $this->readablePath($path);
+        $kind ??= $this->detectKind($path);
+
+        if ($kind === 'sqlite') {
+            return $this->parser->parseSqliteFile($path);
+        }
+
+        $contents = file_get_contents($path);
+        if ($contents === false) {
+            throw new \RuntimeException('Could not read the Playback Reporting file.');
+        }
+
+        return $this->parser->parseTsv($contents);
+    }
+
+    /**
+     * @param list<array<string, mixed>> $rows
+     * @param callable(array{phase: string, processed: int, total: int, inserted: int, skipped: int}): void|null $onProgress
+     * @param array<string, string>|null $userNames
+     * @return array{parsed: int, inserted: int, skipped: int, unresolved: int, repaired: int}
+     */
+    private function importRows(
+        array $rows,
+        bool $dryRun = false,
+        ?callable $onProgress = null,
+        bool $refreshOverview = true,
+        ?array $userNames = null,
+    ): array {
+        $named = $this->parser->applyUserNames($rows, $userNames ?? $this->userNames());
+        if ($onProgress !== null && $refreshOverview) {
+            $onProgress([
+                'phase' => 'preparing',
+                'processed' => 0,
+                'total' => count($named),
+                'inserted' => 0,
+                'skipped' => 0,
+            ]);
+        }
+
+        $meta = $this->fetchItemMeta($named);
+        $enriched = $this->applyRuntimes($named, $this->runtimesFromMeta($meta));
+        $enriched = $this->applyLibraries($enriched, $this->librariesFromMeta($meta));
+        $unresolved = $this->unresolvedCount($enriched);
+        $result = $this->repository->importHistoricalPlays($enriched, $dryRun, $onProgress);
+
+        if ($refreshOverview && !$dryRun && ($result['inserted'] > 0 || $result['repaired'] > 0)) {
+            $this->refreshLibraryOverview();
+        }
+
+        return [
+            'parsed' => count($enriched),
+            'inserted' => $result['inserted'],
+            'skipped' => $result['skipped'],
+            'unresolved' => $unresolved,
+            'repaired' => $result['repaired'],
+        ];
+    }
+
+    /**
+     * @param callable(array{phase: string, processed: int, total: int, inserted: int, skipped: int}): void|null $onProgress
+     * @return callable(array{phase: string, processed: int, total: int, inserted: int, skipped: int}): void|null
+     */
+    private function wrapPluginProgress(
+        ?callable $onProgress,
+        int $parsed,
+        int $inserted,
+        int $skipped,
+        int $total,
+    ): ?callable {
+        if ($onProgress === null) {
+            return null;
+        }
+
+        return static function (array $payload) use ($onProgress, $parsed, $inserted, $skipped, $total): void {
+            if (($payload['phase'] ?? '') !== 'importing') {
+                return;
+            }
+
+            $onProgress([
+                'phase' => 'importing',
+                'processed' => $parsed + (int) $payload['processed'],
+                'total' => $total,
+                'inserted' => $inserted + (int) $payload['inserted'],
+                'skipped' => $skipped + (int) $payload['skipped'],
+            ]);
+        };
+    }
+
+    /**
+     * @param list<array<string, mixed>> $rows
+     */
+    private function unresolvedCount(array $rows): int
+    {
+        $unresolved = 0;
+        foreach ($rows as $row) {
+            if ($this->normalizedItemId((string) ($row['item_id'] ?? '')) !== ''
+                && max(0, (int) ($row['runtime_sec'] ?? 0)) <= 0
+            ) {
+                $unresolved++;
+            }
+        }
+
+        return $unresolved;
+    }
+
     private function normalizedItemId(string $id): string
     {
         return strtolower(str_replace('-', '', trim($id)));
@@ -249,11 +346,7 @@ final class PlaybackReportingImporter
             return [];
         }
 
-        try {
-            return $this->client->itemImportMeta(array_values($ids));
-        } catch (\Throwable) {
-            return [];
-        }
+        return $this->client->itemImportMeta(array_values($ids));
     }
 
     /**

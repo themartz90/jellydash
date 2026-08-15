@@ -102,10 +102,11 @@
         {% if import.error %}
             <div class="settings-error" role="alert">{{ import.error }}</div>
         {% elseif import.inserted or import.skipped %}
-            <div class="settings-saved" role="status">Imported {{ import.inserted }} play{{ import.inserted == 1 ? '' : 's' }}{% if import.skipped %}, skipped {{ import.skipped }} already present{% endif %}.</div>
+            <div class="settings-saved" role="status">Imported {{ import.inserted }} play{{ import.inserted == 1 ? '' : 's' }}{% if import.skipped %}, skipped {{ import.skipped }} already present{% endif %}{% if import.unresolved %}, {{ import.unresolved }} without Jellyfin runtime{% endif %}.</div>
         {% endif %}
-        <form class="settings-import-form" action="?req=import-history" method="post" enctype="multipart/form-data" data-import-drop>
+        <form class="settings-import-form" action="/api/playback-reporting.php" method="post" enctype="multipart/form-data" data-import-drop>
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="commit" value="1">
             <label class="settings-drop" data-import-dropzone>
                 <input type="file" name="playback_reporting" accept=".tsv,.txt,.db,.sqlite,.sqlite3,text/tab-separated-values,text/plain">
                 <strong>Drop a file here</strong>
@@ -117,6 +118,11 @@
             </div>
         </form>
         <small class="settings-note" data-import-plugin-broken-note hidden>Playback Reporting v17 crashes on Jellyfin 10.11.9+. Catalog v18 is still unpublished (<a href="https://github.com/jellyfin/jellyfin-plugin-playbackreporting/pull/131" target="_blank" rel="noopener noreferrer">PR #131</a>). Drop a TSV backup instead.</small>
-        <small class="settings-note" data-import-plugin-ok-note>Re-importing skips plays already in Jellydash. Plays shorter than 2 minutes are skipped. Runtime and library come from Jellyfin so completion and /libraries stats match live history. Imported plays never trigger notifications. Files over 20 MB: <code>php bin/console.php history:import backup.tsv</code></small>
+        <small class="settings-note" data-import-plugin-ok-note>Re-importing skips plays already in Jellydash. Plays shorter than 2 minutes are skipped. Runtime and library come from Jellyfin so completion and /libraries stats match live history. Imported plays never trigger notifications. TSV and SQLite backups must be 20 MB or smaller.</small>
     </section>
+{% endblock %}
+
+{% block page_scripts %}
+    {% include "_import_history_dialog.twig" %}
+    <script src="/assets/js/history-import.js?v=20260815-review"></script>
 {% endblock %}

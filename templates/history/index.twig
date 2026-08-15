@@ -72,3 +72,8 @@
         <strong>{{ summary.transcoded_pct }}</strong>
     </div>
 {% endblock %}
+
+{% block page_scripts %}
+    {% include "_import_history_dialog.twig" %}
+    <script src="/assets/js/history-import.js?v=20260815-review"></script>
+{% endblock %}

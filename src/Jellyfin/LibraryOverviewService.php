@@ -275,7 +275,7 @@ final class LibraryOverviewService
     private function historyRows(): array
     {
         try {
-            return ($this->history ?? new PlayHistoryRepository())->rowsForLibraries([]);
+            return ($this->history ?? new PlayHistoryRepository())->itemPlaySummaries();
         } catch (\Throwable) {
             return [];
         }
@@ -415,12 +415,13 @@ final class LibraryOverviewService
     /**
      * Plays whose item still lives in this library, or whose stored library
      * name matches when the item is gone (deleted / no longer in Jellyfin).
+     * $rows are per-item summaries (plays / watch_sec) from itemPlaySummaries().
      *
      * @param array<int, \Dibi\Row|array<string, mixed>> $rows
      * @param array<string, string> $itemLibrary normalized item id => library name
      * @return array{plays: int, watch_sec: int, last_activity: string, last_played: string, last_user: string}
      */
-    public function libraryHistory(array $rows, string $displayName, string $actualName, array $itemLibrary = []): array
+    private function libraryHistory(array $rows, string $displayName, string $actualName, array $itemLibrary = []): array
     {
         $plays = 0;
         $watchSec = 0;
@@ -440,8 +441,8 @@ final class LibraryOverviewService
                 continue;
             }
 
-            $plays++;
-            $watchSec += (int) ($row['watched_sec'] ?? 0);
+            $plays += (int) ($row['plays'] ?? 1);
+            $watchSec += (int) ($row['watch_sec'] ?? $row['watched_sec'] ?? 0);
             if ($last === null || (string) $row['started_at'] > (string) $last['started_at']) {
                 $last = $row;
             }
@@ -623,7 +624,7 @@ final class LibraryOverviewService
      *
      * @param array<string, string> $itemLibrary
      */
-    public function resolvedLibraryName(string $itemId, string $storedLibrary, array $itemLibrary): string
+    private function resolvedLibraryName(string $itemId, string $storedLibrary, array $itemLibrary): string
     {
         $key = $this->normalizedItemId($itemId);
         if ($key !== '' && isset($itemLibrary[$key])) {

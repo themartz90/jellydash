@@ -177,39 +177,6 @@ try {
             }
             break;
 
-        case 'history:import':
-            // Bring in an existing Playback Reporting history (TSV backup,
-            // plugin SQLite file, or live plugin API). Re-runs skip duplicates.
-            $importArgs = array_slice($argv, 2);
-            $dryRun = in_array('--dry-run', $importArgs, true);
-            $fromPlugin = in_array('--from-plugin', $importArgs, true);
-            $importFile = null;
-            foreach ($importArgs as $importArg) {
-                if (!str_starts_with((string) $importArg, '--')) {
-                    $importFile = (string) $importArg;
-                    break;
-                }
-            }
-
-            if (!$fromPlugin && ($importFile === null || $importFile === '')) {
-                fwrite(STDERR, "Usage: php bin/console.php history:import <tsv-or-sqlite-file> [--dry-run]\n");
-                fwrite(STDERR, "   or: php bin/console.php history:import --from-plugin [--dry-run]\n");
-                exit(1);
-            }
-
-            $importer = new Jellyfin\PlaybackReportingImporter();
-            $result = $fromPlugin
-                ? $importer->importFromPlugin($dryRun)
-                : $importer->importFile($importFile, $dryRun);
-
-            $prefix = $dryRun ? 'Dry run: would import' : 'Imported';
-            echo "{$prefix} {$result['inserted']} play(s)";
-            if ($result['skipped'] > 0) {
-                echo ", skipped {$result['skipped']} already present";
-            }
-            echo " (parsed {$result['parsed']}).\n";
-            break;
-
         case 'database:migrate-to-sqlite':
             $requestedPath = $argv[2] ?? '';
             $confirmedStopped = in_array('--confirm-stopped', array_slice($argv, 3), true);
@@ -283,8 +250,6 @@ try {
             echo "  php bin/console.php user:password <username> <new-password>\n";
             echo "  php bin/console.php user:list\n";
             echo "  php bin/console.php history:poll   (record currently-playing sessions)\n";
-            echo "  php bin/console.php history:import <file>   (Playback Reporting TSV or SQLite)\n";
-            echo "  php bin/console.php history:import --from-plugin\n";
             echo "  php bin/console.php libraries:warm (refresh the cached library overview)\n";
             echo "  php bin/console.php database:migrate-to-sqlite <file> --confirm-stopped\n";
             echo "  php bin/console.php seerr:poll     (sync Jellyseerr requests + alert on new ones)\n";

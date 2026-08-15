@@ -11,7 +11,8 @@ final class SettingsTemplateTest extends TestCase
         $template = file_get_contents(TEMPLATES_DIR . '/settings/index.twig');
 
         $this->assertIsString($template);
-        $this->assertStringContainsString('action="?req=import-history"', $template);
+        $this->assertStringContainsString('action="/api/playback-reporting.php"', $template);
+        $this->assertStringContainsString('name="commit"', $template);
         $this->assertStringContainsString('data-import-dropzone', $template);
         $this->assertStringContainsString('name="playback_reporting"', $template);
         $this->assertStringContainsString('data-import-plugin', $template);

@@ -64,7 +64,7 @@ final class ReleaseHighlightsTest extends TestCase
         $this->assertStringContainsString('Importing history', $importJs);
 
         $api = (string) file_get_contents(ROOT_DIR . '/public/api/playback-reporting.php');
-        $this->assertStringContainsString('Csrf::checkHeader()', $api);
+        $this->assertStringContainsString('Csrf::validateHeader()', $api);
         $this->assertStringContainsString('previewFile', $api);
         $this->assertStringContainsString('previewPlugin', $api);
         $this->assertStringContainsString('streamImport', $api);

@@ -374,6 +374,38 @@ final class PlayHistoryRepositoryTest extends TestCase
         $this->assertSame(1, $last['inserted']);
     }
 
+    public function testItemPlaySummariesGroupsPlaysByItemAndKeepsLatest(): void
+    {
+        $parser = new PlaybackReportingParser();
+        $first = $parser->parseTsv(
+            "2024-01-01 12:00:00.1234567\t0e394f8a9bc64abeba29f63cdc7a12a0\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tMovie\tDune\tDirectPlay\tWeb\tChrome\t120"
+        );
+        $second = $parser->parseTsv(
+            "2024-01-02 15:00:00.1234567\t0e394f8a9bc64abeba29f63cdc7a12a0\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tMovie\tDune\tDirectPlay\tWeb\tChrome\t180"
+        );
+        $other = $parser->parseTsv(
+            "2024-01-03 12:00:00.1234567\t0e394f8a9bc64abeba29f63cdc7a12a0\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tMovie\tArrival\tDirectPlay\tWeb\tChrome\t200"
+        );
+
+        $this->repository->importHistoricalPlays([...$first, ...$second, ...$other]);
+        $summaries = $this->repository->itemPlaySummaries();
+        $byItem = [];
+        foreach ($summaries as $row) {
+            $byItem[(string) $row['item_id']] = $row;
+        }
+
+        $dune = $byItem['aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'] ?? null;
+        $arrival = $byItem['bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'] ?? null;
+        $this->assertNotNull($dune);
+        $this->assertNotNull($arrival);
+        $this->assertSame(2, (int) $dune['plays']);
+        $this->assertSame(300, (int) $dune['watch_sec']);
+        $this->assertSame('Dune', (string) $dune['item_name']);
+        $this->assertStringStartsWith('2024-01-02 15:00:00', (string) $dune['started_at']);
+        $this->assertSame(1, (int) $arrival['plays']);
+        $this->assertSame(200, (int) $arrival['watch_sec']);
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -440,7 +472,7 @@ final class PlayHistoryRepositoryTest extends TestCase
             ->where('session_key LIKE %s', 'phpunit-%')
             ->execute();
         $this->dibi->delete('play_history')
-            ->where('item_id = %s', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+            ->where('session_key LIKE %s', PlaybackReportingParser::SESSION_PREFIX . '%')
             ->execute();
     }
 }

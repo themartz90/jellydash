@@ -260,18 +260,24 @@ final class PlayHistoryRepository
     }
 
     /**
-     * @param array<int, string> $libraries
+     * One summary row per item_id: play count, watch time, and the latest play.
+     * Used by the Libraries overview so it does not load every play_history row.
+     *
      * @return array<int, \Dibi\Row>
      */
-    public function rowsForLibraries(array $libraries): array
+    public function itemPlaySummaries(): array
     {
-        $selection = $this->db->select('*')->from('play_history');
-
-        if ($libraries !== []) {
-            $selection->where('library IN %in', $libraries);
-        }
-
-        return $selection->orderBy('started_at')->asc()->fetchAll();
+        return $this->db->query(
+            'SELECT item_id, library, plays, watch_sec, started_at, series_name, item_name, season_ep, user_name
+            FROM (
+                SELECT item_id, library, started_at, series_name, item_name, season_ep, user_name,
+                    COUNT(*) OVER (PARTITION BY item_id) AS plays,
+                    SUM(watched_sec) OVER (PARTITION BY item_id) AS watch_sec,
+                    ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY started_at DESC, id DESC) AS rn
+                FROM play_history
+            ) AS ranked
+            WHERE rn = 1'
+        )->fetchAll();
     }
 
     /**
@@ -441,7 +447,7 @@ final class PlayHistoryRepository
 
     /**
      * @param array<int, array<string, mixed>> $rows
-     * @return list<array{user_key: string, item_id: string, started_ts: int}>
+     * @return array<string, list<int>>
      */
     private function livePlaysNearImport(array $rows): array
     {
@@ -484,11 +490,15 @@ final class PlayHistoryRepository
                 continue;
             }
 
-            $plays[] = [
-                'user_key' => $this->normalizedUserKey((string) ($live['user_id'] ?? '')),
-                'item_id' => strtolower((string) ($live['item_id'] ?? '')),
-                'started_ts' => $startedTs,
-            ];
+            $key = $this->livePlayKey(
+                (string) ($live['user_id'] ?? ''),
+                (string) ($live['item_id'] ?? ''),
+            );
+            if ($key === '') {
+                continue;
+            }
+
+            $plays[$key][] = $startedTs;
         }
 
         return $plays;
@@ -496,13 +506,12 @@ final class PlayHistoryRepository
 
     /**
      * @param array<string, mixed> $row
-     * @param list<array{user_key: string, item_id: string, started_ts: int}> $livePlays
+     * @param array<string, list<int>> $livePlays
      */
     private function overlapsLivePlay(array $row, array $livePlays): bool
     {
-        $userKey = $this->normalizedUserKey((string) ($row['user_id'] ?? ''));
-        $itemId = strtolower((string) ($row['item_id'] ?? ''));
-        if ($userKey === '' || $itemId === '') {
+        $key = $this->livePlayKey((string) ($row['user_id'] ?? ''), (string) ($row['item_id'] ?? ''));
+        if ($key === '' || !isset($livePlays[$key])) {
             return false;
         }
 
@@ -512,16 +521,24 @@ final class PlayHistoryRepository
             return false;
         }
 
-        foreach ($livePlays as $live) {
-            if ($live['user_key'] !== $userKey || $live['item_id'] !== $itemId) {
-                continue;
-            }
-            if (abs($live['started_ts'] - $startedTs) <= self::LIVE_OVERLAP_SECONDS) {
+        foreach ($livePlays[$key] as $liveTs) {
+            if (abs($liveTs - $startedTs) <= self::LIVE_OVERLAP_SECONDS) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private function livePlayKey(string $userId, string $itemId): string
+    {
+        $userKey = $this->normalizedUserKey($userId);
+        $itemKey = strtolower(trim($itemId));
+        if ($userKey === '' || $itemKey === '') {
+            return '';
+        }
+
+        return $userKey . "\0" . $itemKey;
     }
 
     private function normalizedUserKey(string $userId): string

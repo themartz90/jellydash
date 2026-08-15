@@ -18,9 +18,10 @@
             <p class="import-progress-label" data-import-history-progress-label>Preparing…</p>
         </div>
 
-        <form class="release-dialog-actions" action="/settings?req=import-history" method="post" data-import-history-form>
+        <form class="release-dialog-actions" action="/api/playback-reporting.php" method="post" data-import-history-form>
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="import_source" value="plugin">
+            <input type="hidden" name="commit" value="1">
             <button type="submit" class="release-dialog-import" data-import-history-confirm>Import history</button>
             <button class="release-dialog-dismiss" type="button" data-import-history-close>Not now</button>
         </form>
