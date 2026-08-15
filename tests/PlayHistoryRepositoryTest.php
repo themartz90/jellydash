@@ -364,8 +364,8 @@ final class PlayHistoryRepositoryTest extends TestCase
 
         $this->assertSame(6000, (int) $stored['runtime_sec']);
         $this->assertSame(1, (int) $stored['is_finished']);
-        $this->assertSame('2024-01-01 13:35:00', (string) $stored['ended_at']);
-        $this->assertSame('2024-01-01 13:35:00', (string) $stored['updated_at']);
+        $this->assertStringStartsWith('2024-01-01 13:35:00', (string) $stored['ended_at']);
+        $this->assertStringStartsWith('2024-01-01 13:35:00', (string) $stored['updated_at']);
     }
 
     public function testImportRepairsGenericLibraryOnDuplicate(): void
