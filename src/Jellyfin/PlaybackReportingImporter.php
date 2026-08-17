@@ -36,7 +36,7 @@ final class PlaybackReportingImporter
     {
         $path = $this->readablePath($path);
 
-        $result = $this->importRows($this->collectMergedPlays($this->iterateFile($path, $kind)), $dryRun, $onProgress);
+        $result = $this->importRows(iterator_to_array($this->iterateFile($path, $kind), false), $dryRun, $onProgress);
         unset($result['repaired']);
 
         return $result;
@@ -51,7 +51,7 @@ final class PlaybackReportingImporter
         $kind = $this->detectKind($path);
 
         return [
-            'parsed' => count($this->collectMergedPlays($this->iterateFile($path, $kind))),
+            'parsed' => iterator_count($this->iterateFile($path, $kind)),
             'kind' => $kind,
         ];
     }
@@ -85,8 +85,7 @@ final class PlaybackReportingImporter
             ]);
         }
 
-        $groups = [];
-        $order = [];
+        $rows = [];
         $offset = 0;
 
         while (true) {
@@ -96,12 +95,12 @@ final class PlaybackReportingImporter
             }
 
             foreach ($chunk['rows'] as $row) {
-                $this->foldSameDayPlay($groups, $order, $row);
+                $rows[] = $row;
             }
             $offset += PlaybackReportingClient::CHUNK_SIZE;
         }
 
-        $result = $this->importRows($this->mergedFromGroups($groups, $order), $dryRun, $onProgress, true, $userNames);
+        $result = $this->importRows($rows, $dryRun, $onProgress, true, $userNames);
         unset($result['repaired']);
 
         return $result;
@@ -130,8 +129,8 @@ final class PlaybackReportingImporter
 
     /**
      * Fill runtime_sec from a map of item id => seconds. PlayDuration is
-     * session length (or the summed length of same-day sessions) and is kept
-     * as recorded. is_finished uses the same 95% rule as live history.
+     * session length and is kept as recorded. is_finished uses the same 95%
+     * rule as live history.
      * Missing items keep runtime_sec = 0.
      *
      * @param list<array<string, mixed>> $rows
@@ -166,25 +165,6 @@ final class PlaybackReportingImporter
     }
 
     /**
-     * Collapse sessions for the same user, item, and calendar day into one
-     * play. Watch time is summed; metadata comes from the earliest start.
-     *
-     * @param list<array<string, mixed>> $rows
-     * @return list<array<string, mixed>>
-     */
-    public function mergeSameDayPlays(array $rows): array
-    {
-        $groups = [];
-        $order = [];
-
-        foreach ($rows as $row) {
-            $this->foldSameDayPlay($groups, $order, $row);
-        }
-
-        return $this->mergedFromGroups($groups, $order);
-    }
-
-    /**
      * Replace the type-based library label with the real Jellyfin library
      * when the item path was resolved. Unknown items keep Movie → Movies etc.
      *
@@ -212,21 +192,6 @@ final class PlaybackReportingImporter
         unset($row);
 
         return $rows;
-    }
-
-    /**
-     * @param iterable<int, array<string, mixed>> $rows
-     * @return list<array<string, mixed>>
-     */
-    private function collectMergedPlays(iterable $rows): array
-    {
-        $groups = [];
-        $order = [];
-        foreach ($rows as $row) {
-            $this->foldSameDayPlay($groups, $order, $row);
-        }
-
-        return $this->mergedFromGroups($groups, $order);
     }
 
     /**
@@ -258,9 +223,7 @@ final class PlaybackReportingImporter
         bool $refreshOverview = true,
         ?array $userNames = null,
     ): array {
-        $named = $this->mergeSameDayPlays(
-            $this->parser->applyUserNames($rows, $userNames ?? $this->userNames())
-        );
+        $named = $this->parser->applyUserNames($rows, $userNames ?? $this->userNames());
         $total = count($named);
         if ($onProgress !== null && $refreshOverview) {
             $onProgress([
@@ -342,75 +305,6 @@ final class PlaybackReportingImporter
                 'skipped' => $skipped + (int) $payload['skipped'],
             ]);
         };
-    }
-
-    /**
-     * @param array<string, mixed> $row
-     */
-    private function sameDayKey(array $row): string
-    {
-        $day = substr((string) ($row['started_at'] ?? ''), 0, 10);
-        $item = $this->normalizedItemId((string) ($row['item_id'] ?? ''));
-        if ($item === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $day)) {
-            return '';
-        }
-
-        return $this->normalizedItemId((string) ($row['user_id'] ?? '')) . "\0" . $item . "\0" . $day;
-    }
-
-    /**
-     * @param array<string, array<string, mixed>> $groups
-     * @param list<string|array<string, mixed>> $order
-     * @param array<string, mixed> $row
-     */
-    private function foldSameDayPlay(array &$groups, array &$order, array $row): void
-    {
-        $key = $this->sameDayKey($row);
-        if ($key === '') {
-            $order[] = $row;
-            return;
-        }
-
-        if (!isset($groups[$key])) {
-            $groups[$key] = $row;
-            $order[] = $key;
-            return;
-        }
-
-        $groups[$key] = $this->combineSameDayPlays($groups[$key], $row);
-    }
-
-    /**
-     * @param array<string, array<string, mixed>> $groups
-     * @param list<string|array<string, mixed>> $order
-     * @return list<array<string, mixed>>
-     */
-    private function mergedFromGroups(array $groups, array $order): array
-    {
-        $merged = [];
-        foreach ($order as $item) {
-            $merged[] = is_string($item) ? $groups[$item] : $item;
-        }
-
-        return $merged;
-    }
-
-    /**
-     * @param array<string, mixed> $left
-     * @param array<string, mixed> $right
-     * @return array<string, mixed>
-     */
-    private function combineSameDayPlays(array $left, array $right): array
-    {
-        $leftStart = (string) ($left['started_at'] ?? '');
-        $rightStart = (string) ($right['started_at'] ?? '');
-        $earliest = $rightStart !== '' && ($leftStart === '' || $rightStart < $leftStart)
-            ? $right
-            : $left;
-        $earliest['watched_sec'] = max(0, (int) ($left['watched_sec'] ?? 0))
-            + max(0, (int) ($right['watched_sec'] ?? 0));
-
-        return $earliest;
     }
 
     /**

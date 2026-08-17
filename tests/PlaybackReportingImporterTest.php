@@ -136,55 +136,35 @@ final class PlaybackReportingImporterTest extends TestCase
         $this->assertSame('Movies', $enriched[0]['library']);
     }
 
-    public function testMergeSameDayPlaysSumsWatchTimeAndKeepsEarliestSession(): void
+    public function testSameDaySessionsStaySeparatePlays(): void
     {
         $first = $this->parsedLine('2024-03-01 10:00:00.0000000', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 600);
         $second = $this->parsedLine('2024-03-01 18:00:00.0000000', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 900);
         $second[0]['client'] = 'Android';
 
-        $merged = (new PlaybackReportingImporter())->mergeSameDayPlays(array_merge($second, $first));
-
-        $this->assertCount(1, $merged);
-        $this->assertSame($first[0]['session_key'], $merged[0]['session_key']);
-        $this->assertSame('2024-03-01 10:00:00', $merged[0]['started_at']);
-        $this->assertSame(1500, $merged[0]['watched_sec']);
-        $this->assertSame('Web', $merged[0]['client']);
+        $this->assertNotSame($first[0]['session_key'], $second[0]['session_key']);
+        $this->assertSame('2024-03-01 10:00:00', $first[0]['started_at']);
+        $this->assertSame('2024-03-01 18:00:00', $second[0]['started_at']);
+        $this->assertSame(600, $first[0]['watched_sec']);
+        $this->assertSame(900, $second[0]['watched_sec']);
+        $this->assertSame('Android', $second[0]['client']);
     }
 
-    public function testMergeSameDayPlaysKeepsDifferentDaysAndUsersApart(): void
-    {
-        $dayOne = $this->parsedLine('2024-03-01 10:00:00.0000000', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 600);
-        $dayTwo = $this->parsedLine('2024-03-02 10:00:00.0000000', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 600);
-        $otherUser = $this->parsedLine(
-            '2024-03-01 11:00:00.0000000',
-            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-            600,
-            'e6f86694d1604ca0a335d497effd8e2b',
-        );
-
-        $merged = (new PlaybackReportingImporter())->mergeSameDayPlays(array_merge($dayOne, $dayTwo, $otherUser));
-
-        $this->assertCount(3, $merged);
-        $this->assertSame(600, $merged[0]['watched_sec']);
-        $this->assertSame(600, $merged[1]['watched_sec']);
-        $this->assertSame(600, $merged[2]['watched_sec']);
-    }
-
-    public function testMergeSameDayThenApplyRuntimesKeepsSummedWatchTimeAndMarksFinished(): void
+    public function testApplyRuntimesKeepsEachSameDaySessionIndependent(): void
     {
         $first = $this->parsedLine('2024-03-03 09:00:00.0000000', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 2000);
-        $second = $this->parsedLine('2024-03-03 21:00:00.0000000', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 2500);
+        $second = $this->parsedLine('2024-03-03 21:00:00.0000000', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 3500);
         $importer = new PlaybackReportingImporter();
-        $merged = $importer->mergeSameDayPlays(array_merge($first, $second));
-        $enriched = $importer->applyRuntimes($merged, [$merged[0]['item_id'] => 3600]);
+        $enriched = $importer->applyRuntimes(array_merge($first, $second), [$first[0]['item_id'] => 3600]);
 
-        $this->assertCount(1, $enriched);
-        $this->assertSame(4500, $enriched[0]['watched_sec']);
-        $this->assertSame(3600, $enriched[0]['runtime_sec']);
-        $this->assertSame(1, $enriched[0]['is_finished']);
+        $this->assertCount(2, $enriched);
+        $this->assertSame(2000, $enriched[0]['watched_sec']);
+        $this->assertSame(0, $enriched[0]['is_finished']);
+        $this->assertSame(3500, $enriched[1]['watched_sec']);
+        $this->assertSame(1, $enriched[1]['is_finished']);
     }
 
-    public function testPreviewFileCountsMergedSameDayRows(): void
+    public function testPreviewFileCountsEachSameDayRow(): void
     {
         $path = tempnam(sys_get_temp_dir(), 'prtsv');
         $this->assertNotFalse($path);
@@ -197,7 +177,7 @@ final class PlaybackReportingImporterTest extends TestCase
 
             $preview = (new PlaybackReportingImporter())->previewFile($path);
             $this->assertSame('tsv', $preview['kind']);
-            $this->assertSame(2, $preview['parsed']);
+            $this->assertSame(3, $preview['parsed']);
         } finally {
             @unlink($path);
         }
