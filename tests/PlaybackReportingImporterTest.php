@@ -2,8 +2,11 @@
 
 declare(strict_types=1);
 
+use Mk\Framework\Container;
+use Mk\Framework\Jellyfin\PlaybackReportingClient;
 use Mk\Framework\Jellyfin\PlaybackReportingImporter;
 use Mk\Framework\Jellyfin\PlaybackReportingParser;
+use Mk\Framework\Jellyfin\PlayHistoryRepository;
 use PHPUnit\Framework\TestCase;
 
 final class PlaybackReportingImporterTest extends TestCase
@@ -183,6 +186,92 @@ final class PlaybackReportingImporterTest extends TestCase
         }
     }
 
+    public function testImportFileProcessesRowsInBoundedChunks(): void
+    {
+        try {
+            $repository = new PlayHistoryRepository(Container::db());
+        } catch (\Throwable $e) {
+            $this->markTestSkipped('Database unavailable: ' . $e->getMessage());
+        }
+
+        $path = tempnam(sys_get_temp_dir(), 'prtsv');
+        $this->assertNotFalse($path);
+
+        try {
+            $lines = [];
+            for ($i = 0; $i < PlaybackReportingClient::CHUNK_SIZE + 1; $i++) {
+                $started = (new DateTimeImmutable('2024-05-01 00:00:00'))
+                    ->modify('+' . $i . ' seconds')
+                    ->format('Y-m-d H:i:s') . '.0000000';
+                $lines[] = $started . "\t0e394f8a9bc64abeba29f63cdc7a12a0\tcccccccccccccccccccccccccccccccc\tMovie\tDune\tDirectPlay\tWeb\tChrome\t60";
+            }
+            file_put_contents($path, implode("\n", $lines) . "\n");
+
+            $processed = [];
+            $result = (new PlaybackReportingImporter(null, $repository))->importFile(
+                $path,
+                true,
+                'tsv',
+                static function (array $payload) use (&$processed): void {
+                    if (($payload['phase'] ?? '') === 'importing') {
+                        $processed[] = (int) $payload['processed'];
+                    }
+                },
+            );
+
+            $this->assertSame(PlaybackReportingClient::CHUNK_SIZE + 1, $result['parsed']);
+            $this->assertSame(PlaybackReportingClient::CHUNK_SIZE + 1, $result['inserted']);
+            $this->assertContains(PlaybackReportingClient::CHUNK_SIZE, $processed);
+            $this->assertSame(PlaybackReportingClient::CHUNK_SIZE + 1, $processed[array_key_last($processed)] ?? 0);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    public function testImportFromPluginWritesEachPageBeforeReadingTheNext(): void
+    {
+        try {
+            $database = Container::db();
+            $dibi = $database->getDibi();
+            $repository = new PlayHistoryRepository($database);
+        } catch (\Throwable $e) {
+            $this->markTestSkipped('Database unavailable: ' . $e->getMessage());
+        }
+
+        $rows = [];
+        for ($i = 0; $i < PlaybackReportingClient::CHUNK_SIZE + 1; $i++) {
+            $started = (new DateTimeImmutable('2024-06-01 00:00:00'))
+                ->modify('+' . $i . ' seconds')
+                ->format('Y-m-d H:i:s') . '.0000000';
+            $rows[] = $this->parsedLine($started, 'dddddddddddddddddddddddddddddddd', 60)[0];
+        }
+
+        $itemId = (string) $rows[0]['item_id'];
+        $plugin = new FakePlaybackReportingPlugin($rows);
+        $countsAfterFirstPage = [];
+        $plugin->beforePage = static function (int $offset) use ($dibi, $itemId, &$countsAfterFirstPage): void {
+            if ($offset === PlaybackReportingClient::CHUNK_SIZE) {
+                $countsAfterFirstPage[] = (int) $dibi->select('COUNT(*)')
+                    ->from('play_history')
+                    ->where('item_id = %s', $itemId)
+                    ->fetchSingle();
+            }
+        };
+
+        try {
+            $result = (new PlaybackReportingImporter(null, $repository, null, $plugin))->importFromPlugin();
+
+            $this->assertSame([PlaybackReportingClient::CHUNK_SIZE, 1, 0], $plugin->fetched);
+            $this->assertSame([PlaybackReportingClient::CHUNK_SIZE], $countsAfterFirstPage);
+            $this->assertSame(PlaybackReportingClient::CHUNK_SIZE + 1, $result['parsed']);
+            $this->assertSame(PlaybackReportingClient::CHUNK_SIZE + 1, $result['inserted']);
+        } finally {
+            $dibi->delete('play_history')
+                ->where('item_id = %s', $itemId)
+                ->execute();
+        }
+    }
+
     /**
      * @return list<array<string, mixed>>
      */
@@ -195,5 +284,48 @@ final class PlaybackReportingImporterTest extends TestCase
         return (new PlaybackReportingParser())->parseTsv(
             $startedAt . "\t" . $userHex . "\t" . $itemHex . "\tMovie\tDune\tDirectPlay\tWeb\tChrome\t" . $duration
         );
+    }
+}
+
+/**
+ * @internal
+ */
+final class FakePlaybackReportingPlugin extends PlaybackReportingClient
+{
+    /** @var list<array<string, mixed>> */
+    private array $rows;
+
+    /** @var callable(int): void|null */
+    public $beforePage = null;
+
+    /** @var list<int> */
+    public array $fetched = [];
+
+    /**
+     * @param list<array<string, mixed>> $rows
+     */
+    public function __construct(array $rows)
+    {
+        $this->rows = $rows;
+    }
+
+    public function count(): int
+    {
+        return count($this->rows);
+    }
+
+    public function activityChunk(PlaybackReportingParser $parser, int $offset, int $limit = self::CHUNK_SIZE): array
+    {
+        if ($this->beforePage !== null) {
+            ($this->beforePage)($offset);
+        }
+
+        $page = array_values(array_slice($this->rows, $offset, $limit));
+        $this->fetched[] = count($page);
+
+        return [
+            'rows' => $page,
+            'fetched' => count($page),
+        ];
     }
 }

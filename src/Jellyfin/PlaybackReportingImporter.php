@@ -35,8 +35,9 @@ final class PlaybackReportingImporter
     public function importFile(string $path, bool $dryRun = false, ?string $kind = null, ?callable $onProgress = null): array
     {
         $path = $this->readablePath($path);
-
-        $result = $this->importRows(iterator_to_array($this->iterateFile($path, $kind), false), $dryRun, $onProgress);
+        $kind ??= $this->detectKind($path);
+        $total = iterator_count($this->iterateFile($path, $kind));
+        $result = $this->importIterable($this->iterateFile($path, $kind), $total, $dryRun, $onProgress);
         unset($result['repaired']);
 
         return $result;
@@ -75,17 +76,9 @@ final class PlaybackReportingImporter
     {
         $total = $this->plugin->count();
         $userNames = $this->userNames();
-        if ($onProgress !== null) {
-            $onProgress([
-                'phase' => 'preparing',
-                'processed' => 0,
-                'total' => $total,
-                'inserted' => 0,
-                'skipped' => 0,
-            ]);
-        }
+        $this->emitPreparing($onProgress, $total);
 
-        $rows = [];
+        $stats = $this->emptyStats();
         $offset = 0;
 
         while (true) {
@@ -94,16 +87,26 @@ final class PlaybackReportingImporter
                 break;
             }
 
-            foreach ($chunk['rows'] as $row) {
-                $rows[] = $row;
-            }
+            $this->addStats(
+                $stats,
+                $this->importChunk(
+                    $chunk['rows'],
+                    $dryRun,
+                    $onProgress,
+                    $userNames,
+                    $stats['parsed'],
+                    $total,
+                    $stats['inserted'],
+                    $stats['skipped'],
+                ),
+            );
             $offset += PlaybackReportingClient::CHUNK_SIZE;
         }
 
-        $result = $this->importRows($rows, $dryRun, $onProgress, true, $userNames);
-        unset($result['repaired']);
+        $this->finishImport($stats, $dryRun, $onProgress, $total);
+        unset($stats['repaired']);
 
-        return $result;
+        return $stats;
     }
 
     /**
@@ -211,23 +214,149 @@ final class PlaybackReportingImporter
     }
 
     /**
-     * @param list<array<string, mixed>> $rows
+     * @param iterable<int, array<string, mixed>> $rows
      * @param callable(array{phase: string, processed: int, total: int, inserted: int, skipped: int}): void|null $onProgress
-     * @param array<string, string>|null $userNames
      * @return array{parsed: int, inserted: int, skipped: int, unresolved: int, repaired: int}
      */
-    private function importRows(
+    private function importIterable(iterable $rows, int $total, bool $dryRun, ?callable $onProgress): array
+    {
+        $userNames = $this->userNames();
+        $this->emitPreparing($onProgress, $total);
+
+        $stats = $this->emptyStats();
+        $batch = [];
+
+        foreach ($rows as $row) {
+            $batch[] = $row;
+            if (count($batch) >= PlaybackReportingClient::CHUNK_SIZE) {
+                $this->addStats(
+                    $stats,
+                    $this->importChunk(
+                        $batch,
+                        $dryRun,
+                        $onProgress,
+                        $userNames,
+                        $stats['parsed'],
+                        $total,
+                        $stats['inserted'],
+                        $stats['skipped'],
+                    ),
+                );
+                $batch = [];
+            }
+        }
+
+        if ($batch !== []) {
+            $this->addStats(
+                $stats,
+                $this->importChunk(
+                    $batch,
+                    $dryRun,
+                    $onProgress,
+                    $userNames,
+                    $stats['parsed'],
+                    $total,
+                    $stats['inserted'],
+                    $stats['skipped'],
+                ),
+            );
+        }
+
+        $this->finishImport($stats, $dryRun, $onProgress, $total);
+
+        return $stats;
+    }
+
+    /**
+     * @param list<array<string, mixed>> $rows
+     * @param callable(array{phase: string, processed: int, total: int, inserted: int, skipped: int}): void|null $onProgress
+     * @param array<string, string> $userNames
+     * @return array{parsed: int, inserted: int, skipped: int, unresolved: int, repaired: int}
+     */
+    private function importChunk(
         array $rows,
-        bool $dryRun = false,
-        ?callable $onProgress = null,
-        bool $refreshOverview = true,
-        ?array $userNames = null,
+        bool $dryRun,
+        ?callable $onProgress,
+        array $userNames,
+        int $processed,
+        int $total,
+        int $inserted,
+        int $skipped,
     ): array {
-        $named = $this->parser->applyUserNames($rows, $userNames ?? $this->userNames());
-        $total = count($named);
-        if ($onProgress !== null && $refreshOverview) {
+        if ($rows === []) {
+            return $this->emptyStats();
+        }
+
+        $named = $this->parser->applyUserNames($rows, $userNames);
+        $meta = $this->fetchItemMeta($named);
+        $enriched = $this->applyRuntimes($named, $this->runtimesFromMeta($meta));
+        $enriched = $this->applyLibraries($enriched, $this->librariesFromMeta($meta));
+        $progress = $this->wrapBatchProgress($onProgress, $processed, $total, $inserted, $skipped);
+        $result = $this->repository->importHistoricalPlays($enriched, $dryRun, $progress);
+
+        return [
+            'parsed' => count($named),
+            'inserted' => $result['inserted'],
+            'skipped' => $result['skipped'],
+            'unresolved' => $this->unresolvedCount($enriched),
+            'repaired' => $result['repaired'],
+        ];
+    }
+
+    /**
+     * @return array{parsed: int, inserted: int, skipped: int, unresolved: int, repaired: int}
+     */
+    private function emptyStats(): array
+    {
+        return [
+            'parsed' => 0,
+            'inserted' => 0,
+            'skipped' => 0,
+            'unresolved' => 0,
+            'repaired' => 0,
+        ];
+    }
+
+    /**
+     * @param array{parsed: int, inserted: int, skipped: int, unresolved: int, repaired: int} $stats
+     * @param array{parsed: int, inserted: int, skipped: int, unresolved: int, repaired: int} $chunk
+     */
+    private function addStats(array &$stats, array $chunk): void
+    {
+        $stats['parsed'] += $chunk['parsed'];
+        $stats['inserted'] += $chunk['inserted'];
+        $stats['skipped'] += $chunk['skipped'];
+        $stats['unresolved'] += $chunk['unresolved'];
+        $stats['repaired'] += $chunk['repaired'];
+    }
+
+    /**
+     * @param callable(array{phase: string, processed: int, total: int, inserted: int, skipped: int}): void|null $onProgress
+     */
+    private function emitPreparing(?callable $onProgress, int $total): void
+    {
+        if ($onProgress === null) {
+            return;
+        }
+
+        $onProgress([
+            'phase' => 'preparing',
+            'processed' => 0,
+            'total' => $total,
+            'inserted' => 0,
+            'skipped' => 0,
+        ]);
+    }
+
+    /**
+     * @param array{parsed: int, inserted: int, skipped: int, unresolved: int, repaired: int} $stats
+     * @param callable(array{phase: string, processed: int, total: int, inserted: int, skipped: int}): void|null $onProgress
+     */
+    private function finishImport(array $stats, bool $dryRun, ?callable $onProgress, int $total): void
+    {
+        if ($stats['parsed'] === 0 && $onProgress !== null) {
             $onProgress([
-                'phase' => 'preparing',
+                'phase' => 'importing',
                 'processed' => 0,
                 'total' => $total,
                 'inserted' => 0,
@@ -235,46 +364,9 @@ final class PlaybackReportingImporter
             ]);
         }
 
-        $inserted = 0;
-        $skipped = 0;
-        $repaired = 0;
-        $unresolved = 0;
-        $batchSize = PlaybackReportingClient::CHUNK_SIZE;
-
-        for ($offset = 0; $offset < $total; $offset += $batchSize) {
-            $batch = array_slice($named, $offset, $batchSize);
-            $meta = $this->fetchItemMeta($batch);
-            $enriched = $this->applyRuntimes($batch, $this->runtimesFromMeta($meta));
-            $enriched = $this->applyLibraries($enriched, $this->librariesFromMeta($meta));
-            $unresolved += $this->unresolvedCount($enriched);
-            $progress = $this->wrapBatchProgress($onProgress, $offset, $total, $inserted, $skipped);
-            $result = $this->repository->importHistoricalPlays($enriched, $dryRun, $progress);
-            $inserted += $result['inserted'];
-            $skipped += $result['skipped'];
-            $repaired += $result['repaired'];
-        }
-
-        if ($total === 0 && $onProgress !== null) {
-            $onProgress([
-                'phase' => 'importing',
-                'processed' => 0,
-                'total' => 0,
-                'inserted' => 0,
-                'skipped' => 0,
-            ]);
-        }
-
-        if ($refreshOverview && !$dryRun && ($inserted > 0 || $repaired > 0)) {
+        if (!$dryRun && ($stats['inserted'] > 0 || $stats['repaired'] > 0)) {
             $this->refreshLibraryOverview();
         }
-
-        return [
-            'parsed' => $total,
-            'inserted' => $inserted,
-            'skipped' => $skipped,
-            'unresolved' => $unresolved,
-            'repaired' => $repaired,
-        ];
     }
 
     /**
@@ -347,7 +439,11 @@ final class PlaybackReportingImporter
             return [];
         }
 
-        return $this->client->itemImportMeta(array_values($ids));
+        try {
+            return $this->client->itemImportMeta(array_values($ids));
+        } catch (\Throwable) {
+            return [];
+        }
     }
 
     /**

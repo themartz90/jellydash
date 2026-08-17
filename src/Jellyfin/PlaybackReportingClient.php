@@ -7,7 +7,7 @@ namespace Mk\Framework\Jellyfin;
 /**
  * Playback Reporting plugin HTTP API (custom query, presence, compatibility).
  */
-final class PlaybackReportingClient
+class PlaybackReportingClient
 {
     public const CHUNK_SIZE = 500;
 
