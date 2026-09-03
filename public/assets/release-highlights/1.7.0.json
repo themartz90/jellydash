@@ -1,0 +1,20 @@
+{
+  "version": "1.7.0",
+  "auto_show": true,
+  "title": "Faster Statistics and remembered login",
+  "summary": "Statistics now reuses recent calculations and keeps Most Watched collapsed until you open it. Optional login can remember a browser for up to 90 days, Settings has a responsive two-column layout on wide screens, and custom Docker runs now respect TZ.",
+  "highlights": [
+    "Reuse recent Statistics calculations while the Devices section continues to refresh separately.",
+    "Load fewer History fields during a fresh Statistics calculation and ask Jellyfin for less library metadata.",
+    "Open Most Watched only when you want it. Its poster images wait until the section is expanded.",
+    "Select Keep me signed in with optional authentication to restore login on that browser for up to 90 days.",
+    "Use the redesigned Settings workspace across desktop, tablet, and phone, with the save action kept in the page header.",
+    "Honor APP_TIMEZONE or the standard Docker TZ variable across the web app and background workers, with UTC as the fallback."
+  ],
+  "links": [
+    {
+      "label": "Full release notes",
+      "url": "https://github.com/themartz90/jellydash/releases/tag/v1.7.0"
+    }
+  ]
+}
