@@ -10,13 +10,13 @@ use Mk\Framework\Log;
 /**
  * Keeps the local request mirror in step with Jellyseerr.
  *
- * One list call refreshes every known request's status; only requests we've
- * never seen cost an extra TMDB detail lookup for their title and poster.
+ * The newest page refreshes current statuses. When that page contains only
+ * unseen requests, older pages are fetched through a known local boundary so
+ * an outage cannot hide requests beyond the first page.
  */
 final class RequestSyncService
 {
-    // How many of the newest requests to track. Comfortably more than the page
-    // shows, so status changes on slightly older entries still get picked up.
+    // Page size and the number refreshed during an ordinary sync.
     private const FETCH_COUNT = 40;
 
     public function __construct(
@@ -39,7 +39,9 @@ final class RequestSyncService
 
         $repo = $this->repository ?? new SeerrRequestRepository();
         $firstRun = $repo->isEmpty();
-        $requests = $client->requests(self::FETCH_COUNT);
+        $requests = $firstRun
+            ? $client->requests(self::FETCH_COUNT)
+            : $this->requestsThroughKnownBoundary($client, $repo);
 
         if ($requests === []) {
             return 0;
@@ -55,7 +57,8 @@ final class RequestSyncService
 
         $known = $repo->knownIds($ids);
         $now = (new \DateTimeImmutable('now'))->format('Y-m-d H:i:s');
-        $new = 0;
+        $statusUpdates = [];
+        $inserts = [];
 
         foreach ($requests as $request) {
             $requestId = (int) ($request['id'] ?? 0);
@@ -71,13 +74,17 @@ final class RequestSyncService
             $mediaStatus = (int) ($media['status'] ?? 0);
 
             if (in_array($requestId, $known, true)) {
-                $repo->updateStatuses($requestId, $requestStatus, $mediaStatus);
+                $statusUpdates[] = [
+                    'request_id' => $requestId,
+                    'request_status' => $requestStatus,
+                    'media_status' => $mediaStatus,
+                ];
                 continue;
             }
 
             $details = $this->detailsFor($client, $mediaType, $tmdbId);
 
-            $repo->insert([
+            $inserts[] = [
                 'request_id' => $requestId,
                 'media_type' => $mediaType,
                 'tmdb_id' => $tmdbId,
@@ -92,12 +99,59 @@ final class RequestSyncService
                 'requested_at' => $this->requestedAt($request, $now),
                 'notified' => $firstRun ? 1 : 0,
                 'created_at' => $now,
-            ]);
-
-            $new++;
+            ];
         }
 
-        return $new;
+        return $repo->applySyncBatch($statusUpdates, $inserts);
+    }
+
+    /**
+     * Fetch the complete unseen prefix before performing any writes. A failed
+     * later page therefore leaves the mirror at its previous safe boundary.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function requestsThroughKnownBoundary(JellyseerrClient $client, SeerrRequestRepository $repo): array
+    {
+        $requests = [];
+        $seen = [];
+        $skip = 0;
+
+        while (true) {
+            $page = $client->requestPage(self::FETCH_COUNT, $skip);
+            if ($page === []) {
+                break;
+            }
+
+            $pageIds = [];
+            $newIds = 0;
+            foreach ($page as $request) {
+                $id = (int) ($request['id'] ?? 0);
+                if ($id <= 0) {
+                    continue;
+                }
+                $pageIds[] = $id;
+                if (!isset($seen[$id])) {
+                    $seen[$id] = true;
+                    $requests[] = $request;
+                    ++$newIds;
+                }
+            }
+
+            if ($repo->knownIds($pageIds) !== []) {
+                break;
+            }
+            if ($newIds === 0) {
+                throw new \RuntimeException('Jellyseerr repeated a request page while syncing.');
+            }
+            if (count($page) < self::FETCH_COUNT) {
+                break;
+            }
+
+            $skip += self::FETCH_COUNT;
+        }
+
+        return $requests;
     }
 
     /**

@@ -32,6 +32,7 @@ final class DatabasePlatform
         $this->connection->query($this->sqlite ? $sqliteSql : $mariaDbSql);
     }
 
+    /** @phpstan-impure */
     public function columnExists(string $table, string $column): bool
     {
         return $this->connection->getDatabaseInfo()

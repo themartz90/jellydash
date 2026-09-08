@@ -73,6 +73,9 @@
             return reader.read().then(function (result) {
                 consume(decoder.decode(result.value || new Uint8Array(), { stream: !result.done }), result.done);
                 if (result.done) {
+                    if (!last || last.phase !== 'done') {
+                        throw new Error('The import stopped before it finished. Please try again.');
+                    }
                     return last;
                 }
                 return pump();
@@ -94,6 +97,9 @@
             body: body,
         }).then(function (response) {
             var type = response.headers.get('Content-Type') || '';
+            if (!response.ok) {
+                throw new Error('Could not import. The server returned HTTP ' + response.status + '.');
+            }
             if (!response.body || type.indexOf('ndjson') === -1) {
                 return response.json().then(function (payload) {
                     throw new Error((payload && payload.error) || 'Could not import.');
@@ -103,6 +109,11 @@
             }
             return readNdjson(response.body, onProgress);
         });
+    }
+
+    if (window.JellydashFrontendTestHooks) {
+        window.JellydashFrontendTestHooks.readImportNdjson = readNdjson;
+        window.JellydashFrontendTestHooks.commitHistoryImport = commit;
     }
 
     function playLabel(count) {

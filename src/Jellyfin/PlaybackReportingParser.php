@@ -245,6 +245,7 @@ final class PlaybackReportingParser
             'is_audio_direct' => $method['is_audio_direct'],
             'transcode_reasons' => null,
             'watched_sec' => $watchedSec,
+            'watch_duration_sec' => $watchedSec,
             'runtime_sec' => 0,
             'started_at' => $startedAt,
             'updated_at' => $endedAt,

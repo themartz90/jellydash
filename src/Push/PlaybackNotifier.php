@@ -7,6 +7,7 @@ namespace Mk\Framework\Push;
 use Mk\Framework\AppSettings;
 use Mk\Framework\Config;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
+use Mk\Framework\Notifications\ClaimedNotificationDelivery;
 use Mk\Framework\Notifications\NotificationDispatcher;
 
 /**
@@ -23,6 +24,7 @@ final class PlaybackNotifier
     public function __construct(
         private ?PlayHistoryRepository $history = null,
         private ?NotificationDispatcher $dispatcher = null,
+        private ?ClaimedNotificationDelivery $delivery = null,
     ) {
     }
 
@@ -49,7 +51,17 @@ final class PlaybackNotifier
 
         $notified = 0;
         foreach ($plays as $play) {
-            if ($dispatcher->send($this->payloadFor($play)) > 0) {
+            $id = (int) $play['id'];
+            $token = (string) $play['notification_claim_token'];
+            if (($this->delivery ?? new ClaimedNotificationDelivery())->deliver(
+                fn (): int => $dispatcher->send($this->payloadFor($play)),
+                function () use ($history, $id, $token): void {
+                    $history->acknowledgeNotificationClaim($id, $token);
+                },
+                function () use ($history, $id, $token): void {
+                    $history->failNotificationClaim($id, $token);
+                },
+            )) {
                 $notified++;
             }
         }

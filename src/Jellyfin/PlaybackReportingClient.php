@@ -38,13 +38,56 @@ class PlaybackReportingClient
         }
 
         $sql = 'SELECT ' . $columns
-            . ' FROM PlaybackActivity ORDER BY DateCreated LIMIT ' . $limit . ' OFFSET ' . $offset;
+            . ' FROM PlaybackActivity ORDER BY DateCreated, rowid LIMIT ' . $limit . ' OFFSET ' . $offset;
 
         $payload = $this->customQuery($sql, 60);
 
         return [
             'rows' => $parser->parseApiResults($payload['columns'], $payload['results']),
             'fetched' => count($payload['results']),
+        ];
+    }
+
+    /** @return array{count: int, lastRowId: int} */
+    public function activityBoundary(): array
+    {
+        $payload = $this->customQuery('SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM PlaybackActivity', 30);
+        $values = $payload['results'][0] ?? null;
+        if (!is_array($values) || count($values) !== 2 || !is_numeric($values[0]) || !is_numeric($values[1])) {
+            throw new \RuntimeException('Playback Reporting returned an invalid import boundary.');
+        }
+
+        return ['count' => max(0, (int) $values[0]), 'lastRowId' => max(0, (int) $values[1])];
+    }
+
+    /**
+     * Keyset pages do not shift when the plugin prunes earlier records. The
+     * captured upper rowid excludes ordinary new inserts during this import.
+     * This is a bounded traversal, not a transaction on the remote database.
+     *
+     * @return array{rows: list<array<string, mixed>>, fetched: int, cursor: int}
+     */
+    public function activityPage(PlaybackReportingParser $parser, int $afterRowId, int $lastRowId, int $limit = self::CHUNK_SIZE): array
+    {
+        $columns = self::ACTIVITY_COLUMNS . ($this->hasPauseDuration() ? ', PauseDuration' : '');
+        $payload = $this->customQuery(
+            'SELECT rowid AS jellydash_row_id, ' . $columns . ' FROM PlaybackActivity WHERE rowid > '
+            . max(0, $afterRowId) . ' AND rowid <= ' . max(0, $lastRowId)
+            . ' ORDER BY rowid LIMIT ' . max(1, $limit),
+            60,
+        );
+        $cursor = $afterRowId;
+        foreach ($payload['results'] as $row) {
+            if (!is_array($row) || !isset($row[0]) || !is_numeric($row[0]) || (int) $row[0] <= $cursor || (int) $row[0] > $lastRowId) {
+                throw new \RuntimeException('Playback Reporting returned an invalid page cursor.');
+            }
+            $cursor = (int) $row[0];
+        }
+
+        return [
+            'rows' => $parser->parseApiResults($payload['columns'], $payload['results']),
+            'fetched' => count($payload['results']),
+            'cursor' => $cursor,
         ];
     }
 

@@ -29,6 +29,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
         'client',
         'play_method',
         'watched_sec',
+        'watch_duration_sec',
         'source_video_codec',
         'transcode_reasons',
         'started_at',
@@ -48,6 +49,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
     // Imported Playback Reporting rows that start within this window of a live
     // poller row (same user + item) are treated as the same play.
     private const LIVE_OVERLAP_SECONDS = 300;
+    private const MAX_SAMPLE_GAP_SECONDS = 120;
 
     public function __construct(?Database $database = null)
     {
@@ -60,12 +62,13 @@ final class PlayHistoryRepository implements LibraryHistorySource
     /**
      * @param array<int, array<string, mixed>> $streams
      */
-    public function logActiveStreams(array $streams, ?\DateTimeImmutable $now = null): void
+    public function logActiveStreams(array $streams, ?\DateTimeImmutable $now = null, int $casAttempt = 0): void
     {
         $now ??= new \DateTimeImmutable('now');
         $nowSql = $now->format('Y-m-d H:i:s');
 
         foreach ($streams as $stream) {
+            $previousSampleEpoch = null;
             $sessionKey = (string) ($stream['id'] ?? '');
             $itemId = (string) ($stream['itemId'] ?? '');
 
@@ -73,7 +76,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
                 continue;
             }
 
-            $existing = $this->db->select('id, watched_sec, updated_at, is_finished')
+            $existing = $this->db->select('id, watched_sec, watch_duration_sec, updated_at, updated_at_epoch, is_finished, last_sample_epoch, last_sample_position_sec, last_sample_paused, last_sample_rate')
                 ->from('play_history')
                 ->where('session_key = %s', $sessionKey)
                 ->where('item_id = %s', $itemId)
@@ -81,12 +84,22 @@ final class PlayHistoryRepository implements LibraryHistorySource
 
             $position = max(0, (int) ($stream['watchedSec'] ?? 0));
             $runtimeSec = max(0, (int) ($stream['runtimeSec'] ?? 0));
+            $paused = ($stream['isPaused'] ?? false) === true;
+            $playbackRate = self::playbackRate($stream['playbackRate'] ?? 1.0);
 
             // Continuation of the existing row, or a brand-new play?
             $isNewPlay = false;
             if ($existing) {
-                $secondsSinceUpdate = $now->getTimestamp()
-                    - (new \DateTimeImmutable((string) $existing['updated_at']))->getTimestamp();
+                $previousSampleEpoch = $existing['last_sample_epoch'] === null
+                    ? null
+                    : (int) $existing['last_sample_epoch'];
+                if ($previousSampleEpoch !== null && $now->getTimestamp() <= $previousSampleEpoch) {
+                    continue;
+                }
+                $updatedEpoch = $existing['updated_at_epoch'] !== null
+                    ? (int) $existing['updated_at_epoch']
+                    : (new \DateTimeImmutable((string) $existing['updated_at']))->getTimestamp();
+                $secondsSinceUpdate = $now->getTimestamp() - $updatedEpoch;
 
                 // A finished row only becomes a new play when the position
                 // jumped back well below what was already watched (an actual
@@ -130,7 +143,10 @@ final class PlayHistoryRepository implements LibraryHistorySource
                 'watched_sec' => $watchedSec,
                 'runtime_sec' => $runtimeSec,
                 'updated_at' => $nowSql,
+                'updated_at_epoch' => $now->getTimestamp(),
                 'ended_at' => $isFinished ? $nowSql : null,
+                'ended_at_epoch' => $isFinished ? $now->getTimestamp() : null,
+                'library_resolved_at_epoch' => $libraryResolved ? $now->getTimestamp() : null,
                 'is_finished' => $isFinished ? 1 : 0,
             ];
 
@@ -141,22 +157,66 @@ final class PlayHistoryRepository implements LibraryHistorySource
                 // a plain continuation leaves it untouched so it never re-fires.
                 if ($isNewPlay) {
                     $data['started_at'] = $nowSql;
+                    $data['started_at_epoch'] = $now->getTimestamp();
                     $data['notified'] = 0;
+                    $data['notification_attempts'] = 0;
+                    $data['notification_claim_token'] = null;
+                    $data['notification_claimed_at_epoch'] = null;
+                    $data['notification_next_attempt_at_epoch'] = null;
+                    $data['watch_duration_sec'] = 0;
+                    $data['last_sample_epoch'] = $now->getTimestamp();
+                    $data['last_sample_position_sec'] = $position;
+                    $data['last_sample_paused'] = $paused ? 1 : 0;
+                    $data['last_sample_rate'] = $playbackRate;
+                } else {
+                    if ($existing['watch_duration_sec'] !== null && $previousSampleEpoch !== null) {
+                        $data['watch_duration_sec'] = (int) $existing['watch_duration_sec'] + self::sampledViewingSeconds(
+                            $previousSampleEpoch,
+                            (int) ($existing['last_sample_position_sec'] ?? 0),
+                            (bool) ($existing['last_sample_paused'] ?? false),
+                            $now->getTimestamp(),
+                            $position,
+                            $paused,
+                            (float) ($existing['last_sample_rate'] ?? $playbackRate),
+                        );
+                    }
+                    $data['last_sample_epoch'] = $now->getTimestamp();
+                    $data['last_sample_position_sec'] = $position;
+                    $data['last_sample_paused'] = $paused ? 1 : 0;
+                    $data['last_sample_rate'] = $playbackRate;
                 }
                 if (!$libraryResolved) {
-                    unset($data['library'], $data['library_resolved_at']);
+                    unset($data['library'], $data['library_resolved_at'], $data['library_resolved_at_epoch']);
                 }
 
-                $this->db->update('play_history', $data)
-                    ->where('id = %i', (int) $existing['id'])
-                    ->execute();
+                $update = $this->db->update('play_history', $data)
+                    ->where('id = %i', (int) $existing['id']);
+                if ($previousSampleEpoch === null) {
+                    $update->where('last_sample_epoch IS NULL');
+                } else {
+                    $update->where('last_sample_epoch = %i', $previousSampleEpoch);
+                }
+                $update->execute();
+                if ($this->db->getAffectedRows() === 0 && $casAttempt < 2) {
+                    $this->logActiveStreams([$stream], $now, $casAttempt + 1);
+                }
                 continue;
             }
 
             $data['session_key'] = $sessionKey;
             $data['item_id'] = $itemId;
             $data['started_at'] = $nowSql;
+            $data['started_at_epoch'] = $now->getTimestamp();
             $data['notified'] = 0;
+            $data['notification_attempts'] = 0;
+            $data['notification_claim_token'] = null;
+            $data['notification_claimed_at_epoch'] = null;
+            $data['notification_next_attempt_at_epoch'] = null;
+            $data['watch_duration_sec'] = 0;
+            $data['last_sample_epoch'] = $now->getTimestamp();
+            $data['last_sample_position_sec'] = $position;
+            $data['last_sample_paused'] = $paused ? 1 : 0;
+            $data['last_sample_rate'] = $playbackRate;
 
             try {
                 $this->db->insert('play_history', $data)->execute();
@@ -166,25 +226,46 @@ final class PlayHistoryRepository implements LibraryHistorySource
                 // The winning writer may already have claimed this row for a
                 // notification. Preserve its flag when applying our fresher
                 // playback details so the alert cannot become eligible again.
-                unset($data['session_key'], $data['item_id'], $data['started_at'], $data['notified']);
-                if (!$libraryResolved) {
-                    unset($data['library'], $data['library_resolved_at']);
+                // Re-read through the CAS path. A same-time sample becomes a
+                // no-op, while a genuinely newer sample can add its interval.
+                if ($casAttempt < 2) {
+                    $this->logActiveStreams([$stream], $now, $casAttempt + 1);
                 }
-                $this->db->update('play_history', $data)
-                    ->where('session_key = %s', $sessionKey)
-                    ->where('item_id = %s', $itemId)
-                    ->execute();
             }
         }
     }
 
+    private static function playbackRate(mixed $rate): float
+    {
+        $rate = is_numeric($rate) ? (float) $rate : 1.0;
+
+        return $rate >= 0.1 && $rate <= 16.0 ? $rate : 1.0;
+    }
+
+    private static function sampledViewingSeconds(
+        int $previousEpoch,
+        int $previousPosition,
+        bool $previousPaused,
+        int $epoch,
+        int $position,
+        bool $paused,
+        float $previousRate,
+    ): int {
+        $elapsed = $epoch - $previousEpoch;
+        $positionAdvance = $position - $previousPosition;
+        if ($elapsed <= 0 || $elapsed > self::MAX_SAMPLE_GAP_SECONDS
+            || $previousPaused || $paused || $positionAdvance <= 0) {
+            return 0;
+        }
+
+        return min($elapsed, (int) ceil($positionAdvance / self::playbackRate($previousRate)));
+    }
+
     /**
-     * Atomically claim freshly-started plays that haven't been notified yet.
-     * Every matched row is flipped to notified=1 (so an alert never fires twice,
-     * even across the poller and an open dashboard both recording), but only the
-     * rows worth alerting on (a real user, not one of $ignoreUsers) are
-     * returned. Plays older than $withinSeconds are retired silently so a poller
-     * that was down doesn't fire a stale "started watching" minutes late.
+     * Atomically lease freshly-started plays that haven't been notified yet.
+     * A successful delivery acknowledges the row. Total failure releases it
+     * with bounded retries and backoff. Plays older than $withinSeconds are
+     * retired silently so a poller that was down doesn't fire stale alerts.
      *
      * @param array<int, string> $ignoreUsers
      * @return array<int, \Dibi\Row>
@@ -192,11 +273,19 @@ final class PlayHistoryRepository implements LibraryHistorySource
     public function claimUnnotifiedPlays(array $ignoreUsers, int $withinSeconds, ?\DateTimeImmutable $now = null): array
     {
         $now ??= new \DateTimeImmutable('now');
+        $nowEpoch = $now->getTimestamp();
         $since = $now->modify('-' . max(1, $withinSeconds) . ' seconds')->format('Y-m-d H:i:s');
+
+        $this->recoverExpiredNotificationClaims($nowEpoch);
 
         // Retire anything too old to alert about so it neither fires late nor
         // lingers unnotified forever.
-        $this->db->update('play_history', ['notified' => 1])
+        $this->db->update('play_history', [
+            'notified' => 1,
+            'notification_claim_token' => null,
+            'notification_claimed_at_epoch' => null,
+            'notification_next_attempt_at_epoch' => null,
+        ])
             ->where('notified = 0')
             ->where('started_at < %s', $since)
             ->execute();
@@ -205,6 +294,9 @@ final class PlayHistoryRepository implements LibraryHistorySource
             ->from('play_history')
             ->where('notified = 0')
             ->where('started_at >= %s', $since)
+            ->where('notification_attempts < %i', 3)
+            ->where('notification_claim_token IS NULL')
+            ->where('(notification_next_attempt_at_epoch IS NULL OR notification_next_attempt_at_epoch <= %i)', $nowEpoch)
             ->orderBy('started_at')->asc()
             ->fetchAll();
 
@@ -212,31 +304,70 @@ final class PlayHistoryRepository implements LibraryHistorySource
             return [];
         }
 
-        // Claim row by row with a conditional update: if another writer (a
-        // second poller, a manual run) flipped the flag first, the update
-        // touches nothing and that row is skipped, so an alert can't double up.
+        // Claim row by row with a conditional lease. If another writer already
+        // leased the row, the update touches nothing and this worker skips it.
         $claimed = [];
-        foreach ($rows as $row) {
-            $this->db->update('play_history', ['notified' => 1])
-                ->where('id = %i', (int) $row['id'])
-                ->where('notified = 0')
-                ->execute();
-
-            if ($this->db->getAffectedRows() === 1) {
-                $claimed[] = $row;
-            }
-        }
-
         $ignore = array_map(
             static fn (string $u): string => mb_strtolower(trim($u)),
             $ignoreUsers
         );
+        foreach ($rows as $row) {
+            $token = bin2hex(random_bytes(32));
+            $this->db->query(
+                'UPDATE `play_history` SET `notification_attempts` = `notification_attempts` + 1, `notification_claim_token` = %s, `notification_claimed_at_epoch` = %i, `notification_next_attempt_at_epoch` = NULL WHERE `id` = %i AND `started_at` = %s AND `notified` = 0 AND `notification_attempts` < 3 AND `notification_claim_token` IS NULL AND (`notification_next_attempt_at_epoch` IS NULL OR `notification_next_attempt_at_epoch` <= %i)',
+                $token,
+                $nowEpoch,
+                (int) $row['id'],
+                (string) $row['started_at'],
+                $nowEpoch,
+            );
 
-        return array_values(array_filter($claimed, static function ($r) use ($ignore): bool {
-            $user = mb_strtolower(trim((string) ($r['user_name'] ?? '')));
+            if ($this->db->getAffectedRows() === 1) {
+                $row['notification_claim_token'] = $token;
+                $row['notification_attempts'] = (int) ($row['notification_attempts'] ?? 0) + 1;
+                $user = mb_strtolower(trim((string) ($row['user_name'] ?? '')));
+                if ($user === '' || in_array($user, $ignore, true)) {
+                    $this->acknowledgeNotificationClaim((int) $row['id'], $token);
+                    continue;
+                }
+                $claimed[] = $row;
+            }
+        }
 
-            return $user !== '' && !in_array($user, $ignore, true);
-        }));
+        return $claimed;
+    }
+
+    public function acknowledgeNotificationClaim(int $id, string $token): void
+    {
+        $this->finishNotificationClaim($id, $token, true, time());
+    }
+
+    public function failNotificationClaim(int $id, string $token, ?int $nowEpoch = null): void
+    {
+        $this->finishNotificationClaim($id, $token, false, $nowEpoch ?? time());
+    }
+
+    private function finishNotificationClaim(int $id, string $token, bool $delivered, int $nowEpoch): void
+    {
+        $attempts = (int) $this->db->select('notification_attempts')->from('play_history')
+            ->where('id = %i', $id)->where('notification_claim_token = %s', $token)->fetchSingle();
+        if ($attempts < 1) {
+            return;
+        }
+        $terminal = $delivered || $attempts >= 3;
+        $this->db->update('play_history', [
+            'notified' => $terminal ? 1 : 0,
+            'notification_claim_token' => null,
+            'notification_claimed_at_epoch' => null,
+            'notification_next_attempt_at_epoch' => $terminal ? null : $nowEpoch + ($attempts === 1 ? 60 : 300),
+        ])->where('id = %i', $id)->where('notification_claim_token = %s', $token)->execute();
+    }
+
+    private function recoverExpiredNotificationClaims(int $nowEpoch): void
+    {
+        $expired = $nowEpoch - 300;
+        $this->db->query('UPDATE `play_history` SET `notified` = 1, `notification_claim_token` = NULL, `notification_claimed_at_epoch` = NULL, `notification_next_attempt_at_epoch` = NULL WHERE `notified` = 0 AND `notification_attempts` >= 3 AND `notification_claimed_at_epoch` IS NOT NULL AND `notification_claimed_at_epoch` <= %i', $expired);
+        $this->db->query('UPDATE `play_history` SET `notification_claim_token` = NULL, `notification_claimed_at_epoch` = NULL, `notification_next_attempt_at_epoch` = %i WHERE `notified` = 0 AND `notification_attempts` < 3 AND `notification_claimed_at_epoch` IS NOT NULL AND `notification_claimed_at_epoch` <= %i', $nowEpoch, $expired);
     }
 
     public function watchTimeToday(?\DateTimeImmutable $now = null): int
@@ -245,10 +376,22 @@ final class PlayHistoryRepository implements LibraryHistorySource
         $start = $now->setTime(0, 0)->format('Y-m-d H:i:s');
         $end = $now->setTime(23, 59, 59)->format('Y-m-d H:i:s');
 
-        return (int) $this->db->select('COALESCE(SUM(watched_sec), 0)')
+        return (int) $this->db->select('COALESCE(SUM(COALESCE(watch_duration_sec, watched_sec)), 0)')
             ->from('play_history')
             ->where('started_at BETWEEN %s AND %s', $start, $end)
             ->fetchSingle();
+    }
+
+    public function watchTimeTodayIsEstimated(?\DateTimeImmutable $now = null): bool
+    {
+        $now ??= new \DateTimeImmutable('now');
+        $start = $now->setTime(0, 0)->format('Y-m-d H:i:s');
+        $end = $now->setTime(23, 59, 59)->format('Y-m-d H:i:s');
+
+        return (int) $this->db->select('COUNT(*)')->from('play_history')
+            ->where('started_at BETWEEN %s AND %s', $start, $end)
+            ->where('watch_duration_sec IS NULL')
+            ->fetchSingle() > 0;
     }
 
     /**
@@ -368,7 +511,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
             ->fetchSingle();
     }
 
-    /** @return array{plays: int, unique_users: int, watch_sec: int, transcodes: int} */
+    /** @return array{plays: int, unique_users: int, watch_sec: int, estimated_plays: int, transcodes: int} */
     public function historyAggregate(HistoryFilters $filters, ?\DateTimeImmutable $now = null): array
     {
         $row = $this->filteredSelection(
@@ -376,7 +519,8 @@ final class PlayHistoryRepository implements LibraryHistorySource
             $now,
             "COUNT(*) AS plays,
                 COUNT(DISTINCT NULLIF(user_name, '')) AS unique_users,
-                COALESCE(SUM(watched_sec), 0) AS watch_sec,
+                COALESCE(SUM(COALESCE(watch_duration_sec, watched_sec)), 0) AS watch_sec,
+                COALESCE(SUM(CASE WHEN watch_duration_sec IS NULL THEN 1 ELSE 0 END), 0) AS estimated_plays,
                 COALESCE(SUM(CASE WHEN play_method = 'Transcode' THEN 1 ELSE 0 END), 0) AS transcodes",
         )->fetch();
 
@@ -384,6 +528,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
             'plays' => (int) ($row['plays'] ?? 0),
             'unique_users' => (int) ($row['unique_users'] ?? 0),
             'watch_sec' => (int) ($row['watch_sec'] ?? 0),
+            'estimated_plays' => (int) ($row['estimated_plays'] ?? 0),
             'transcodes' => (int) ($row['transcodes'] ?? 0),
         ];
     }
@@ -416,11 +561,12 @@ final class PlayHistoryRepository implements LibraryHistorySource
     public function itemPlaySummaries(): array
     {
         return $this->db->query(
-            'SELECT item_id, library, plays, watch_sec, started_at, series_name, item_name, season_ep, user_name
+            'SELECT item_id, library, plays, watch_sec, estimated_plays, started_at, series_name, item_name, season_ep, user_name
             FROM (
                 SELECT item_id, library, started_at, series_name, item_name, season_ep, user_name,
                     COUNT(*) OVER (PARTITION BY item_id) AS plays,
-                    SUM(watched_sec) OVER (PARTITION BY item_id) AS watch_sec,
+                    SUM(COALESCE(watch_duration_sec, watched_sec)) OVER (PARTITION BY item_id) AS watch_sec,
+                    SUM(CASE WHEN watch_duration_sec IS NULL THEN 1 ELSE 0 END) OVER (PARTITION BY item_id) AS estimated_plays,
                     ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY started_at DESC, id DESC) AS rn
                 FROM play_history
             ) AS ranked
@@ -515,6 +661,62 @@ final class PlayHistoryRepository implements LibraryHistorySource
     }
 
     /**
+     * Restore native Jellydash History rows using their exact CSV identity.
+     * Existing session_key + item_id pairs are left unchanged. Unlike Playback
+     * Reporting imports, native backups are not matched approximately to live
+     * plays and never repair stored rows.
+     *
+     * @param array<int, array<string, mixed>> $rows
+     * @param callable(array{phase: string, processed: int, total: int, inserted: int, skipped: int}): void|null $onProgress
+     * @return array{inserted: int, skipped: int}
+     */
+    public function importNativeHistoricalPlays(
+        array $rows,
+        bool $dryRun = false,
+        ?callable $onProgress = null,
+    ): array {
+        $inserted = 0;
+        $skipped = 0;
+        $total = count($rows);
+        $processed = 0;
+
+        foreach ($rows as $row) {
+            $sessionKey = (string) ($row['session_key'] ?? '');
+            $itemId = (string) ($row['item_id'] ?? '');
+            if ($sessionKey === '' || $itemId === '') {
+                $skipped++;
+            } elseif ($dryRun) {
+                $exists = $this->db->select('id')
+                    ->from('play_history')
+                    ->where('session_key = %s', $sessionKey)
+                    ->where('item_id = %s', $itemId)
+                    ->fetch();
+                if ($exists) {
+                    $skipped++;
+                } else {
+                    $inserted++;
+                }
+            } else {
+                try {
+                    $this->db->insert('play_history', $row)->execute();
+                    $inserted++;
+                } catch (\Dibi\UniqueConstraintViolationException) {
+                    $skipped++;
+                }
+            }
+
+            $processed++;
+            $this->reportImportProgress($onProgress, $processed, $total, $inserted, $skipped);
+        }
+
+        if ($total === 0) {
+            $this->reportImportProgress($onProgress, 0, 0, 0, 0);
+        }
+
+        return ['inserted' => $inserted, 'skipped' => $skipped];
+    }
+
+    /**
      * @param callable(array{phase: string, processed: int, total: int, inserted: int, skipped: int}): void|null $onProgress
      */
     private function reportImportProgress(?callable $onProgress, int $processed, int $total, int $inserted, int $skipped): void
@@ -544,7 +746,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
      */
     private function repairImportedRow(string $sessionKey, string $itemId, array $row): bool
     {
-        $existing = $this->db->select('id, runtime_sec, library, started_at')
+        $existing = $this->db->select('id, runtime_sec, watch_duration_sec, library, started_at')
             ->from('play_history')
             ->where('session_key = %s', $sessionKey)
             ->where('item_id = %s', $itemId)
@@ -555,6 +757,9 @@ final class PlayHistoryRepository implements LibraryHistorySource
         }
 
         $data = [];
+        if ($existing['watch_duration_sec'] === null && isset($row['watch_duration_sec'])) {
+            $data['watch_duration_sec'] = max(0, (int) $row['watch_duration_sec']);
+        }
         $incomingRuntime = max(0, (int) ($row['runtime_sec'] ?? 0));
         if ($incomingRuntime > 0 && (int) $existing['runtime_sec'] <= 0) {
             $watchedSec = max(0, (int) ($row['watched_sec'] ?? 0));
@@ -565,6 +770,8 @@ final class PlayHistoryRepository implements LibraryHistorySource
             $data['is_finished'] = $finished ? 1 : 0;
             $data['updated_at'] = $endedAt ?? ($row['updated_at'] ?? null);
             $data['ended_at'] = $finished ? $endedAt : null;
+            $data['updated_at_epoch'] = null;
+            $data['ended_at_epoch'] = null;
         }
 
         $incomingLibrary = $this->nullableString($row['library'] ?? null);
@@ -776,12 +983,21 @@ final class PlayHistoryRepository implements LibraryHistorySource
                 `is_audio_direct` tinyint(1) DEFAULT NULL,
                 `transcode_reasons` text DEFAULT NULL,
                 `watched_sec` int NOT NULL DEFAULT 0,
+                `watch_duration_sec` int DEFAULT NULL,
+                `last_sample_epoch` bigint DEFAULT NULL,
+                `last_sample_position_sec` int DEFAULT NULL,
+                `last_sample_paused` tinyint(1) DEFAULT NULL,
+                `last_sample_rate` decimal(6,3) DEFAULT NULL,
                 `runtime_sec` int NOT NULL DEFAULT 0,
                 `started_at` datetime NOT NULL,
                 `updated_at` datetime NOT NULL,
                 `ended_at` datetime DEFAULT NULL,
                 `is_finished` tinyint(1) NOT NULL DEFAULT 0,
                 `notified` tinyint(1) NOT NULL DEFAULT 0,
+                `notification_attempts` tinyint NOT NULL DEFAULT 0,
+                `notification_claim_token` varchar(64) DEFAULT NULL,
+                `notification_claimed_at_epoch` bigint DEFAULT NULL,
+                `notification_next_attempt_at_epoch` bigint DEFAULT NULL,
                 PRIMARY KEY (`id`),
                 UNIQUE KEY `uniq_session_item` (`session_key`, `item_id`),
                 KEY `idx_started_at` (`started_at`),
@@ -814,12 +1030,21 @@ final class PlayHistoryRepository implements LibraryHistorySource
                 `is_audio_direct` INTEGER DEFAULT NULL,
                 `transcode_reasons` TEXT DEFAULT NULL,
                 `watched_sec` INTEGER NOT NULL DEFAULT 0,
+                `watch_duration_sec` INTEGER DEFAULT NULL,
+                `last_sample_epoch` INTEGER DEFAULT NULL,
+                `last_sample_position_sec` INTEGER DEFAULT NULL,
+                `last_sample_paused` INTEGER DEFAULT NULL,
+                `last_sample_rate` REAL DEFAULT NULL,
                 `runtime_sec` INTEGER NOT NULL DEFAULT 0,
                 `started_at` TEXT NOT NULL,
                 `updated_at` TEXT NOT NULL,
                 `ended_at` TEXT DEFAULT NULL,
                 `is_finished` INTEGER NOT NULL DEFAULT 0,
                 `notified` INTEGER NOT NULL DEFAULT 0,
+                `notification_attempts` INTEGER NOT NULL DEFAULT 0,
+                `notification_claim_token` TEXT DEFAULT NULL,
+                `notification_claimed_at_epoch` INTEGER DEFAULT NULL,
+                `notification_next_attempt_at_epoch` INTEGER DEFAULT NULL,
                 UNIQUE (`session_key`, `item_id`)
             )'
         );
@@ -839,6 +1064,15 @@ final class PlayHistoryRepository implements LibraryHistorySource
         $this->ensureColumn('is_video_direct', '`is_video_direct` tinyint(1) DEFAULT NULL AFTER `target_container`', '`is_video_direct` INTEGER DEFAULT NULL');
         $this->ensureColumn('is_audio_direct', '`is_audio_direct` tinyint(1) DEFAULT NULL AFTER `is_video_direct`', '`is_audio_direct` INTEGER DEFAULT NULL');
         $this->ensureColumn('transcode_reasons', '`transcode_reasons` text DEFAULT NULL AFTER `is_audio_direct`', '`transcode_reasons` TEXT DEFAULT NULL');
+        $this->ensureColumn('watch_duration_sec', '`watch_duration_sec` int DEFAULT NULL', '`watch_duration_sec` INTEGER DEFAULT NULL');
+        $this->ensureColumn('last_sample_epoch', '`last_sample_epoch` bigint DEFAULT NULL', '`last_sample_epoch` INTEGER DEFAULT NULL');
+        $this->ensureColumn('last_sample_position_sec', '`last_sample_position_sec` int DEFAULT NULL', '`last_sample_position_sec` INTEGER DEFAULT NULL');
+        $this->ensureColumn('last_sample_paused', '`last_sample_paused` tinyint(1) DEFAULT NULL', '`last_sample_paused` INTEGER DEFAULT NULL');
+        $this->ensureColumn('last_sample_rate', '`last_sample_rate` decimal(6,3) DEFAULT NULL', '`last_sample_rate` REAL DEFAULT NULL');
+        foreach (['started_at', 'updated_at', 'ended_at', 'library_resolved_at'] as $timestamp) {
+            $column = $timestamp . '_epoch';
+            $this->ensureColumn($column, '`' . $column . '` bigint DEFAULT NULL', '`' . $column . '` INTEGER DEFAULT NULL');
+        }
 
         // Playback-notification flag. On an existing install, backfill every row
         // to "already notified" so adding the column never fires a burst of
@@ -851,6 +1085,10 @@ final class PlayHistoryRepository implements LibraryHistorySource
             );
             $this->db->query('UPDATE `play_history` SET `notified` = 1');
         }
+        $this->ensureColumn('notification_attempts', '`notification_attempts` tinyint NOT NULL DEFAULT 0 AFTER `notified`', '`notification_attempts` INTEGER NOT NULL DEFAULT 0');
+        $this->ensureColumn('notification_claim_token', '`notification_claim_token` varchar(64) DEFAULT NULL AFTER `notification_attempts`', '`notification_claim_token` TEXT DEFAULT NULL');
+        $this->ensureColumn('notification_claimed_at_epoch', '`notification_claimed_at_epoch` bigint DEFAULT NULL AFTER `notification_claim_token`', '`notification_claimed_at_epoch` INTEGER DEFAULT NULL');
+        $this->ensureColumn('notification_next_attempt_at_epoch', '`notification_next_attempt_at_epoch` bigint DEFAULT NULL AFTER `notification_claimed_at_epoch`', '`notification_next_attempt_at_epoch` INTEGER DEFAULT NULL');
 
         self::$schemaConnections[$this->db] = true;
     }
@@ -858,7 +1096,13 @@ final class PlayHistoryRepository implements LibraryHistorySource
     private function ensureColumn(string $column, string $mariaDbDefinition, string $sqliteDefinition): void
     {
         if (!$this->platform->columnExists('play_history', $column)) {
-            $this->platform->addColumn('play_history', $mariaDbDefinition, $sqliteDefinition);
+            try {
+                $this->platform->addColumn('play_history', $mariaDbDefinition, $sqliteDefinition);
+            } catch (\Dibi\Exception $e) {
+                if (!$this->platform->columnExists('play_history', $column)) {
+                    throw $e;
+                }
+            }
         }
     }
 

@@ -117,13 +117,19 @@ final class HistoryLibraryBackfillServiceTest extends TestCase
         $this->assertSame(2, $second['processed']);
         $this->assertSame(100, $second['percent']);
 
-        $rows = $this->connection->select('item_id, library, library_resolved_at')
+        $rows = $this->connection->select('item_id, library, library_resolved_at, library_resolved_at_epoch')
             ->from('play_history')->orderBy('id')->fetchAll();
         $this->assertCount(2, $rows);
         $this->assertSame('Anime Movies', (string) $rows[0]['library']);
         $this->assertNotSame('', (string) $rows[0]['library_resolved_at']);
         $this->assertSame('Comedy', (string) $rows[1]['library']);
         $this->assertNotSame('', (string) $rows[1]['library_resolved_at']);
+        foreach ($rows as $row) {
+            $this->assertSame(
+                (new DateTimeImmutable((string) $row['library_resolved_at']))->format('Y-m-d H:i:s'),
+                date('Y-m-d H:i:s', (int) $row['library_resolved_at_epoch']),
+            );
+        }
         $this->assertSame($second, $service->status());
     }
 

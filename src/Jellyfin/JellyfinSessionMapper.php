@@ -95,6 +95,9 @@ final class JellyfinSessionMapper
         $playMethod = (string) ($playState['PlayMethod'] ?? '');
         $isTranscode = $playMethod === 'Transcode' || isset($session['TranscodingInfo']);
         $isPaused = filter_var($playState['IsPaused'] ?? false, FILTER_VALIDATE_BOOL);
+        $playbackRate = is_numeric($playState['PlaybackRate'] ?? null)
+            ? (float) $playState['PlaybackRate']
+            : 1.0;
         $itemId = (string) ($item['Id'] ?? '');
         $streamId = (string) ($session['Id'] ?? $itemId);
         $video = $this->videoStream($item);
@@ -149,6 +152,7 @@ final class JellyfinSessionMapper
             'isDirect' => in_array($playMethod, ['DirectPlay', 'DirectStream'], true) || !$isTranscode,
             'methodLabel' => $this->methodLabel($playMethod, $session, $isTranscode),
             'isPaused' => $isPaused,
+            'playbackRate' => $playbackRate,
             'statusLabel' => $isPaused ? 'Paused' : 'Now Playing',
             'progressPct' => $this->progressPct($positionTicks, $runtimeTicks),
             'timeLabel' => $this->formatTicks($positionTicks) . ' / ' . $this->formatTicks($runtimeTicks),

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Mk\Framework\Jellyseerr;
 
 use Mk\Framework\Config;
+use Mk\Framework\Notifications\ClaimedNotificationDelivery;
 use Mk\Framework\Notifications\NotificationDispatcher;
 
 /**
@@ -16,6 +17,7 @@ final class RequestNotifier
     public function __construct(
         private ?SeerrRequestRepository $requests = null,
         private ?NotificationDispatcher $dispatcher = null,
+        private ?ClaimedNotificationDelivery $delivery = null,
     ) {
     }
 
@@ -42,7 +44,17 @@ final class RequestNotifier
 
         $notified = 0;
         foreach ($pending as $request) {
-            if ($dispatcher->send($this->payloadFor($request)) > 0) {
+            $id = (int) $request['id'];
+            $token = (string) $request['notification_claim_token'];
+            if (($this->delivery ?? new ClaimedNotificationDelivery())->deliver(
+                fn (): int => $dispatcher->send($this->payloadFor($request)),
+                function () use ($repo, $id, $token): void {
+                    $repo->acknowledgeNotificationClaim($id, $token);
+                },
+                function () use ($repo, $id, $token): void {
+                    $repo->failNotificationClaim($id, $token);
+                },
+            )) {
                 $notified++;
             }
         }

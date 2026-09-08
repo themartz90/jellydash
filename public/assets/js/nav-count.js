@@ -27,16 +27,21 @@
         const stats = payload.stats || {};
         navCount.textContent = String(Number(stats.active_streams || 0));
         navCount.classList.remove('is-loading');
+        navCount.classList.remove('is-stale');
+        navCount.removeAttribute('title');
         hasLoaded = true;
     }
 
     function clearLoadingState() {
-        if (hasLoaded) {
-            return;
-        }
-
         navCount.textContent = '-';
         navCount.classList.remove('is-loading');
+        navCount.classList.add('is-stale');
+        navCount.setAttribute('title', hasLoaded ? 'Now Playing count is unavailable' : 'Could not load Now Playing count');
+    }
+
+    if (window.JellydashFrontendTestHooks) {
+        window.JellydashFrontendTestHooks.refreshNavCount = refresh;
+        window.JellydashFrontendTestHooks.clearNavCount = clearLoadingState;
     }
 
     refresh().catch(clearLoadingState);

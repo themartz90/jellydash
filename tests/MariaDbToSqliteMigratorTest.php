@@ -80,17 +80,38 @@ final class MariaDbToSqliteMigratorTest extends TestCase
         $sqlite = $destination->getDibi();
         $this->assertSame(101, (int) $sqlite->select('id')->from('users')->fetchSingle());
         $this->assertSame('migration-value', (string) $sqlite->select('setting_value')->from('app_settings')->fetchSingle());
-        $history = $sqlite->select('id, notified, library, library_resolved_at')->from('play_history')->fetch();
+        $history = $sqlite->select('id, notified, library, library_resolved_at, watch_duration_sec, started_at_epoch, updated_at_epoch, ended_at_epoch, library_resolved_at_epoch, notification_attempts, notification_claim_token, notification_claimed_at_epoch, notification_next_attempt_at_epoch')->from('play_history')->fetch();
         $this->assertNotFalse($history);
         $this->assertSame(104, (int) $history['id']);
-        $this->assertSame(1, (int) $history['notified']);
+        $this->assertSame(0, (int) $history['notified']);
         $this->assertSame('Movies', (string) $history['library']);
         $this->assertStringStartsWith('2026-08-11 12:00:00', (string) $history['library_resolved_at']);
+        $this->assertSame(275, (int) $history['watch_duration_sec']);
+        $sample = $sqlite->select('last_sample_epoch, last_sample_position_sec, last_sample_paused, last_sample_rate')->from('play_history')->fetch();
+        $this->assertNotFalse($sample);
+        $this->assertSame(1786442700, (int) $sample['last_sample_epoch']);
+        $this->assertSame(300, (int) $sample['last_sample_position_sec']);
+        $this->assertSame(0, (int) $sample['last_sample_paused']);
+        $this->assertSame(0.5, (float) $sample['last_sample_rate']);
+        $this->assertSame(1786442400, (int) $history['started_at_epoch']);
+        $this->assertSame(1786442700, (int) $history['updated_at_epoch']);
+        $this->assertSame(1786442700, (int) $history['ended_at_epoch']);
+        $this->assertSame(1786442400, (int) $history['library_resolved_at_epoch']);
+        $this->assertSame(2, (int) $history['notification_attempts']);
+        $this->assertSame(str_repeat('c', 64), (string) $history['notification_claim_token']);
+        $this->assertSame(1786442710, (int) $history['notification_claimed_at_epoch']);
+        $this->assertSame(1786443000, (int) $history['notification_next_attempt_at_epoch']);
         $this->assertSame('Migration Movie', (string) $sqlite->select('title')->from('seerr_requests')->fetchSingle());
         $this->assertSame(
             str_repeat('a', 24),
             (string) $sqlite->select('selector')->from('auth_remember_tokens')->fetchSingle(),
         );
+        $remember = $sqlite->select('previous_validator_hash, rotation_nonce, rotation_valid_until')
+            ->from('auth_remember_tokens')->fetch();
+        $this->assertNotFalse($remember);
+        $this->assertSame(str_repeat('e', 64), (string) $remember['previous_validator_hash']);
+        $this->assertSame(str_repeat('f', 32), (string) $remember['rotation_nonce']);
+        $this->assertSame(1786442410, (int) $remember['rotation_valid_until']);
         $this->assertSame(102, $destination->addAuthUser('after-migration', 'password-123', 'After Migration', 2));
         $sqlite->disconnect();
 
@@ -264,6 +285,9 @@ final class MariaDbToSqliteMigratorTest extends TestCase
             'expires_at' => '2026-11-11 12:00:00',
             'created_at' => '2026-08-11 12:00:00',
             'last_used_at' => '2026-08-11 12:00:00',
+            'previous_validator_hash' => str_repeat('e', 64),
+            'rotation_nonce' => str_repeat('f', 32),
+            'rotation_valid_until' => 1786442410,
         ])->execute();
         $this->sourceConnection->insert('app_settings', [
             'setting_key' => 'migration-key',
@@ -280,10 +304,24 @@ final class MariaDbToSqliteMigratorTest extends TestCase
             'library_resolved_at' => '2026-08-11 12:00:00',
             'play_method' => 'DirectPlay',
             'watched_sec' => 300,
+            'watch_duration_sec' => 275,
+            'last_sample_epoch' => 1786442700,
+            'last_sample_position_sec' => 300,
+            'last_sample_paused' => 0,
+            'last_sample_rate' => 0.5,
             'runtime_sec' => 3600,
             'started_at' => '2026-08-11 12:00:00',
+            'started_at_epoch' => 1786442400,
             'updated_at' => '2026-08-11 12:05:00',
-            'notified' => 1,
+            'updated_at_epoch' => 1786442700,
+            'ended_at' => '2026-08-11 12:05:00',
+            'ended_at_epoch' => 1786442700,
+            'library_resolved_at_epoch' => 1786442400,
+            'notified' => 0,
+            'notification_attempts' => 2,
+            'notification_claim_token' => str_repeat('c', 64),
+            'notification_claimed_at_epoch' => 1786442710,
+            'notification_next_attempt_at_epoch' => 1786443000,
         ])->execute();
         $this->sourceConnection->insert('push_subscriptions', [
             'id' => 105,

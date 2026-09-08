@@ -75,7 +75,7 @@
         <strong>{{ summary.unique_users }}</strong>
     </div>
     <div class="stat-cell">
-        <span><i class="dot-blue"></i>Watch time</span>
+        <span><i class="dot-blue"></i>{{ summary.watch_time_estimated ? 'Estimated watch time' : 'Watch time' }}</span>
         <strong>{{ summary.watch_time }}</strong>
     </div>
     <div class="stat-cell">

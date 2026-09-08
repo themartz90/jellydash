@@ -121,7 +121,7 @@
             <article class="stats-card stats-watch-card">
                 <div class="stats-card-head">
                     <div>
-                        <span class="stats-eyebrow">Total Watch Time</span>
+                        <span class="stats-eyebrow">{{ stats.watchTimeEstimated ? 'Estimated Watch Time' : 'Total Watch Time' }}</span>
                         <strong>{{ stats.totalWatch }}</strong>
                         <small style="color: {{ stats.totalWatchDeltaColor }}">{{ stats.totalWatchDelta }}</small>
                     </div>

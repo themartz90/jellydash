@@ -46,6 +46,7 @@ final class JellyfinSessionMapperTest extends TestCase
         $this->assertFalse($stream['isDirect']);
         $this->assertSame('Audio Transcode', $stream['methodLabel']);
         $this->assertFalse($stream['isPaused']);
+        $this->assertSame(1.0, $stream['playbackRate']);
         $this->assertSame('Now Playing', $stream['statusLabel']);
         $this->assertSame('25%', $stream['progressPct']);
         $this->assertSame('12:30 / 50:00', $stream['timeLabel']);

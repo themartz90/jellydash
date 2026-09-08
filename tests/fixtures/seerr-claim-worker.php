@@ -20,4 +20,11 @@ if ($barrier !== null) {
     }
 }
 
-echo count($repository->claimUnnotified());
+$claims = $repository->claimUnnotified();
+foreach ($claims as $claim) {
+    $repository->acknowledgeNotificationClaim(
+        (int) $claim['id'],
+        (string) $claim['notification_claim_token'],
+    );
+}
+echo count($claims);

@@ -5,6 +5,7 @@
     let hasLoaded = false;
     let refreshInFlight = false;
     let openDiagnosticsId = null;
+    let lastSuccessfulRefresh = null;
 
     if (!root || !label || !dot) {
         return;
@@ -289,6 +290,8 @@
             : 'No active sessions';
         dot.classList.toggle('is-live', activeStreams > 0);
         dot.classList.toggle('is-idle', activeStreams === 0);
+        dot.classList.remove('is-stale');
+        root.classList.remove('is-stale');
 
         setText('[data-nav-count]', activeStreams);
         setText('[data-stat="watch_today"]', stats.watch_today || '0m');
@@ -314,8 +317,22 @@
         }
     }
 
-    function renderError() {
+    function renderError(error) {
         if (hasLoaded) {
+            const authExpired = error && (error.status === 401 || error.status === 403);
+            root.classList.add('is-stale');
+            dot.classList.remove('is-live', 'is-idle');
+            dot.classList.add('is-stale');
+            label.textContent = authExpired
+                ? 'Session expired. '
+                : 'Updates paused' + (lastSuccessfulRefresh ? ' since ' + lastSuccessfulRefresh : '') + '.';
+            if (authExpired) {
+                const link = document.createElement('a');
+                link.href = '/login';
+                link.textContent = 'Sign in again';
+                label.appendChild(link);
+            }
+            setText('[data-nav-count]', '-');
             return;
         }
 
@@ -347,18 +364,26 @@
             });
 
             if (!response.ok) {
-                throw new Error('Now Playing request failed with HTTP ' + response.status);
+                const error = new Error('Now Playing request failed with HTTP ' + response.status);
+                error.status = response.status;
+                throw error;
             }
 
             const payload = await response.json();
             updateStats(payload);
             renderStreams(payload);
             hasLoaded = true;
+            lastSuccessfulRefresh = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
             window.dispatchEvent(new CustomEvent('jellydash:now-playing', { detail: payload }));
         } finally {
             refreshInFlight = false;
         }
+    }
+
+    if (window.JellydashFrontendTestHooks) {
+        window.JellydashFrontendTestHooks.refreshNowPlaying = refreshNowPlaying;
+        window.JellydashFrontendTestHooks.renderNowPlayingError = renderError;
     }
 
     root.addEventListener('click', (event) => {

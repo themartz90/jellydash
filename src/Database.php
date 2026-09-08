@@ -108,6 +108,21 @@ class Database
             )'
         );
         $this->platform->createSqliteIndex('idx_auth_remember_user', 'auth_remember_tokens', ['user_id']);
+        foreach ([
+            'previous_validator_hash' => ['`previous_validator_hash` char(64) DEFAULT NULL', '`previous_validator_hash` TEXT DEFAULT NULL'],
+            'rotation_nonce' => ['`rotation_nonce` char(32) DEFAULT NULL', '`rotation_nonce` TEXT DEFAULT NULL'],
+            'rotation_valid_until' => ['`rotation_valid_until` bigint NOT NULL DEFAULT 0', '`rotation_valid_until` INTEGER NOT NULL DEFAULT 0'],
+        ] as $column => [$mariaDb, $sqlite]) {
+            if (!$this->platform->columnExists('auth_remember_tokens', $column)) {
+                try {
+                    $this->platform->addColumn('auth_remember_tokens', $mariaDb, $sqlite);
+                } catch (\Dibi\Exception $e) {
+                    if (!$this->platform->columnExists('auth_remember_tokens', $column)) {
+                        throw $e;
+                    }
+                }
+            }
+        }
     }
 
     /** @return array<string, mixed> */

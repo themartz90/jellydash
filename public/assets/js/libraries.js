@@ -102,7 +102,7 @@
                     <dl class="library-stat-grid">
                         ${stat('Total Items', library.totalFiles)}
                         ${stat('Total Plays', library.totalPlays)}
-                        ${stat('Total Playback', library.playback)}
+                        ${stat(library.playbackEstimated ? 'Estimated Playback' : 'Total Playback', library.playback)}
                         ${stat('Last Activity', library.lastActivity)}
                     </dl>
 

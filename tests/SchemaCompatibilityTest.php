@@ -160,6 +160,13 @@ final class SchemaCompatibilityTest extends TestCase
         // This matches an install from before playback notifications existed.
         $this->dibi->query('ALTER TABLE `play_history` DROP COLUMN `notified`');
         $this->dibi->query('ALTER TABLE `play_history` DROP COLUMN `library_resolved_at`');
+        foreach (['notification_attempts', 'notification_claim_token', 'notification_claimed_at_epoch', 'notification_next_attempt_at_epoch'] as $column) {
+            $this->dibi->query('ALTER TABLE `play_history` DROP COLUMN %n', $column);
+            $this->dibi->query('ALTER TABLE `seerr_requests` DROP COLUMN %n', $column);
+        }
+        foreach (['previous_validator_hash', 'rotation_nonce', 'rotation_valid_until'] as $column) {
+            $this->dibi->query('ALTER TABLE `auth_remember_tokens` DROP COLUMN %n', $column);
+        }
 
         $this->resetSchemaState();
         $this->initializeAllSchemas();
@@ -167,12 +174,20 @@ final class SchemaCompatibilityTest extends TestCase
         $this->assertSame('schema-user', (string) $this->dibi->select('username')->from('users')->fetchSingle());
         $this->assertSame(2, (int) $this->dibi->select('attempts')->from('login_attempts')->fetchSingle());
         $this->assertSame(1, (int) $this->dibi->select('COUNT(*)')->from('auth_remember_tokens')->fetchSingle());
+        $remember = $this->dibi->select('previous_validator_hash, rotation_nonce, rotation_valid_until')
+            ->from('auth_remember_tokens')->fetch();
+        $this->assertNotFalse($remember);
+        $this->assertNull($remember['previous_validator_hash']);
+        $this->assertNull($remember['rotation_nonce']);
+        $this->assertSame(0, (int) $remember['rotation_valid_until']);
         $this->assertSame(300, (int) $this->dibi->select('watched_sec')->from('play_history')->fetchSingle());
         $this->assertSame(1, (int) $this->dibi->select('notified')->from('play_history')->fetchSingle());
         $this->assertNull($this->dibi->select('library_resolved_at')->from('play_history')->fetchSingle());
         $this->assertSame('ok', AppSettings::get('schema_test'));
         $this->assertSame(1, (int) $this->dibi->select('COUNT(*)')->from('push_subscriptions')->fetchSingle());
         $this->assertSame('Schema Movie', (string) $this->dibi->select('title')->from('seerr_requests')->fetchSingle());
+        $this->assertSame(0, (int) $this->dibi->select('notification_attempts')->from('play_history')->fetchSingle());
+        $this->assertSame(0, (int) $this->dibi->select('notification_attempts')->from('seerr_requests')->fetchSingle());
     }
 
     public function testServerStatsPreferenceDefaultsOnAndCanBeToggled(): void

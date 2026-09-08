@@ -13,7 +13,7 @@ use Mk\Framework\Config;
  * reaches the browser. Only the read endpoints the Requests page needs are
  * exposed; the integration is deliberately read-only.
  */
-final class JellyseerrClient
+class JellyseerrClient
 {
     private string $baseUrl;
     private string $apiKey;
@@ -40,9 +40,19 @@ final class JellyseerrClient
      */
     public function requests(int $take = 30): array
     {
+        return $this->requestPage($take, 0);
+    }
+
+    /**
+     * One page of requests, newest first.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function requestPage(int $take, int $skip): array
+    {
         $payload = $this->get('/api/v1/request', [
             'take' => max(1, $take),
-            'skip' => 0,
+            'skip' => max(0, $skip),
             'sort' => 'added',
         ]);
 
@@ -75,7 +85,7 @@ final class JellyseerrClient
      * @param array<string, string|int> $query
      * @return array<string, mixed>
      */
-    private function get(string $path, array $query = []): array
+    protected function get(string $path, array $query = []): array
     {
         if (!$this->isConfigured()) {
             throw new \RuntimeException('Jellyseerr URL or API key is missing.');

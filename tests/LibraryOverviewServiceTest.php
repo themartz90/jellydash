@@ -9,6 +9,35 @@ use PHPUnit\Framework\TestCase;
 
 final class LibraryOverviewServiceTest extends TestCase
 {
+    public function testLegacyContributionsLabelLibraryAndSummaryTotalsAsEstimated(): void
+    {
+        $client = new FakeLibraryOverviewClient(
+            [['Id' => 'movies', 'Name' => 'Movies', 'CollectionType' => 'movies']],
+            ['movies|Movie' => 1],
+        );
+        foreach ([0, 1] as $estimatedPlays) {
+            $history = new class ($estimatedPlays) implements LibraryHistorySource {
+                public function __construct(private int $estimatedPlays)
+                {
+                }
+
+                public function itemPlaySummaries(): array
+                {
+                    return [new \Dibi\Row([
+                        'library' => 'Movies', 'plays' => 2, 'watch_sec' => 1800,
+                        'estimated_plays' => $this->estimatedPlays,
+                        'started_at' => '2026-09-08 12:00:00', 'series_name' => '',
+                        'item_name' => 'Movie', 'user_name' => 'Viewer',
+                    ])];
+                }
+            };
+            $data = (new LibraryOverviewService($client, $history))->data();
+            $this->assertSame($estimatedPlays > 0, $data['libraries'][0]['playbackEstimated']);
+            $this->assertSame(1800, $data['libraries'][0]['playbackRaw']);
+            $this->assertSame($estimatedPlays > 0 ? 'Estimated Playback' : 'Total Playback', $data['summary'][2]['label']);
+        }
+    }
+
     public function testRelativeTimeUsesSingularForOneMinute(): void
     {
         $service = new LibraryOverviewService();

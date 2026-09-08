@@ -7,9 +7,10 @@ The download is not limited to the current page.
 
 The file uses UTF-8 with a byte order mark, comma separators, RFC 4180 quoting
 and one play per row. Dates use `YYYY-MM-DD HH:MM:SS`. The source installation's
-IANA timezone is stored with every row so an import can preserve the original
-moment on a server using a different timezone. The first column identifies the
-format version. Version 1 uses this exact column order:
+IANA timezone is stored with every row. Version 2 also includes Unix timestamps
+when the original moment is known, so repeated clock times during a daylight
+saving change can be restored correctly. The first column identifies the
+format version. Version 2 uses this exact column order:
 
 ```text
 jellydash_history_version
@@ -43,14 +44,31 @@ transcode_reasons
 watched_sec
 runtime_sec
 is_finished
+watch_duration_sec
+started_at_epoch
+updated_at_epoch
+ended_at_epoch
+library_resolved_at_epoch
 ```
 
-`jellydash_history_version` is `1` for every exported play and
+`jellydash_history_version` is `2` for every exported play and
 `jellydash_timezone` contains an IANA name such as `Europe/Prague`. Optional
 values are empty. Boolean values are `1`, `0`, or empty when Jellyfin did not
 report them.
 Transcode reasons remain JSON so a future Jellydash importer can restore the
 original list without guessing where one reason ends and another starts.
+
+`watched_sec` keeps the existing value used for progress calculations. New live
+plays store sampled viewing time separately in `watch_duration_sec`. Playback
+Reporting imports use the session duration reported by that plugin. An empty
+duration means the row predates this distinction, so its watch-time contribution
+is an estimate based on `watched_sec`. Exporting older rows does not invent a
+duration or a Unix timestamp.
+
+Live duration starts at the first observed sample. It counts advancing playback
+between samples at most two minutes apart, allows for playback speed, and skips
+paused, stalled, backward-seek and longer-gap intervals. It cannot reconstruct
+viewing that happened before collection started or while polling was offline.
 
 ## Spreadsheet safety
 
@@ -72,6 +90,13 @@ present before enabling the import. The write is transactional, so a failure
 cannot leave half of a backup in History. Existing plays are skipped and every
 restored play is marked as already notified.
 
-Only the exact documented header and supported format version are accepted.
+Version 1 backups are still accepted with their original header, which ends at
+`is_finished`. They restore with empty duration and Unix timestamp fields.
+If an older row has an ambiguous clock time during a daylight saving change,
+restore it using the source timezone. Converting that row to another timezone
+is rejected because the file cannot identify which occurrence was intended.
+Version 2 rows with Unix timestamps can distinguish those occurrences.
+
+Only the exact documented headers and supported format versions are accepted.
 This keeps restores predictable and lets future versions reject files they
 cannot reproduce safely.

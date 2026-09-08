@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mk\Framework\Jellyfin;
 
+use Mk\Framework\Cache\AtomicJsonFile;
 use Mk\Framework\Config;
 use Mk\Framework\Log;
 
@@ -107,6 +108,29 @@ final class LibraryOverviewService
             return $cached;
         }
 
+        try {
+            return $this->cache()->withExclusiveLock(function (): array {
+                $cached = $this->readCache();
+                if ($cached !== null && (time() - (int) ($cached['generated_at'] ?? 0)) < $this->ttl()) {
+                    $cached['cached'] = true;
+
+                    return $cached;
+                }
+
+                return $this->rebuildCachedPayload($cached);
+            });
+        } catch (\Throwable $e) {
+            if ($cached !== null) {
+                return $this->stalePayload($cached);
+            }
+
+            throw $e;
+        }
+    }
+
+    /** @param array<string, mixed>|null $cached @return array<string, mixed> */
+    private function rebuildCachedPayload(?array $cached): array
+    {
         $data = $this->data();
         if ($data['refreshedLabel'] === 'Jellyfin unavailable') {
             if ($cached === null) {
@@ -139,6 +163,12 @@ final class LibraryOverviewService
      * @return array<string, mixed>
      */
     public function refreshCache(): array
+    {
+        return $this->cache()->withExclusiveLock(fn (): array => $this->refreshCacheUnlocked());
+    }
+
+    /** @return array<string, mixed> */
+    private function refreshCacheUnlocked(): array
     {
         $data = $this->data();
 
@@ -225,18 +255,7 @@ final class LibraryOverviewService
      */
     private function readCache(): ?array
     {
-        $file = $this->cacheFile();
-        if (!is_file($file)) {
-            return null;
-        }
-
-        try {
-            $payload = json_decode((string) file_get_contents($file), true, flags: JSON_THROW_ON_ERROR);
-        } catch (\Throwable) {
-            return null;
-        }
-
-        return is_array($payload) ? $payload : null;
+        return $this->cache()->read();
     }
 
     /**
@@ -244,16 +263,12 @@ final class LibraryOverviewService
      */
     private function writeCache(array $payload): void
     {
-        $dir = dirname($this->cacheFile());
-        if (!is_dir($dir)) {
-            mkdir($dir, 0775, true);
-        }
+        $this->cache()->write($payload);
+    }
 
-        file_put_contents($this->cacheFile(), json_encode($payload, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT), LOCK_EX);
-        // The cache may be written by both the web user (www-data) and the
-        // background warmer; keep it writable by either so neither blocks the
-        // other from refreshing it.
-        @chmod($this->cacheFile(), 0666);
+    private function cache(): AtomicJsonFile
+    {
+        return new AtomicJsonFile($this->cacheFile());
     }
 
     /**
@@ -370,6 +385,7 @@ final class LibraryOverviewService
             'totalPlaysRaw' => (int) $libraryHistory['plays'],
             'playback' => $this->longDuration((int) $libraryHistory['watch_sec']),
             'playbackRaw' => (int) $libraryHistory['watch_sec'],
+            'playbackEstimated' => $libraryHistory['estimated'],
             'lastActivity' => (string) $libraryHistory['last_activity'],
             'lastPlayed' => (string) $libraryHistory['last_played'],
             'lastUser' => (string) $libraryHistory['last_user'],
@@ -416,6 +432,7 @@ final class LibraryOverviewService
             'totalPlaysRaw' => (int) $libraryHistory['plays'],
             'playback' => $this->longDuration((int) $libraryHistory['watch_sec']),
             'playbackRaw' => (int) $libraryHistory['watch_sec'],
+            'playbackEstimated' => $libraryHistory['estimated'],
             'lastActivity' => (string) $libraryHistory['last_activity'],
             'lastPlayed' => (string) $libraryHistory['last_played'],
             'lastUser' => (string) $libraryHistory['last_user'],
@@ -522,12 +539,13 @@ final class LibraryOverviewService
      * $rows are per-item summaries (plays / watch_sec) from itemPlaySummaries().
      *
      * @param array<int, \Dibi\Row|array<string, mixed>> $rows
-     * @return array{plays: int, watch_sec: int, last_activity: string, last_played: string, last_user: string}
+     * @return array{plays: int, watch_sec: int, estimated: bool, last_activity: string, last_played: string, last_user: string}
      */
     private function libraryHistory(array $rows, string $displayName, string $actualName): array
     {
         $plays = 0;
         $watchSec = 0;
+        $estimated = false;
         $last = null;
         $wanted = array_map(
             static fn (string $name): string => mb_strtolower($name),
@@ -542,6 +560,7 @@ final class LibraryOverviewService
 
             $plays += (int) ($row['plays'] ?? 1);
             $watchSec += (int) ($row['watch_sec'] ?? $row['watched_sec'] ?? 0);
+            $estimated = $estimated || (int) ($row['estimated_plays'] ?? 1) > 0;
             if ($last === null || (string) $row['started_at'] > (string) $last['started_at']) {
                 $last = $row;
             }
@@ -551,6 +570,7 @@ final class LibraryOverviewService
             return [
                 'plays' => 0,
                 'watch_sec' => 0,
+                'estimated' => false,
                 'last_activity' => 'No plays yet',
                 'last_played' => 'No playback recorded',
                 'last_user' => 'Unknown user',
@@ -563,6 +583,7 @@ final class LibraryOverviewService
         return [
             'plays' => $plays,
             'watch_sec' => $watchSec,
+            'estimated' => $estimated,
             'last_activity' => $this->relativeTime(new \DateTimeImmutable((string) $last['started_at'])),
             'last_played' => $episode !== '' ? $title . ' - ' . $episode : $title,
             'last_user' => (string) ($last['user_name'] ?? 'Unknown user'),
@@ -578,19 +599,21 @@ final class LibraryOverviewService
         $items = 0;
         $plays = 0;
         $playback = 0;
+        $estimated = false;
         $complete = true;
 
         foreach ($libraries as $library) {
             $items += (int) ($library['totalFilesRaw'] ?? 0);
             $plays += (int) ($library['totalPlaysRaw'] ?? 0);
             $playback += (int) ($library['playbackRaw'] ?? 0);
+            $estimated = $estimated || ($library['playbackEstimated'] ?? false);
             $complete = $complete && ($library['available'] ?? true) === true;
         }
 
         return [
             ['label' => 'Libraries', 'color' => '#7c5cff', 'value' => $this->comma(count($libraries)), 'sub' => 'selected media libraries'],
             ['label' => 'Total Items', 'color' => '#3b9eff', 'value' => $complete ? $this->comma($items) : 'Unavailable', 'sub' => $complete ? 'movies - episodes - songs - videos' : 'one or more libraries could not be counted'],
-            ['label' => 'Total Playback', 'color' => '#f7b955', 'value' => $this->longDuration($playback), 'sub' => 'recorded by dashboard'],
+            ['label' => $estimated ? 'Estimated Playback' : 'Total Playback', 'color' => '#f7b955', 'value' => $this->longDuration($playback), 'sub' => 'recorded by dashboard'],
             ['label' => 'Total Plays', 'color' => '#34d8a6', 'value' => $this->comma($plays), 'sub' => 'recorded by dashboard'],
         ];
     }

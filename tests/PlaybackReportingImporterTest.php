@@ -362,6 +362,18 @@ final class FakePlaybackReportingPlugin extends PlaybackReportingClient
         return count($this->rows);
     }
 
+    public function activityBoundary(): array
+    {
+        return ['count' => count($this->rows), 'lastRowId' => count($this->rows)];
+    }
+
+    public function activityPage(PlaybackReportingParser $parser, int $afterRowId, int $lastRowId, int $limit = self::CHUNK_SIZE): array
+    {
+        $chunk = $this->activityChunk($parser, $afterRowId, $limit);
+        $chunk['cursor'] = $afterRowId + $chunk['fetched'];
+        return $chunk;
+    }
+
     public function activityChunk(PlaybackReportingParser $parser, int $offset, int $limit = self::CHUNK_SIZE): array
     {
         if ($this->beforePage !== null) {

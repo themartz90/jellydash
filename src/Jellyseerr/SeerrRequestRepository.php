@@ -12,7 +12,7 @@ use Mk\Framework\DatabasePlatform;
  * Local mirror of Jellyseerr requests.
  *
  * Titles and posters never change, so each request is looked up once and stored;
- * only the two status fields are refreshed from the (single) list call. That
+ * only the two status fields are refreshed from the request list. That
  * makes the Requests page a plain SELECT: no API calls in the request path, and
  * it keeps working when Jellyseerr is unreachable.
  */
@@ -84,6 +84,38 @@ final class SeerrRequestRepository
     }
 
     /**
+     * Apply one completely fetched remote prefix as a transaction, so a failed
+     * row cannot establish a newer boundary while leaving older requests out.
+     *
+     * @param array<int, array{request_id: int, request_status: int, media_status: int}> $statusUpdates
+     * @param array<int, array<string, mixed>> $inserts
+     */
+    public function applySyncBatch(array $statusUpdates, array $inserts): int
+    {
+        $inserted = 0;
+        $this->db->begin();
+        try {
+            foreach ($statusUpdates as $update) {
+                $this->updateStatuses($update['request_id'], $update['request_status'], $update['media_status']);
+            }
+            foreach ($inserts as $row) {
+                try {
+                    $this->db->insert('seerr_requests', $row)->execute();
+                    ++$inserted;
+                } catch (\Dibi\UniqueConstraintViolationException) {
+                    // A concurrent completed sync already stored this request.
+                }
+            }
+            $this->db->commit();
+        } catch (\Throwable $e) {
+            $this->db->rollback();
+            throw $e;
+        }
+
+        return $inserted;
+    }
+
+    /**
      * Newest requests first, for the page.
      *
      * @return array<int, \Dibi\Row>
@@ -99,16 +131,22 @@ final class SeerrRequestRepository
     }
 
     /**
-     * Claim requests that haven't been announced yet, flipping them to notified
-     * so an alert can never fire twice.
+     * Lease requests that haven't been announced yet. Delivery acknowledges the
+     * lease; total failure releases it with bounded retries and backoff.
      *
      * @return array<int, \Dibi\Row>
      */
-    public function claimUnnotified(): array
+    public function claimUnnotified(?int $nowEpoch = null): array
     {
+        $nowEpoch ??= time();
+        $this->recoverExpiredNotificationClaims($nowEpoch);
+
         $rows = $this->db->select('*')
             ->from('seerr_requests')
             ->where('notified = 0')
+            ->where('notification_attempts < %i', 3)
+            ->where('notification_claim_token IS NULL')
+            ->where('(notification_next_attempt_at_epoch IS NULL OR notification_next_attempt_at_epoch <= %i)', $nowEpoch)
             ->orderBy('requested_at')->asc()
             ->fetchAll();
 
@@ -118,17 +156,56 @@ final class SeerrRequestRepository
 
         $claimed = [];
         foreach ($rows as $row) {
-            $this->db->update('seerr_requests', ['notified' => 1])
-                ->where('id = %i', (int) $row['id'])
-                ->where('notified = 0')
-                ->execute();
+            $token = bin2hex(random_bytes(32));
+            $this->db->query(
+                'UPDATE `seerr_requests` SET `notification_attempts` = `notification_attempts` + 1, `notification_claim_token` = %s, `notification_claimed_at_epoch` = %i, `notification_next_attempt_at_epoch` = NULL WHERE `id` = %i AND `notified` = 0 AND `notification_attempts` < 3 AND `notification_claim_token` IS NULL AND (`notification_next_attempt_at_epoch` IS NULL OR `notification_next_attempt_at_epoch` <= %i)',
+                $token,
+                $nowEpoch,
+                (int) $row['id'],
+                $nowEpoch,
+            );
 
             if ($this->db->getAffectedRows() === 1) {
+                $row['notification_claim_token'] = $token;
+                $row['notification_attempts'] = (int) ($row['notification_attempts'] ?? 0) + 1;
                 $claimed[] = $row;
             }
         }
 
         return $claimed;
+    }
+
+    public function acknowledgeNotificationClaim(int $id, string $token): void
+    {
+        $this->finishNotificationClaim($id, $token, true, time());
+    }
+
+    public function failNotificationClaim(int $id, string $token, ?int $nowEpoch = null): void
+    {
+        $this->finishNotificationClaim($id, $token, false, $nowEpoch ?? time());
+    }
+
+    private function finishNotificationClaim(int $id, string $token, bool $delivered, int $nowEpoch): void
+    {
+        $attempts = (int) $this->db->select('notification_attempts')->from('seerr_requests')
+            ->where('id = %i', $id)->where('notification_claim_token = %s', $token)->fetchSingle();
+        if ($attempts < 1) {
+            return;
+        }
+        $terminal = $delivered || $attempts >= 3;
+        $this->db->update('seerr_requests', [
+            'notified' => $terminal ? 1 : 0,
+            'notification_claim_token' => null,
+            'notification_claimed_at_epoch' => null,
+            'notification_next_attempt_at_epoch' => $terminal ? null : $nowEpoch + ($attempts === 1 ? 60 : 300),
+        ])->where('id = %i', $id)->where('notification_claim_token = %s', $token)->execute();
+    }
+
+    private function recoverExpiredNotificationClaims(int $nowEpoch): void
+    {
+        $expired = $nowEpoch - 300;
+        $this->db->query('UPDATE `seerr_requests` SET `notified` = 1, `notification_claim_token` = NULL, `notification_claimed_at_epoch` = NULL, `notification_next_attempt_at_epoch` = NULL WHERE `notified` = 0 AND `notification_attempts` >= 3 AND `notification_claimed_at_epoch` IS NOT NULL AND `notification_claimed_at_epoch` <= %i', $expired);
+        $this->db->query('UPDATE `seerr_requests` SET `notification_claim_token` = NULL, `notification_claimed_at_epoch` = NULL, `notification_next_attempt_at_epoch` = %i WHERE `notified` = 0 AND `notification_attempts` < 3 AND `notification_claimed_at_epoch` IS NOT NULL AND `notification_claimed_at_epoch` <= %i', $nowEpoch, $expired);
     }
 
     private function ensureSchema(): void
@@ -154,6 +231,10 @@ final class SeerrRequestRepository
                 `season_count` int DEFAULT NULL,
                 `requested_at` datetime NOT NULL,
                 `notified` tinyint(1) NOT NULL DEFAULT 0,
+                `notification_attempts` tinyint NOT NULL DEFAULT 0,
+                `notification_claim_token` varchar(64) DEFAULT NULL,
+                `notification_claimed_at_epoch` bigint DEFAULT NULL,
+                `notification_next_attempt_at_epoch` bigint DEFAULT NULL,
                 `created_at` datetime NOT NULL,
                 PRIMARY KEY (`id`),
                 UNIQUE KEY `uniq_request_id` (`request_id`),
@@ -174,12 +255,34 @@ final class SeerrRequestRepository
                 `season_count` INTEGER DEFAULT NULL,
                 `requested_at` TEXT NOT NULL,
                 `notified` INTEGER NOT NULL DEFAULT 0,
+                `notification_attempts` INTEGER NOT NULL DEFAULT 0,
+                `notification_claim_token` TEXT DEFAULT NULL,
+                `notification_claimed_at_epoch` INTEGER DEFAULT NULL,
+                `notification_next_attempt_at_epoch` INTEGER DEFAULT NULL,
                 `created_at` TEXT NOT NULL,
                 UNIQUE (`request_id`)
             )'
         );
         $this->platform->createSqliteIndex('idx_requested_at', 'seerr_requests', ['requested_at']);
 
+        $this->ensureColumn('notification_attempts', '`notification_attempts` tinyint NOT NULL DEFAULT 0 AFTER `notified`', '`notification_attempts` INTEGER NOT NULL DEFAULT 0');
+        $this->ensureColumn('notification_claim_token', '`notification_claim_token` varchar(64) DEFAULT NULL AFTER `notification_attempts`', '`notification_claim_token` TEXT DEFAULT NULL');
+        $this->ensureColumn('notification_claimed_at_epoch', '`notification_claimed_at_epoch` bigint DEFAULT NULL AFTER `notification_claim_token`', '`notification_claimed_at_epoch` INTEGER DEFAULT NULL');
+        $this->ensureColumn('notification_next_attempt_at_epoch', '`notification_next_attempt_at_epoch` bigint DEFAULT NULL AFTER `notification_claimed_at_epoch`', '`notification_next_attempt_at_epoch` INTEGER DEFAULT NULL');
+
         self::$schemaConnections[$this->db] = true;
+    }
+
+    private function ensureColumn(string $column, string $mariaDbDefinition, string $sqliteDefinition): void
+    {
+        if (!$this->platform->columnExists('seerr_requests', $column)) {
+            try {
+                $this->platform->addColumn('seerr_requests', $mariaDbDefinition, $sqliteDefinition);
+            } catch (\Dibi\Exception $e) {
+                if (!$this->platform->columnExists('seerr_requests', $column)) {
+                    throw $e;
+                }
+            }
+        }
     }
 }

@@ -250,69 +250,114 @@ final class PlaybackStatisticsServiceTest extends TestCase
     public function testConfirmedLibrariesAreFilteredWithoutJellyfinLookups(): void
     {
         $service = new PlaybackStatisticsService();
-        $filter = new ReflectionMethod($service, 'withoutExcludedLibraryNames');
+        $filter = new ReflectionMethod($service, 'withoutExcludedLibraryRows');
         $locationCalls = 0;
         $pathCalls = 0;
 
-        $cards = $filter->invoke(
+        $rows = $filter->invoke(
             $service,
             [
-                $this->titleCard('blocked', 'WRESTLING (CURRENT)', true),
-                $this->titleCard('included', 'Movies', true),
+                $this->titleRow('2026-08-20 10:00:00', 'blocked', 'WRESTLING (CURRENT)', '2026-08-20 10:00:00'),
+                $this->titleRow('2026-08-21 10:00:00', 'included', 'Movies', '2026-08-21 10:00:00'),
             ],
             ['wrestling (current)'],
-            static function () use (&$locationCalls): array {
+            static function (array $ids) use (&$locationCalls): array {
                 $locationCalls++;
 
-                return ['wrestling (current)' => ['/media/wrestling']];
-            },
-            static function (string $itemId) use (&$pathCalls): string {
-                $pathCalls++;
-
-                return '/media/' . $itemId;
+                return [];
             },
         );
 
-        $this->assertIsArray($cards);
-        $this->assertSame(['included'], array_column($cards, 'title'));
+        $this->assertIsArray($rows);
+        $this->assertSame(['included'], array_column($rows, 'item_id'));
         $this->assertSame(0, $locationCalls);
         $this->assertSame(0, $pathCalls);
-        $this->assertArrayNotHasKey('_library', $cards[0]);
-        $this->assertArrayNotHasKey('_libraryConfirmed', $cards[0]);
     }
 
-    public function testLatestRepresentativeRowCarriesItsConfirmedLibrary(): void
+    public function testExcludedLatestRowCannotReplaceIncludedRepresentative(): void
     {
         $service = new PlaybackStatisticsService();
         $groupTitles = new ReflectionMethod($service, 'groupTitles');
-        $titleCards = new ReflectionMethod($service, 'titleCards');
-        $filter = new ReflectionMethod($service, 'withoutExcludedLibraryNames');
+        $filter = new ReflectionMethod($service, 'withoutExcludedLibraryRows');
         $rows = [
-            $this->titleRow('2026-08-20 10:00:00', 'old-item', 'Blocked', '2026-08-20 10:00:00'),
-            $this->titleRow('2026-08-21 10:00:00', 'new-item', 'Movies', '2026-08-21 10:00:00'),
+            $this->titleRow('2026-08-20 10:00:00', 'shared-item', 'Movies', '2026-08-20 10:00:00'),
+            $this->titleRow('2026-08-21 10:00:00', 'shared-item', 'Blocked', '2026-08-21 10:00:00'),
         ];
-
-        $groups = $groupTitles->invoke($service, $rows);
-        $this->assertIsArray($groups);
-        $cards = $titleCards->invoke($service, $groups);
-        $this->assertIsArray($cards);
         $filtered = $filter->invoke(
             $service,
-            $cards,
+            $rows,
             ['blocked'],
-            static fn (): never => throw new RuntimeException('Confirmed cards must not load locations.'),
-            static fn (string $itemId): never => throw new RuntimeException('Confirmed cards must not load paths: ' . $itemId),
+            static fn (array $ids): never => throw new RuntimeException('Confirmed rows must not load metadata.'),
+        );
+        $this->assertIsArray($filtered);
+        $groups = $groupTitles->invoke($service, $filtered);
+        $this->assertIsArray($groups);
+        $this->assertSame(1, array_values($groups)[0]['plays']);
+        $this->assertSame('Movies', array_values($groups)[0]['library']);
+    }
+
+    public function testMoviesWithTheSameTitleKeepDistinctItemIdentities(): void
+    {
+        $service = new PlaybackStatisticsService();
+        $groupTitles = new ReflectionMethod($service, 'groupTitles');
+        $groups = $groupTitles->invoke($service, [
+            $this->titleRow('2026-08-20 10:00:00', 'crash-1996', 'Movies', '2026-08-20 10:00:00', 'Movie', '', 'Crash'),
+            $this->titleRow('2026-08-21 10:00:00', 'crash-2004', 'Movies', '2026-08-21 10:00:00', 'Movie', '', 'Crash'),
+        ]);
+
+        $this->assertIsArray($groups);
+        $this->assertCount(2, $groups);
+        $this->assertEqualsCanonicalizing(['crash-1996', 'crash-2004'], array_column($groups, 'itemId'));
+    }
+
+    public function testSameNamedSeriesInConfirmedLibrariesStayDistinct(): void
+    {
+        $service = new PlaybackStatisticsService();
+        $groupTitles = new ReflectionMethod($service, 'groupTitles');
+        $groups = $groupTitles->invoke($service, [
+            $this->titleRow('2026-08-20 10:00:00', 'episode-a', 'TV', '2026-08-20 10:00:00', 'Episode', 'Shared Show', 'Episode 1'),
+            $this->titleRow('2026-08-21 10:00:00', 'episode-b', 'Kids TV', '2026-08-21 10:00:00', 'Episode', 'Shared Show', 'Episode 2'),
+        ]);
+
+        $this->assertIsArray($groups);
+        $this->assertCount(2, $groups);
+    }
+
+    public function testExclusionsRemoveRowsBeforeSameTitleGroupsAreBuilt(): void
+    {
+        $service = new PlaybackStatisticsService();
+        $filterRows = new ReflectionMethod($service, 'withoutExcludedLibraryRows');
+        $groupTitles = new ReflectionMethod($service, 'groupTitles');
+        $rows = [
+            $this->titleRow('2026-08-20 10:00:00', 'included', 'Movies', '2026-08-20 10:00:00', 'Movie', '', 'Crash'),
+            $this->titleRow('2026-08-21 10:00:00', 'included', 'Blocked', '2026-08-21 10:00:00', 'Movie', '', 'Crash'),
+            $this->titleRow('2026-08-22 10:00:00', 'unmatched', '', '', 'Movie', '', 'Crash'),
+        ];
+        $pathCalls = [];
+        $eligible = $filterRows->invoke(
+            $service,
+            $rows,
+            ['blocked'],
+            static function (array $itemIds) use (&$pathCalls): array {
+                $pathCalls = $itemIds;
+
+                return ['unmatched' => ['runtime_sec' => 3600, 'library' => 'Movies']];
+            },
         );
 
-        $this->assertIsArray($filtered);
-        $this->assertCount(1, $filtered);
-        $this->assertSame('new-item', $filtered[0]['itemId']);
+        $this->assertIsArray($eligible);
+        $this->assertSame(['included', 'unmatched'], array_column($eligible, 'item_id'));
+        $this->assertSame(['unmatched'], $pathCalls);
+        $groups = $groupTitles->invoke($service, $eligible);
+        $this->assertIsArray($groups);
+        $this->assertCount(2, $groups);
+        $this->assertSame([1, 1], array_values(array_column($groups, 'plays')));
     }
 
     public function testUnresolvedLibrariesRetainPathFallbackAndDeletedItemHandling(): void
     {
         $service = new PlaybackStatisticsService();
-        $filter = new ReflectionMethod($service, 'withoutExcludedLibraryNames');
+        $filter = new ReflectionMethod($service, 'withoutExcludedLibraryRows');
         $locationCalls = 0;
         $pathCalls = [];
         $paths = [
@@ -321,28 +366,27 @@ final class PlaybackStatisticsServiceTest extends TestCase
             'included' => '/media/movies/film.mkv',
         ];
 
-        $cards = $filter->invoke(
+        $rows = $filter->invoke(
             $service,
             [
-                $this->titleCard('excluded'),
-                $this->titleCard('deleted'),
-                $this->titleCard('included'),
+                $this->titleRow('2026-08-20 10:00:00', 'excluded', '', ''),
+                $this->titleRow('2026-08-20 10:01:00', 'deleted', '', ''),
+                $this->titleRow('2026-08-20 10:02:00', 'included', '', ''),
             ],
             ['wrestling'],
-            static function () use (&$locationCalls): array {
+            static function (array $itemIds) use (&$locationCalls, &$pathCalls, $paths): array {
                 $locationCalls++;
+                $pathCalls = $itemIds;
 
-                return ['wrestling' => ['/media/wrestling']];
-            },
-            static function (string $itemId) use (&$pathCalls, $paths): string {
-                $pathCalls[] = $itemId;
-
-                return $paths[$itemId];
+                return [
+                    'excluded' => ['runtime_sec' => 3600, 'library' => 'wrestling'],
+                    'included' => ['runtime_sec' => 3600, 'library' => 'movies'],
+                ];
             },
         );
 
-        $this->assertIsArray($cards);
-        $this->assertSame(['included'], array_column($cards, 'title'));
+        $this->assertIsArray($rows);
+        $this->assertSame(['included'], array_column($rows, 'item_id'));
         $this->assertSame(1, $locationCalls);
         $this->assertSame(['excluded', 'deleted', 'included'], $pathCalls);
     }
@@ -350,43 +394,37 @@ final class PlaybackStatisticsServiceTest extends TestCase
     public function testUnresolvedLibraryLookupStillFailsOpen(): void
     {
         $service = new PlaybackStatisticsService();
-        $filter = new ReflectionMethod($service, 'withoutExcludedLibraryNames');
+        $filter = new ReflectionMethod($service, 'withoutExcludedLibraryRows');
         $pathCalls = 0;
 
-        $cards = $filter->invoke(
+        $rows = $filter->invoke(
             $service,
-            [$this->titleCard('first'), $this->titleCard('second')],
+            [
+                $this->titleRow('2026-08-20 10:00:00', 'first', '', ''),
+                $this->titleRow('2026-08-20 10:01:00', 'second', '', ''),
+            ],
             ['wrestling'],
-            static fn (): never => throw new RuntimeException('Jellyfin unavailable'),
-            static function (string $itemId) use (&$pathCalls): string {
-                $pathCalls++;
-
-                return '/media/' . $itemId;
-            },
+            static fn (array $ids): never => throw new RuntimeException('Jellyfin unavailable'),
         );
 
-        $this->assertIsArray($cards);
-        $this->assertSame(['first', 'second'], array_column($cards, 'title'));
+        $this->assertIsArray($rows);
+        $this->assertSame(['first', 'second'], array_column($rows, 'item_id'));
         $this->assertSame(0, $pathCalls);
     }
 
-    /** @return array<string, mixed> */
-    private function titleCard(string $itemId, string $library = '', bool $confirmed = false): array
-    {
-        return [
-            'title' => $itemId,
-            'itemId' => $itemId,
-            '_library' => $library,
-            '_libraryConfirmed' => $confirmed,
-        ];
-    }
-
-    private function titleRow(string $startedAt, string $itemId, string $library, string $resolvedAt): \Dibi\Row
-    {
+    private function titleRow(
+        string $startedAt,
+        string $itemId,
+        string $library,
+        string $resolvedAt,
+        string $type = 'Movie',
+        string $series = '',
+        string $name = 'Shared title',
+    ): \Dibi\Row {
         return new \Dibi\Row([
-            'item_type' => 'Movie',
-            'series_name' => '',
-            'item_name' => 'Shared title',
+            'item_type' => $type,
+            'series_name' => $series,
+            'item_name' => $name,
             'watched_sec' => 60,
             'user_name' => 'Viewer',
             'started_at' => $startedAt,

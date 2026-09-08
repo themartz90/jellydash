@@ -123,7 +123,7 @@ final class HistoryCsvImporter
             );
         };
 
-        $result = $this->repository->importHistoricalPlays($batch, $dryRun, $progress);
+        $result = $this->repository->importNativeHistoricalPlays($batch, $dryRun, $progress);
         $stats['parsed'] += count($batch);
         $stats['inserted'] += $result['inserted'];
         $stats['skipped'] += $result['skipped'];

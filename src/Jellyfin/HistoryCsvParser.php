@@ -46,7 +46,7 @@ final class HistoryCsvParser
             if (isset($header[0])) {
                 $header[0] = preg_replace('/^\xEF\xBB\xBF/', '', (string) $header[0]) ?? (string) $header[0];
             }
-            if ($header !== HistoryCsvExporter::COLUMNS) {
+            if ($header !== HistoryCsvExporter::COLUMNS && $header !== HistoryCsvExporter::V1_COLUMNS) {
                 throw new \InvalidArgumentException('This is not a supported Jellydash History CSV.');
             }
 
@@ -62,7 +62,7 @@ final class HistoryCsvParser
                 }
 
                 $record = array_combine($header, array_map(static fn (mixed $value): string => (string) $value, $values));
-                $row = $this->mapRow($record, $line);
+                $row = $this->mapRow($record, $line, $header === HistoryCsvExporter::V1_COLUMNS ? '1' : '2');
                 $identity = (string) $row['session_key'] . "\0" . (string) $row['item_id'];
                 if (isset($seen[$identity])) {
                     throw new \InvalidArgumentException('CSV row ' . $line . ' duplicates an earlier play.');
@@ -92,9 +92,9 @@ final class HistoryCsvParser
      * @param array<string, string> $record
      * @return array<string, mixed>
      */
-    private function mapRow(array $record, int $line): array
+    private function mapRow(array $record, int $line, string $version): array
     {
-        if (($record['jellydash_history_version'] ?? '') !== HistoryCsvExporter::FORMAT_VERSION) {
+        if (($record['jellydash_history_version'] ?? '') !== $version) {
             throw new \InvalidArgumentException('CSV row ' . $line . ' uses an unsupported History format version.');
         }
 
@@ -121,16 +121,17 @@ final class HistoryCsvParser
             throw new \InvalidArgumentException('CSV row ' . $line . ' is missing its play identity.');
         }
 
-        foreach (['started_at', 'updated_at'] as $column) {
-            $row[$column] = $this->date($record[$column] ?? '', $sourceTimezone, $targetTimezone, $line, $column, false);
-        }
-        foreach (['ended_at', 'library_resolved_at'] as $column) {
-            $row[$column] = $this->date($record[$column] ?? '', $sourceTimezone, $targetTimezone, $line, $column, true);
+        foreach (['started_at', 'updated_at', 'ended_at', 'library_resolved_at'] as $column) {
+            $epoch = $this->epoch($record[$column . '_epoch'] ?? '', $line, $column);
+            $row[$column] = $this->date($record[$column] ?? '', $sourceTimezone, $targetTimezone, $line, $column, !in_array($column, ['started_at', 'updated_at'], true), $epoch);
+            $row[$column . '_epoch'] = $epoch;
         }
 
         foreach (['watched_sec', 'runtime_sec'] as $column) {
             $row[$column] = $this->unsignedInteger($record[$column] ?? '', $line, $column);
         }
+        $duration = $record['watch_duration_sec'] ?? '';
+        $row['watch_duration_sec'] = $duration === '' ? null : $this->unsignedInteger($duration, $line, 'watch_duration_sec');
         $row['is_video_direct'] = $this->nullableBoolean($record['is_video_direct'] ?? '', $line, 'is_video_direct');
         $row['is_audio_direct'] = $this->nullableBoolean($record['is_audio_direct'] ?? '', $line, 'is_audio_direct');
         $row['is_finished'] = $this->requiredBoolean($record['is_finished'] ?? '', $line, 'is_finished');
@@ -152,9 +153,13 @@ final class HistoryCsvParser
         int $line,
         string $column,
         bool $nullable,
+        ?int $epoch = null,
     ): ?string {
         $value = $this->restoreCell(trim($value));
         if ($value === '' && $nullable) {
+            if ($epoch !== null) {
+                throw new \InvalidArgumentException('CSV row ' . $line . ' has an epoch without its ' . $column . ' value.');
+            }
             return null;
         }
 
@@ -166,7 +171,44 @@ final class HistoryCsvParser
             throw new \InvalidArgumentException('CSV row ' . $line . ' has an invalid ' . $column . ' value.');
         }
 
+        if ($epoch !== null) {
+            $date = (new \DateTimeImmutable('@' . $epoch))->setTimezone($source);
+            if ($date->format('Y-m-d H:i:s') !== $value) {
+                throw new \InvalidArgumentException('CSV row ' . $line . ' has an epoch that does not match ' . $column . '.');
+            }
+        } elseif ($source->getName() !== $target->getName() && $this->ambiguousLocalTime($value, $source)) {
+            throw new \InvalidArgumentException('CSV row ' . $line . ' has an ambiguous ' . $column . ' during a clock change. Restore using the source timezone; this older timestamp has no UTC offset.');
+        }
+
         return $date->setTimezone($target)->format('Y-m-d H:i:s');
+    }
+
+    private function epoch(string $value, int $line, string $column): ?int
+    {
+        $value = $this->restoreCell(trim($value));
+        if ($value === '') {
+            return null;
+        }
+        if (preg_match('/^-?\d+$/D', $value) !== 1 || (float) $value < -62135596800 || (float) $value > 253402300799) {
+            throw new \InvalidArgumentException('CSV row ' . $line . ' has an invalid ' . $column . '_epoch value.');
+        }
+        return (int) $value;
+    }
+
+    private function ambiguousLocalTime(string $value, \DateTimeZone $zone): bool
+    {
+        $wall = (new \DateTimeImmutable($value, new \DateTimeZone('UTC')))->getTimestamp();
+        $offsets = [];
+        foreach ($zone->getTransitions($wall - 172800, $wall + 172800) ?: [] as $transition) {
+            $offsets[(int) $transition['offset']] = true;
+        }
+        $matches = 0;
+        foreach (array_keys($offsets) as $offset) {
+            if ((new \DateTimeImmutable('@' . ($wall - $offset)))->setTimezone($zone)->format('Y-m-d H:i:s') === $value) {
+                ++$matches;
+            }
+        }
+        return $matches > 1;
     }
 
     private function unsignedInteger(string $value, int $line, string $column): int

@@ -102,6 +102,8 @@ final class HistoryController extends Controller
         $yesterday = (new \DateTimeImmutable('yesterday'))->format('Y-m-d');
 
         foreach ($rows as $row) {
+            $rowData = $row->toArray();
+            $watchDuration = $rowData['watch_duration_sec'] ?? null;
             $startedAt = new \DateTimeImmutable((string) $row['started_at']);
             $dayKey = $startedAt->format('Y-m-d');
 
@@ -116,19 +118,22 @@ final class HistoryController extends Controller
                     'summary' => '',
                     'plays' => [],
                     'watch_sec' => 0,
+                    'estimated' => false,
                 ];
             }
 
             $play = $this->rowView($row, $startedAt, $avatars);
-            $groups[$dayKey]['watch_sec'] += (int) $row['watched_sec'];
+            $groups[$dayKey]['watch_sec'] += (int) ($watchDuration ?? $row['watched_sec']);
+            $groups[$dayKey]['estimated'] = $groups[$dayKey]['estimated'] || $watchDuration === null;
             $groups[$dayKey]['plays'][] = $play;
         }
 
         foreach ($groups as &$group) {
             $count = count($group['plays']);
             $group['summary'] = $count . ($count === 1 ? ' play - ' : ' plays - ')
-                . $this->durationLabel((int) $group['watch_sec']);
-            unset($group['watch_sec']);
+                . $this->durationLabel((int) $group['watch_sec'])
+                . ($group['estimated'] ? ' estimated' : ' watched');
+            unset($group['watch_sec'], $group['estimated']);
         }
         unset($group);
 
@@ -143,6 +148,8 @@ final class HistoryController extends Controller
         $itemType = (string) $row['item_type'];
         $isTranscode = (string) $row['play_method'] === 'Transcode';
         $watchedSec = (int) $row['watched_sec'];
+        $watchDuration = $row->toArray()['watch_duration_sec'] ?? null;
+        $viewingSec = (int) ($watchDuration ?? $watchedSec);
         $runtimeSec = (int) $row['runtime_sec'];
         $completion = $runtimeSec > 0 ? min(100, (int) round(($watchedSec / $runtimeSec) * 100)) : 0;
         $seriesName = (string) ($row['series_name'] ?? '');
@@ -165,7 +172,7 @@ final class HistoryController extends Controller
             'isDirect' => !$isTranscode,
             'client' => (string) ($row['client'] ?? ''),
             'device' => (string) ($row['device'] ?? ''),
-            'watchedLabel' => $this->durationLabel($watchedSec),
+            'watchedLabel' => $this->durationLabel($viewingSec) . ($watchDuration === null ? ' estimated' : ' watched'),
             'completionPct' => $completion,
             'finished' => (bool) $row['is_finished'] || $completion >= 95,
             'poster' => $this->poster((string) $row['item_id'], $itemType),
@@ -189,7 +196,7 @@ final class HistoryController extends Controller
 
     /**
      * @param array<int, \Dibi\Row> $rows
-     * @param array{plays: int, unique_users: int, watch_sec: int, transcodes: int} $aggregate
+     * @param array{plays: int, unique_users: int, watch_sec: int, estimated_plays: int, transcodes: int} $aggregate
      * @return array<string, mixed>
      */
     private function summary(array $rows, array $aggregate, int $totalRows, int $offset): array
@@ -205,6 +212,7 @@ final class HistoryController extends Controller
             'filtered_total' => $totalFiltered,
             'unique_users' => $aggregate['unique_users'],
             'watch_time' => $this->durationLabel($aggregate['watch_sec']),
+            'watch_time_estimated' => $aggregate['estimated_plays'] > 0,
             'transcoded_pct' => ($totalFiltered > 0
                 ? (int) round(($aggregate['transcodes'] / $totalFiltered) * 100)
                 : 0) . '%',

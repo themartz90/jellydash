@@ -12,7 +12,7 @@ namespace Mk\Framework\Jellyfin;
  */
 final class StatisticsPayloadCache
 {
-    private const CACHE_SCHEMA_VERSION = 1;
+    private const CACHE_SCHEMA_VERSION = 2;
     private const DEFAULT_TTL = 120;
 
     private string $cacheDirectory;

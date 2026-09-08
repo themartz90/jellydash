@@ -6,10 +6,10 @@ namespace Mk\Framework\Jellyfin;
 
 final class HistoryCsvExporter
 {
-    public const FORMAT_VERSION = '1';
+    public const FORMAT_VERSION = '2';
 
     /** @var array<int, string> */
-    public const COLUMNS = [
+    public const V1_COLUMNS = [
         'jellydash_history_version',
         'jellydash_timezone',
         'session_key',
@@ -41,6 +41,15 @@ final class HistoryCsvExporter
         'watched_sec',
         'runtime_sec',
         'is_finished',
+    ];
+
+    public const COLUMNS = [
+        ...self::V1_COLUMNS,
+        'watch_duration_sec',
+        'started_at_epoch',
+        'updated_at_epoch',
+        'ended_at_epoch',
+        'library_resolved_at_epoch',
     ];
 
     /** @param (\Closure(): \DateTimeImmutable)|null $clock */
@@ -81,7 +90,10 @@ final class HistoryCsvExporter
         foreach (array_slice(self::COLUMNS, 2) as $column) {
             $value = $row[$column] ?? '';
             if (in_array($column, ['started_at', 'updated_at', 'ended_at', 'library_resolved_at'], true)) {
-                $value = $this->dateValue($value);
+                $epoch = $row[$column . '_epoch'] ?? null;
+                $value = $epoch !== null
+                    ? (new \DateTimeImmutable('@' . (int) $epoch))->setTimezone(new \DateTimeZone(date_default_timezone_get()))->format('Y-m-d H:i:s')
+                    : $this->dateValue($value);
             }
             $values[] = $this->safeCell($value);
         }

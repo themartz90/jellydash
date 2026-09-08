@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Mk\Framework\Jellyfin;
 
+use Mk\Framework\Cache\AtomicJsonFile;
+
 final class RecentlyAddedService
 {
     private const WINDOW_DAYS = 14;
@@ -41,7 +43,32 @@ final class RecentlyAddedService
         }
 
         try {
-            return $this->refreshCache();
+            return $this->cache()->withExclusiveLock(function (): array {
+                $cached = $this->readCache();
+                $cacheSchemaIsCurrent = $cached !== null
+                    && (int) ($cached['schemaVersion'] ?? 0) === self::CACHE_SCHEMA_VERSION;
+                if ($cached !== null) {
+                    $cached = $this->pruneCachedPayload($cached);
+                }
+                if ($cacheSchemaIsCurrent && $cached !== null && (time() - (int) ($cached['generated_at'] ?? 0)) < self::CACHE_TTL) {
+                    $cached['cached'] = true;
+
+                    return $cached;
+                }
+
+                try {
+                    return $this->refreshCacheUnlocked();
+                } catch (\Throwable $e) {
+                    if ($cached !== null) {
+                        $cached['cached'] = true;
+                        $cached['stale'] = true;
+
+                        return $cached;
+                    }
+
+                    throw $e;
+                }
+            });
         } catch (\Throwable $e) {
             if ($cached !== null) {
                 $cached['cached'] = true;
@@ -58,6 +85,12 @@ final class RecentlyAddedService
      * @return array{items: array<int, array<string, mixed>>, windowDays: int, generated_at: int, cached: bool, schemaVersion: int}
      */
     public function refreshCache(): array
+    {
+        return $this->cache()->withExclusiveLock(fn (): array => $this->refreshCacheUnlocked());
+    }
+
+    /** @return array{items: array<int, array<string, mixed>>, windowDays: int, generated_at: int, cached: bool, schemaVersion: int} */
+    private function refreshCacheUnlocked(): array
     {
         $payload = $this->data();
         $this->writeCache($payload);
@@ -479,17 +512,7 @@ final class RecentlyAddedService
      */
     private function readCache(): ?array
     {
-        if (!is_file($this->cacheFile())) {
-            return null;
-        }
-
-        try {
-            $payload = json_decode((string) file_get_contents($this->cacheFile()), true, flags: JSON_THROW_ON_ERROR);
-        } catch (\Throwable) {
-            return null;
-        }
-
-        return is_array($payload) ? $payload : null;
+        return $this->cache()->read();
     }
 
     /**
@@ -497,13 +520,12 @@ final class RecentlyAddedService
      */
     private function writeCache(array $payload): void
     {
-        $directory = dirname($this->cacheFile());
-        if (!is_dir($directory)) {
-            mkdir($directory, 0775, true);
-        }
+        $this->cache()->write($payload);
+    }
 
-        file_put_contents($this->cacheFile(), json_encode($payload, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT), LOCK_EX);
-        @chmod($this->cacheFile(), 0666);
+    private function cache(): AtomicJsonFile
+    {
+        return new AtomicJsonFile($this->cacheFile());
     }
 
     /**

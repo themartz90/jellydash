@@ -112,7 +112,7 @@ final class RouterTest extends TestCase
         $this->assertStringContainsString('Notification exclusions', $output);
         $this->assertStringContainsString('Selected users never trigger playback alerts.', $output);
         $this->assertStringContainsString('/assets/js/server-stats.js?v=20260809-settings', $output);
-        $this->assertStringContainsString('/assets/js/nav-count.js?v=20260821-shared-sessions', $output);
+        $this->assertStringContainsString('/assets/js/nav-count.js?v=20260908-stale-state', $output);
         $this->assertStringContainsString('data-update-status', $output);
         $this->assertStringContainsString('/assets/js/update-status.js?v=20260810-update', $output);
         $this->assertStringContainsString('data-release-changes', $output);
@@ -121,7 +121,7 @@ final class RouterTest extends TestCase
         $this->assertStringContainsString('id="import-history"', $output);
         $this->assertStringContainsString('/assets/js/history-library-upgrade.js?v=20260822-history-upgrade-finish', $output);
         $this->assertStringContainsString('/assets/js/release-highlights.js?v=20260822-history-upgrade', $output);
-        $this->assertStringContainsString('/assets/js/history-import.js?v=20260822-native-csv', $output);
+        $this->assertStringContainsString('/assets/js/history-import.js?v=20260908-stream-completion', $output);
         $this->assertSame(200, http_response_code());
     }
 

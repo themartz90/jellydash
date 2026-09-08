@@ -147,7 +147,8 @@ final class HistoryLibraryBackfillService
             }
             $libraries = $this->resolvedLibraries($meta);
             $last = $rows[array_key_last($rows)];
-            $now = (new \DateTimeImmutable('now'))->format('Y-m-d H:i:s');
+            $nowInstant = new \DateTimeImmutable('now');
+            $now = $nowInstant->format('Y-m-d H:i:s');
 
             $this->db->begin();
             try {
@@ -162,6 +163,7 @@ final class HistoryLibraryBackfillService
                     $this->db->update('play_history', [
                         'library' => $libraries[$itemId],
                         'library_resolved_at' => $now,
+                        'library_resolved_at_epoch' => $nowInstant->getTimestamp(),
                     ])->where('id = %i', (int) $row['id'])
                         ->where('library_resolved_at IS NULL')
                         ->execute();

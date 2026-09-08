@@ -27,12 +27,14 @@ final class NowPlayingService
         /** @var array<int, array<string, mixed>> $streams */
         $streams = $mapped['streams'];
         $watchToday = 0;
+        $watchTodayEstimated = false;
 
         try {
             $history = $this->history ?? new PlayHistoryRepository();
             $streams = $this->resolveLibraries($streams, $client, $history);
             $history->logActiveStreams($streams);
             $watchToday = $history->watchTimeToday();
+            $watchTodayEstimated = $history->watchTimeTodayIsEstimated();
         } catch (\Throwable $e) {
             Log::logException($e);
         }
@@ -41,7 +43,7 @@ final class NowPlayingService
             'streams' => $streams,
             'hidden_count' => $mapped['hidden_count'],
             'hidden_sources' => $mapped['hidden_sources'],
-            'stats' => $this->stats($streams, $watchToday),
+            'stats' => $this->stats($streams, $watchToday, $watchTodayEstimated),
             'refreshed_at' => gmdate('c'),
         ];
     }
@@ -95,7 +97,7 @@ final class NowPlayingService
      * @param array<int, array<string, mixed>> $streams
      * @return array<string, mixed>
      */
-    private function stats(array $streams, int $watchToday): array
+    private function stats(array $streams, int $watchToday, bool $watchTodayEstimated): array
     {
         $users = [];
         $bitrate = 0;
@@ -113,7 +115,7 @@ final class NowPlayingService
         }
 
         return [
-            'watch_today' => $this->durationLabel($watchToday),
+            'watch_today' => ($watchTodayEstimated ? 'about ' : '') . $this->durationLabel($watchToday),
             'active_streams' => count($streams),
             'active_users' => count($users),
             'bandwidth_mbps' => number_format($bitrate / 1000000, 1, '.', ''),

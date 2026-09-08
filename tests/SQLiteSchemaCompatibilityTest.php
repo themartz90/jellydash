@@ -89,6 +89,21 @@ final class SQLiteSchemaCompatibilityTest extends TestCase
     public function testSchemaInitializationPreservesRowsAndUpgradesNotifiedColumn(): void
     {
         $this->initializeAllSchemas();
+        $this->dibi->insert('users', [
+            'username' => 'sqlite-schema-user',
+            'password' => 'not-used',
+            'name' => 'SQLite Schema User',
+            'role' => 2,
+        ])->execute();
+        $userId = (int) $this->dibi->select('id')->from('users')->fetchSingle();
+        $this->dibi->insert('auth_remember_tokens', [
+            'user_id' => $userId,
+            'selector' => str_repeat('c', 24),
+            'validator_hash' => str_repeat('d', 64),
+            'expires_at' => '2026-11-11 12:00:00',
+            'created_at' => '2026-08-11 12:00:00',
+            'last_used_at' => '2026-08-11 12:00:00',
+        ])->execute();
         $this->dibi->insert('play_history', [
             'session_key' => 'sqlite-session',
             'item_id' => 'sqlite-item',
@@ -101,15 +116,35 @@ final class SQLiteSchemaCompatibilityTest extends TestCase
         ])->execute();
         $this->dibi->query('ALTER TABLE `play_history` DROP COLUMN `notified`');
         $this->dibi->query('ALTER TABLE `play_history` DROP COLUMN `library_resolved_at`');
+        foreach (['notification_attempts', 'notification_claim_token', 'notification_claimed_at_epoch', 'notification_next_attempt_at_epoch'] as $column) {
+            $this->dibi->query('ALTER TABLE `play_history` DROP COLUMN %n', $column);
+            $this->dibi->query('ALTER TABLE `seerr_requests` DROP COLUMN %n', $column);
+        }
+        foreach (['previous_validator_hash', 'rotation_nonce', 'rotation_valid_until'] as $column) {
+            $this->dibi->query('ALTER TABLE `auth_remember_tokens` DROP COLUMN %n', $column);
+        }
 
         $this->resetSchemaState();
         $this->initializeAllSchemas();
 
-        $row = $this->dibi->select('watched_sec, notified, library_resolved_at')->from('play_history')->fetch();
+        $row = $this->dibi->select('watched_sec, notified, library_resolved_at, notification_attempts, notification_claim_token, notification_claimed_at_epoch, notification_next_attempt_at_epoch')->from('play_history')->fetch();
         $this->assertNotFalse($row);
         $this->assertSame(300, (int) $row['watched_sec']);
         $this->assertSame(1, (int) $row['notified']);
         $this->assertNull($row['library_resolved_at']);
+        $this->assertSame(0, (int) $row['notification_attempts']);
+        $this->assertNull($row['notification_claim_token']);
+        $this->assertNull($row['notification_claimed_at_epoch']);
+        $this->assertNull($row['notification_next_attempt_at_epoch']);
+        foreach (['notification_attempts', 'notification_claim_token', 'notification_claimed_at_epoch', 'notification_next_attempt_at_epoch'] as $column) {
+            $this->assertTrue($this->database->getPlatform()->columnExists('seerr_requests', $column));
+        }
+        $remember = $this->dibi->select('previous_validator_hash, rotation_nonce, rotation_valid_until')
+            ->from('auth_remember_tokens')->fetch();
+        $this->assertNotFalse($remember);
+        $this->assertNull($remember['previous_validator_hash']);
+        $this->assertNull($remember['rotation_nonce']);
+        $this->assertSame(0, (int) $remember['rotation_valid_until']);
     }
 
     public function testCoreWritesUseSQLiteConstraintAndAutoincrementSemantics(): void

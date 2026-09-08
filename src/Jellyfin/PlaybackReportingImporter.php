@@ -75,15 +75,16 @@ final class PlaybackReportingImporter
      */
     public function importFromPlugin(bool $dryRun = false, ?callable $onProgress = null): array
     {
-        $total = $this->plugin->count();
+        $boundary = $this->plugin->activityBoundary();
+        $total = $boundary['count'];
         $userNames = $this->userNames();
         $this->emitPreparing($onProgress, $total);
 
         $stats = $this->emptyStats();
-        $offset = 0;
+        $cursor = 0;
 
         while (true) {
-            $chunk = $this->plugin->activityChunk($this->parser, $offset, PlaybackReportingClient::CHUNK_SIZE);
+            $chunk = $this->plugin->activityPage($this->parser, $cursor, $boundary['lastRowId']);
             if ($chunk['fetched'] === 0) {
                 break;
             }
@@ -101,7 +102,10 @@ final class PlaybackReportingImporter
                     $stats['skipped'],
                 ),
             );
-            $offset += PlaybackReportingClient::CHUNK_SIZE;
+            if ($chunk['cursor'] <= $cursor) {
+                throw new \RuntimeException('Playback Reporting import did not advance.');
+            }
+            $cursor = $chunk['cursor'];
         }
 
         $this->finishImport($stats, $dryRun, $onProgress, $total);
@@ -162,6 +166,7 @@ final class PlaybackReportingImporter
                 : $this->endedAt((string) ($row['started_at'] ?? ''), $watched);
             $row['runtime_sec'] = $runtime;
             $row['watched_sec'] = $watched;
+            $row['watch_duration_sec'] = $watched;
             $row['is_finished'] = $finished ? 1 : 0;
             $row['updated_at'] = $endedAt ?? ($row['updated_at'] ?? null);
             $row['ended_at'] = $finished ? $endedAt : null;

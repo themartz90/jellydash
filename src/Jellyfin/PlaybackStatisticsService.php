@@ -25,12 +25,6 @@ final class PlaybackStatisticsService
     ) {
     }
 
-    /** @var array<string, string> Jellyfin item-path lookups, shared across the strips on one render. */
-    private array $pathCache = [];
-
-    /** @var array<string, array<int, string>>|null Excluded-library locations, fetched once per render. */
-    private ?array $locationsCache = null;
-
     private ?JellyfinUserAvatars $avatars = null;
 
     /**
@@ -71,8 +65,9 @@ final class PlaybackStatisticsService
         $reasonCounts = $this->reasonCounts($rows);
         $codecs = $this->bars($codecCounts, 'Other codecs');
         $reasons = $this->bars($reasonCounts, 'Other reasons');
-        $watchSeconds = $this->sum($rows, 'watched_sec');
-        $previousWatchSeconds = $this->sum($previousRows, 'watched_sec');
+        $watchSeconds = $this->sumViewingSeconds($rows);
+        $previousWatchSeconds = $this->sumViewingSeconds($previousRows);
+        $watchTimeEstimated = $this->hasEstimatedViewingTime($rows);
         $plays = count($rows);
         $previousPlays = count($previousRows);
         $transcodeRate = $directness['transcode_pct'];
@@ -91,12 +86,13 @@ final class PlaybackStatisticsService
             'mostWatched' => $mostWatched,
             'hasMostWatched' => $mostWatched['series'] !== [] || $mostWatched['movies'] !== [],
             'kpis' => [
-                $this->kpi('Total Watch Time', '#7c5cff', $this->duration($watchSeconds), $this->delta($watchSeconds, $previousWatchSeconds, $range, 'watch time')),
+                $this->kpi($watchTimeEstimated ? 'Estimated Watch Time' : 'Total Watch Time', '#7c5cff', $this->duration($watchSeconds), $this->delta($watchSeconds, $previousWatchSeconds, $range, 'watch time')),
                 $this->kpi('Total Plays', '#3b9eff', $this->comma($plays), $this->delta($plays, $previousPlays, $range, 'plays')),
                 $this->kpi('Active Users', '#34d8a6', (string) count($users), ['text' => 'unique viewers', 'color' => 'rgba(255,255,255,0.42)']),
                 $this->kpi('Transcode Rate', '#f7b955', $transcodeRate . '%', $this->rateDelta($transcodeRate, $previousTranscodeRate, $range)),
             ],
             'totalWatch' => $this->duration($watchSeconds),
+            'watchTimeEstimated' => $watchTimeEstimated,
             'totalWatchDelta' => $this->delta($watchSeconds, $previousWatchSeconds, $range, 'previous period')['text'],
             'totalWatchDeltaColor' => $this->delta($watchSeconds, $previousWatchSeconds, $range, 'previous period')['color'],
             'trend' => $this->trend($rows, $range, $now),
@@ -132,11 +128,11 @@ final class PlaybackStatisticsService
      */
     private function trending(array $rows): array
     {
-        $items = $this->titleCards($this->groupTitles($rows));
+        $items = $this->titleCards($this->groupTitles($this->titleRowsWithoutExcludedLibraries($rows)));
 
         usort($items, static fn (array $a, array $b): int => [$b['users'], $b['plays']] <=> [$a['users'], $a['plays']]);
 
-        return $this->withoutExcludedLibraries($items);
+        return $this->visibleTitleCards(array_slice($items, 0, 6));
     }
 
     /**
@@ -152,7 +148,7 @@ final class PlaybackStatisticsService
     {
         // The 'all' range already fetched the full table; don't fetch it twice.
         $rows = $range === 'all' ? $rangeRows : $repository->statisticsRowsForPeriod(null, null);
-        $groups = $this->groupTitles($rows);
+        $groups = $this->groupTitles($this->titleRowsWithoutExcludedLibraries($rows));
 
         $series = $this->titleCards(array_filter($groups, static fn (array $g): bool => (bool) $g['isEpisode']));
         $movies = $this->titleCards(array_filter(
@@ -165,8 +161,8 @@ final class PlaybackStatisticsService
         usort($movies, $byPlays);
 
         return [
-            'series' => $this->withoutExcludedLibraries($series),
-            'movies' => $this->withoutExcludedLibraries($movies),
+            'series' => $this->visibleTitleCards(array_slice($series, 0, 6)),
+            'movies' => $this->visibleTitleCards(array_slice($movies, 0, 6)),
         ];
     }
 
@@ -196,7 +192,17 @@ final class PlaybackStatisticsService
             $name = (string) ($row['item_name'] ?? '');
             $isEpisode = $type === 'Episode' && $series !== '';
             $title = $isEpisode ? $series : ($name !== '' ? $name : 'Unknown title');
-            $key = ($isEpisode ? 'series:' : 'item:') . mb_strtolower($title);
+            $itemId = trim((string) ($row['item_id'] ?? ''));
+            $library = trim((string) ($row['library'] ?? ''));
+            $resolvedAt = trim((string) ($row['library_resolved_at'] ?? ''));
+            $libraryConfirmed = $library !== '' && $resolvedAt !== '';
+            if ($isEpisode) {
+                $libraryKey = $libraryConfirmed ? mb_strtolower($library) . ':' : '';
+                $key = 'series:' . $libraryKey . mb_strtolower($series);
+            } else {
+                $identity = $itemId !== '' ? mb_strtolower($itemId) : 'title:' . mb_strtolower($title);
+                $key = 'item:' . mb_strtolower($type) . ':' . $identity;
+            }
 
             if (!isset($groups[$key])) {
                 $groups[$key] = [
@@ -214,7 +220,7 @@ final class PlaybackStatisticsService
             }
 
             $groups[$key]['plays']++;
-            $groups[$key]['watched'] += (int) $row['watched_sec'];
+            $groups[$key]['watched'] += $this->viewingSeconds($row);
 
             $user = (string) ($row['user_name'] ?? '');
             if ($user !== '') {
@@ -272,116 +278,87 @@ final class PlaybackStatisticsService
     }
 
     /**
-     * Drop trending entries that live in an excluded Jellyfin library
-     * (TRENDING_EXCLUDE_LIBRARIES). Resolves the real library lazily for just
-     * enough top entries to fill the strip, and fails open if Jellyfin is
-     * unreachable so the section never breaks.
+     * Remove excluded and deleted title rows before grouping, so a blocked
+     * play cannot contribute counts or representative metadata to an included
+     * title. Confirmed History metadata avoids Jellyfin calls. Older rows use
+     * batched item metadata to resolve their library before grouping.
      *
-     * @param array<int, array<string, mixed>> $items
-     * @return array<int, array<string, mixed>>
+     * @param array<int, \Dibi\Row> $rows
+     * @return array<int, \Dibi\Row>
      */
-    private function withoutExcludedLibraries(array $items): array
+    private function titleRowsWithoutExcludedLibraries(array $rows): array
     {
         $excluded = $this->excludedLibraries();
         if ($excluded === []) {
-            return $this->visibleTitleCards(array_slice($items, 0, 6));
+            return $rows;
         }
 
         $client = $this->client ?? new JellyfinClient();
 
-        return $this->withoutExcludedLibraryNames(
-            $items,
+        return $this->withoutExcludedLibraryRows(
+            $rows,
             $excluded,
-            static fn (): array => $client->libraryLocations(),
-            static fn (string $itemId): string => $client->itemPath($itemId),
+            static fn (array $itemIds): array => $client->itemImportMeta($itemIds),
         );
     }
 
     /**
-     * Resolve exclusions locally for cards whose representative History row
-     * has a confirmed library. Older unresolved rows retain the path-based
-     * Jellyfin fallback.
-     *
-     * @param array<int, array<string, mixed>> $items
+     * @param array<int, \Dibi\Row> $rows
      * @param array<int, string> $excluded lowercased library names
-     * @param callable(): array<string, array<int, string>> $loadLocations
-     * @param callable(string): string $loadItemPath
-     * @return array<int, array<string, mixed>>
+     * @param callable(array<int, string>): array<string, array{runtime_sec: int, library: string}> $loadMeta
+     * @return array<int, \Dibi\Row>
      */
-    private function withoutExcludedLibraryNames(
-        array $items,
+    private function withoutExcludedLibraryRows(
+        array $rows,
         array $excluded,
-        callable $loadLocations,
-        callable $loadItemPath,
+        callable $loadMeta,
     ): array {
-        $kept = [];
-        $lookupFailed = false;
-        $prefixes = null;
-
-        foreach ($items as $item) {
-            if (count($kept) >= 6) {
-                break;
-            }
-
-            $library = trim((string) ($item['_library'] ?? ''));
-            $libraryConfirmed = ($item['_libraryConfirmed'] ?? false) === true && $library !== '';
-            if ($libraryConfirmed) {
-                if (in_array(mb_strtolower($library), $excluded, true)) {
-                    continue;
+        $unresolvedIds = [];
+        foreach ($rows as $row) {
+            if (trim((string) ($row['library'] ?? '')) === ''
+                || trim((string) ($row['library_resolved_at'] ?? '')) === '') {
+                $itemId = trim((string) ($row['item_id'] ?? ''));
+                if ($itemId !== '') {
+                    $unresolvedIds[mb_strtolower($itemId)] = $itemId;
                 }
+            }
+        }
 
-                $kept[] = $this->visibleTitleCard($item);
+        $meta = [];
+        $lookupFailed = false;
+        if ($unresolvedIds !== []) {
+            try {
+                $meta = $loadMeta(array_values($unresolvedIds));
+            } catch (\Throwable) {
+                $lookupFailed = true;
+            }
+        }
+
+        $kept = [];
+        foreach ($rows as $row) {
+            $library = trim((string) ($row['library'] ?? ''));
+            $libraryConfirmed = $library !== '' && trim((string) ($row['library_resolved_at'] ?? '')) !== '';
+            if ($libraryConfirmed) {
+                if (!in_array(mb_strtolower($library), $excluded, true)) {
+                    $kept[] = $row;
+                }
                 continue;
             }
 
-            if ($prefixes === null && !$lookupFailed) {
-                if ($this->locationsCache === null) {
-                    try {
-                        $this->locationsCache = $loadLocations();
-                    } catch (\Throwable $e) {
-                        $lookupFailed = true;
-                    }
-                }
-
-                if (!$lookupFailed) {
-                    $prefixes = [];
-                    foreach ($excluded as $name) {
-                        foreach ($this->locationsCache[$name] ?? [] as $location) {
-                            $location = MediaPath::normalize($location);
-                            if ($location !== '') {
-                                $prefixes[] = $location;
-                            }
-                        }
-                    }
-
-                    if ($prefixes === []) {
-                        $lookupFailed = true;
-                    }
-                }
+            if ($lookupFailed) {
+                $kept[] = $row;
+                continue;
             }
-
-            if (!$lookupFailed && $prefixes !== null) {
-                try {
-                    // Same titles surface in several strips, so look each item up once.
-                    $itemId = (string) $item['itemId'];
-                    $path = $this->pathCache[$itemId] ??= $loadItemPath($itemId);
-                } catch (\Throwable $e) {
-                    // Jellyfin outage: stop probing and keep the rest so the
-                    // strip never breaks.
-                    $lookupFailed = true;
-                    $kept[] = $this->visibleTitleCard($item);
-                    continue;
-                }
-
-                // Drop items that live in an excluded library, and items that no
-                // longer resolve at all: a deleted/temporary item has neither a
-                // path nor cover art, so it shouldn't headline Trending.
-                if ($path === '' || $this->pathInLibraries($path, $prefixes)) {
-                    continue;
-                }
+            $itemId = mb_strtolower(trim((string) ($row['item_id'] ?? '')));
+            if ($itemId === '') {
+                $kept[] = $row;
+                continue;
             }
-
-            $kept[] = $this->visibleTitleCard($item);
+            $itemMeta = $meta[$itemId] ?? null;
+            if ($itemMeta !== null
+                && !in_array(mb_strtolower(trim($itemMeta['library'])), $excluded, true)) {
+                $kept[] = $row;
+            }
         }
 
         return $kept;
@@ -407,20 +384,6 @@ final class PlaybackStatisticsService
     private function visibleTitleCards(array $items): array
     {
         return array_map($this->visibleTitleCard(...), $items);
-    }
-
-    /**
-     * @param array<int, string> $prefixes
-     */
-    private function pathInLibraries(string $path, array $prefixes): bool
-    {
-        foreach ($prefixes as $prefix) {
-            if (MediaPath::isWithin($path, $prefix)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /**
@@ -519,7 +482,7 @@ final class PlaybackStatisticsService
             if ($users[$key]['user_id'] === '') {
                 $users[$key]['user_id'] = trim((string) ($row['user_id'] ?? ''));
             }
-            $users[$key]['sec'] += (int) $row['watched_sec'];
+            $users[$key]['sec'] += $this->viewingSeconds($row);
             $users[$key]['plays']++;
         }
 
@@ -566,7 +529,7 @@ final class PlaybackStatisticsService
             $key = $name !== '' ? $name : 'Unknown client';
             $clients[$key] ??= ['name' => $key, 'sessions' => 0, 'transcodes' => 0, 'sec' => 0];
             $clients[$key]['sessions']++;
-            $clients[$key]['sec'] += (int) $row['watched_sec'];
+            $clients[$key]['sec'] += $this->viewingSeconds($row);
             if ((string) $row['play_method'] === 'Transcode') {
                 $clients[$key]['transcodes']++;
             }
@@ -845,7 +808,7 @@ final class PlaybackStatisticsService
         foreach ($rows as $row) {
             $key = (new \DateTimeImmutable((string) $row['started_at']))->format('Y-m-d');
             if (isset($buckets[$key])) {
-                $buckets[$key]['sec'] += (int) $row['watched_sec'];
+                $buckets[$key]['sec'] += $this->viewingSeconds($row);
             }
         }
 
@@ -868,7 +831,7 @@ final class PlaybackStatisticsService
         foreach ($rows as $row) {
             $key = (new \DateTimeImmutable((string) $row['started_at']))->format('Y-m');
             if (isset($buckets[$key])) {
-                $buckets[$key]['sec'] += (int) $row['watched_sec'];
+                $buckets[$key]['sec'] += $this->viewingSeconds($row);
             }
         }
 
@@ -886,7 +849,7 @@ final class PlaybackStatisticsService
         foreach ($rows as $row) {
             $year = (new \DateTimeImmutable((string) $row['started_at']))->format('Y');
             $buckets[$year] ??= ['label' => $year, 'sec' => 0];
-            $buckets[$year]['sec'] += (int) $row['watched_sec'];
+            $buckets[$year]['sec'] += $this->viewingSeconds($row);
         }
 
         ksort($buckets);
@@ -984,14 +947,33 @@ final class PlaybackStatisticsService
     /**
      * @param array<int, \Dibi\Row> $rows
      */
-    private function sum(array $rows, string $column): int
+    private function sumViewingSeconds(array $rows): int
     {
         $sum = 0;
         foreach ($rows as $row) {
-            $sum += (int) ($row[$column] ?? 0);
+            $sum += $this->viewingSeconds($row);
         }
 
         return $sum;
+    }
+
+    private function viewingSeconds(\Dibi\Row $row): int
+    {
+        $data = $row->toArray();
+
+        return max(0, (int) ($data['watch_duration_sec'] ?? $data['watched_sec'] ?? 0));
+    }
+
+    /** @param array<int, \Dibi\Row> $rows */
+    private function hasEstimatedViewingTime(array $rows): bool
+    {
+        foreach ($rows as $row) {
+            if (($row->toArray()['watch_duration_sec'] ?? null) === null) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

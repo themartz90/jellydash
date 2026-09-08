@@ -11,7 +11,7 @@ final class LibraryOverviewFrontendTest extends TestCase
         $script = (string) file_get_contents(ROOT_DIR . '/public/assets/js/libraries.js');
 
         $this->assertStringContainsString("stat('Total Items', library.totalFiles)", $script);
-        $this->assertStringContainsString("stat('Total Playback', library.playback)", $script);
+        $this->assertStringContainsString("stat(library.playbackEstimated ? 'Estimated Playback' : 'Total Playback', library.playback)", $script);
         $this->assertStringContainsString('Live item counts are unavailable.', $script);
         $this->assertStringContainsString("payload.partial || payload.stale ? 'warning' : 'ok'", $script);
         $this->assertStringNotContainsString("stat('Total Time', library.totalTime)", $script);

@@ -62,6 +62,13 @@ final class PlayHistoryRepositoryTest extends TestCase
 
         // First viewing reaches the half-way point (not finished).
         $this->repository->logActiveStreams([$this->stream(1800, 3600)], $start);
+        $this->dibi->update('play_history', [
+            'notified' => 0,
+            'notification_attempts' => 2,
+            'notification_claim_token' => str_repeat('a', 64),
+            'notification_claimed_at_epoch' => $start->getTimestamp(),
+            'notification_next_attempt_at_epoch' => $start->getTimestamp() + 300,
+        ])->execute();
 
         // Three hours later the same long-lived session+item shows up again near
         // the beginning: a re-watch, which must become a fresh play, not an
@@ -81,6 +88,10 @@ final class PlayHistoryRepositoryTest extends TestCase
         $this->assertNotNull($row);
         $this->assertSame(120, (int) $row['watched_sec']); // reset to the new play, not kept at 1800
         $this->assertSame('2099-06-19 15:00:00', $started->format('Y-m-d H:i:s'));
+        $this->assertSame(0, (int) $row['notification_attempts']);
+        $this->assertNull($row['notification_claim_token']);
+        $this->assertNull($row['notification_claimed_at_epoch']);
+        $this->assertNull($row['notification_next_attempt_at_epoch']);
     }
 
     public function testUnresolvedLiveUpdateCannotReplaceConfirmedLibrary(): void
@@ -126,6 +137,7 @@ final class PlayHistoryRepositoryTest extends TestCase
         $now = new \DateTimeImmutable('2099-06-19 12:00:00');
 
         $this->repository->logActiveStreams([$this->stream(900, 3600)], $now);
+        $this->repository->logActiveStreams([$this->stream(930, 3600)], $now->modify('+30 seconds'));
 
         $this->dibi->insert('play_history', [
             'session_key' => 'phpunit-yesterday',
@@ -138,7 +150,7 @@ final class PlayHistoryRepositoryTest extends TestCase
             'updated_at' => '2099-06-18 12:05:00',
         ])->execute();
 
-        $this->assertSame(900, $this->repository->watchTimeToday($now));
+        $this->assertSame(30, $this->repository->watchTimeToday($now));
     }
 
     public function testHistoryRowsApplyFiltersAndExposeUsers(): void
@@ -242,12 +254,37 @@ final class PlayHistoryRepositoryTest extends TestCase
 
     public function testUniqueConflictFallbackDoesNotResetAnAlreadyClaimedNotification(): void
     {
-        $source = file_get_contents(ROOT_DIR . '/src/Jellyfin/PlayHistoryRepository.php');
-        $this->assertIsString($source);
-        $this->assertStringContainsString(
-            "unset(\$data['session_key'], \$data['item_id'], \$data['started_at'], \$data['notified']);",
-            $source,
-        );
+        $now = new DateTimeImmutable('2099-06-19 12:00:00');
+        $other = new PlayHistoryRepository(Container::db());
+        $interleaved = false;
+        $token = str_repeat('b', 64);
+        $listener = function (\Dibi\Event $event) use ($other, $now, $token, &$interleaved): void {
+            if (!$interleaved && str_contains((string) $event->sql, 'SELECT id, watched_sec')) {
+                $interleaved = true;
+                $other->logActiveStreams([$this->stream(120, 3600)], $now);
+                $this->dibi->update('play_history', [
+                    'notification_attempts' => 1,
+                    'notification_claim_token' => $token,
+                    'notification_claimed_at_epoch' => $now->getTimestamp(),
+                ])->where('session_key = %s', 'phpunit-session')->execute();
+            }
+        };
+        $this->dibi->onEvent[] = $listener;
+        try {
+            $this->repository->logActiveStreams([$this->stream(120, 3600)], $now);
+        } finally {
+            $this->dibi->onEvent = array_values(array_filter(
+                $this->dibi->onEvent,
+                static fn ($callback): bool => $callback !== $listener,
+            ));
+        }
+
+        $row = $this->dibi->select('notification_attempts, notification_claim_token')
+            ->from('play_history')->where('session_key = %s', 'phpunit-session')->fetch();
+        $this->assertTrue($interleaved);
+        $this->assertNotNull($row);
+        $this->assertSame(1, (int) $row['notification_attempts']);
+        $this->assertSame($token, (string) $row['notification_claim_token']);
     }
 
     public function testHistoryRowsBreakTimestampTiesByIdDesc(): void
@@ -591,6 +628,7 @@ final class PlayHistoryRepositoryTest extends TestCase
             'client',
             'play_method',
             'watched_sec',
+            'watch_duration_sec',
             'source_video_codec',
             'transcode_reasons',
             'started_at',

@@ -46,7 +46,7 @@ final class NowPlayingFrontendTest extends TestCase
         $this->assertStringContainsString("setText('[data-nav-count]', activeStreams)", $nowPlaying);
         $this->assertStringContainsString("document.querySelector('[data-now-playing-root]')", $navCount);
         $this->assertStringContainsString('Do not start a second', $navCount);
-        $this->assertStringContainsString('nav-count.js?v=20260821-shared-sessions', $shell);
+        $this->assertStringContainsString('nav-count.js?v=20260908-stale-state', $shell);
     }
 
     public function testActiveStreamsAreLabelledAsStreams(): void

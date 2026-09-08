@@ -13,6 +13,7 @@ final class RememberTokenRepository
 {
     private const SELECTOR_BYTES = 12;
     private const VALIDATOR_BYTES = 32;
+    private const CONCURRENT_RESTORE_SECONDS = 10;
 
     private Database $database;
     private \Dibi\Connection $dibi;
@@ -55,7 +56,20 @@ final class RememberTokenRepository
         }
 
         [$selector, $validator] = $parts;
-        $row = $this->dibi->select('user_id, validator_hash, expires_at')
+        for ($attempt = 0; $attempt < 3; ++$attempt) {
+            $restored = $this->consumeAttempt($selector, $validator, $now, $lifetime);
+            if ($restored !== false) {
+                return $restored;
+            }
+        }
+
+        return null;
+    }
+
+    /** @return array{user: array<string, mixed>, token: string}|false|null */
+    private function consumeAttempt(string $selector, string $validator, int $now, int $lifetime): array|false|null
+    {
+        $row = $this->dibi->select('user_id, validator_hash, expires_at, previous_validator_hash, rotation_nonce, rotation_valid_until')
             ->from('auth_remember_tokens')
             ->where('selector = %s', $selector)
             ->limit(1)
@@ -71,10 +85,16 @@ final class RememberTokenRepository
             return null;
         }
 
-        if (!hash_equals((string) $row['validator_hash'], hash('sha256', $validator))) {
+        $hash = hash('sha256', $validator);
+        $current = hash_equals((string) $row['validator_hash'], $hash);
+        $withinRotation = (int) $row['rotation_valid_until'] > $now;
+        $previous = $withinRotation && hash_equals((string) ($row['previous_validator_hash'] ?? ''), $hash);
+        if (!$current && !$previous) {
             // A rotated token being replayed may mean the old cookie was
             // copied. Remove the selector so neither copy remains trusted.
-            $this->deleteSelector($selector);
+            $this->dibi->delete('auth_remember_tokens')
+                ->where('selector = %s', $selector)
+                ->where('validator_hash = %s', (string) $row['validator_hash'])->execute();
             return null;
         }
 
@@ -84,12 +104,31 @@ final class RememberTokenRepository
             return null;
         }
 
-        $newValidator = bin2hex(random_bytes(self::VALIDATOR_BYTES));
+        // Concurrent requests reuse the same replacement. The stored nonce
+        // cannot recover either cookie without knowing the previous secret.
+        if ($withinRotation) {
+            $replacement = $current ? $validator : hash_hmac('sha256', (string) $row['rotation_nonce'], $validator);
+            if (!hash_equals((string) $row['validator_hash'], hash('sha256', $replacement))) {
+                return null;
+            }
+
+            return ['user' => $user, 'token' => $selector . '.' . $replacement];
+        }
+
+        $nonce = bin2hex(random_bytes(16));
+        $newValidator = hash_hmac('sha256', $nonce, $validator);
         $this->dibi->update('auth_remember_tokens', [
             'validator_hash' => hash('sha256', $newValidator),
+            'previous_validator_hash' => $hash,
+            'rotation_nonce' => $nonce,
+            'rotation_valid_until' => $now + self::CONCURRENT_RESTORE_SECONDS,
             'expires_at' => $this->timestamp($now + $lifetime),
             'last_used_at' => $this->timestamp($now),
-        ])->where('selector = %s', $selector)->execute();
+        ])->where('selector = %s', $selector)
+            ->where('validator_hash = %s', $hash)->execute();
+        if ($this->dibi->getAffectedRows() !== 1) {
+            return false;
+        }
 
         return [
             'user' => $user,

@@ -15,6 +15,8 @@ vendor/bin/phpstan analyse --memory-limit=512M
 vendor/bin/phpunit --no-coverage
 ```
 
+The test suite uses its own temporary SQLite database unless you explicitly set both `DB_DRIVER` and `DB_NAME`. It does not use the database or external service URLs from your `.env` file.
+
 GitHub Actions will run the test suite against MariaDB and SQLite, then build and boot the Docker image with SQLite. Please include a short explanation of what changed and how you tested it.
 
 Do not include API tokens, `.env` files, or other private files in a pull request.

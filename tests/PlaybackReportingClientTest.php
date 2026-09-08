@@ -55,6 +55,51 @@ final class PlaybackReportingClientTest extends TestCase
         );
         $this->assertCount(1, $schemaQueries);
     }
+
+    public function testKeysetImportSurvivesTiedDatesAndPruningWithoutIncludingNewRows(): void
+    {
+        $sqlite = new SQLite3(':memory:');
+        $sqlite->exec('CREATE TABLE PlaybackActivity (DateCreated TEXT, UserId TEXT, ItemId TEXT, ItemType TEXT, ItemName TEXT, PlaybackMethod TEXT, ClientName TEXT, DeviceName TEXT, PlayDuration INTEGER)');
+        $insert = $sqlite->prepare("INSERT INTO PlaybackActivity VALUES ('2026-09-08 12:00:00', '12345', :item, 'Movie', 'Example', 'DirectPlay', 'Web', 'Browser', 30)");
+        for ($id = 1; $id <= 501; ++$id) {
+            $insert->bindValue(':item', (string) $id, SQLITE3_TEXT);
+            $insert->execute()->finalize();
+        }
+        $client = new class ($sqlite) extends PlaybackReportingClient {
+            public function __construct(private SQLite3 $sqlite)
+            {
+            }
+            protected function customQuery(string $sql, int $timeout): array
+            {
+                $result = $this->sqlite->query($sql);
+                $columns = [];
+                for ($i = 0; $i < $result->numColumns(); ++$i) {
+                    $columns[] = $result->columnName($i);
+                }
+                $rows = [];
+                while (($row = $result->fetchArray(SQLITE3_NUM)) !== false) {
+                    $rows[] = $row;
+                }
+                $result->finalize();
+                return ['columns' => $columns, 'results' => $rows];
+            }
+        };
+        $boundary = $client->activityBoundary();
+        $parser = new PlaybackReportingParser();
+        $first = $client->activityPage($parser, 0, $boundary['lastRowId']);
+        $this->assertSame(501, $boundary['count']);
+        $this->assertCount(500, $first['rows']);
+
+        $sqlite->exec('DELETE FROM PlaybackActivity WHERE rowid = 1');
+        $insert->bindValue(':item', '502', SQLITE3_TEXT);
+        $insert->execute()->finalize();
+        $second = $client->activityPage($parser, $first['cursor'], $boundary['lastRowId']);
+        $this->assertCount(1, $second['rows']);
+        $this->assertSame('501', $second['rows'][0]['item_id']);
+        $this->assertSame(501, $second['cursor']);
+        $this->assertSame(0, $client->activityPage($parser, $second['cursor'], $boundary['lastRowId'])['fetched']);
+        $sqlite->close();
+    }
 }
 
 /** @internal */
