@@ -525,6 +525,9 @@ final class PlayHistoryRepository implements LibraryHistorySource
     /** @return array{plays: int, unique_users: int, watch_sec: int, estimated_plays: int, transcodes: int} */
     public function historyAggregate(HistoryFilters $filters, ?\DateTimeImmutable $now = null): array
     {
+        $exactTranscode = $this->platform->isSqlite()
+            ? "play_method COLLATE BINARY = 'Transcode'"
+            : "BINARY play_method = 'Transcode'";
         $row = $this->filteredSelection(
             $filters,
             $now,
@@ -532,7 +535,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
                 COUNT(DISTINCT NULLIF(user_name, '')) AS unique_users,
                 COALESCE(SUM(COALESCE(watch_duration_sec, watched_sec)), 0) AS watch_sec,
                 COALESCE(SUM(CASE WHEN watch_duration_sec IS NULL THEN 1 ELSE 0 END), 0) AS estimated_plays,
-                COALESCE(SUM(CASE WHEN play_method = 'Transcode' THEN 1 ELSE 0 END), 0) AS transcodes",
+                COALESCE(SUM(CASE WHEN {$exactTranscode} THEN 1 ELSE 0 END), 0) AS transcodes",
         )->fetch();
 
         return [
@@ -976,6 +979,30 @@ final class PlayHistoryRepository implements LibraryHistorySource
         return array_values(array_map('strval', $values));
     }
 
+    /**
+     * Client names use the same raw, case-sensitive grouping as Statistics.
+     * Missing names and a literal "Unknown client" share one visible option.
+     *
+     * @return array<int, string>
+     */
+    public function clients(): array
+    {
+        $selection = $this->db->select($this->platform->isSqlite()
+            ? 'DISTINCT client COLLATE BINARY AS client'
+            : 'DISTINCT BINARY client AS client')
+            ->from('play_history');
+        $this->excludeConfiguredUsers($selection);
+
+        $clients = [];
+        foreach ($selection->fetchAll() as $row) {
+            $name = (string) ($row['client'] ?? '');
+            $clients[$name !== '' ? $name : 'Unknown client'] = true;
+        }
+        ksort($clients, SORT_STRING);
+
+        return array_keys($clients);
+    }
+
     private function ensureSchema(): void
     {
         self::$schemaConnections ??= new \WeakMap();
@@ -1158,8 +1185,10 @@ final class PlayHistoryRepository implements LibraryHistorySource
         $selection = $this->db->select($columns)->from('play_history');
         $this->excludeConfiguredUsers($selection);
 
-        $rangeDays = $filters->rangeDays();
-        if ($rangeDays !== null) {
+        if ($filters->hasExactPeriod() && $filters->start !== null && $filters->end !== null) {
+            $selection->where('started_at >= %s', $filters->start->format('Y-m-d H:i:s'));
+            $selection->where('started_at < %s', $filters->end->format('Y-m-d H:i:s'));
+        } elseif (($rangeDays = $filters->rangeDays()) !== null) {
             $now ??= new \DateTimeImmutable('now');
             $since = $now->modify('-' . $rangeDays . ' days')->format('Y-m-d H:i:s');
             $selection->where('started_at >= %s', $since);
@@ -1171,6 +1200,22 @@ final class PlayHistoryRepository implements LibraryHistorySource
 
         if ($filters->library !== '') {
             $selection->where('library = %s', $filters->library);
+        }
+
+        if ($filters->client !== '') {
+            if ($filters->client === 'Unknown client') {
+                $selection->where($this->platform->isSqlite()
+                    ? '(client IS NULL OR client COLLATE BINARY = %s OR client COLLATE BINARY = %s)'
+                    : '(client IS NULL OR BINARY client = %s OR BINARY client = %s)', '', 'Unknown client');
+            } else {
+                $selection->where($this->platform->isSqlite()
+                    ? 'client COLLATE BINARY = %s'
+                    : 'BINARY client = %s', $filters->client);
+            }
+        }
+
+        if ($filters->method !== '') {
+            $this->applyMethodFilter($selection, $filters->method);
         }
 
         if ($filters->search !== '') {
@@ -1186,6 +1231,33 @@ final class PlayHistoryRepository implements LibraryHistorySource
         }
 
         return $selection;
+    }
+
+    private function applyMethodFilter(\Dibi\Fluent $selection, string $method): void
+    {
+        $exact = fn (string $value): string => $this->db->translate(
+            $this->platform->isSqlite()
+                ? 'play_method COLLATE BINARY = %s'
+                : 'BINARY play_method = %s',
+            $value,
+        );
+        $notExact = fn (string $value): string => $this->db->translate(
+            $this->platform->isSqlite()
+                ? 'play_method COLLATE BINARY <> %s'
+                : 'BINARY play_method <> %s',
+            $value,
+        );
+
+        if ($method === 'transcode') {
+            $selection->where($exact('Transcode'));
+        } elseif ($method === 'direct-stream') {
+            $selection->where($exact('DirectStream'));
+        } elseif ($method === 'direct') {
+            $selection->where('(play_method IS NULL OR ' . $notExact('Transcode') . ')');
+        } elseif ($method === 'direct-play') {
+            $selection->where('(play_method IS NULL OR ('
+                . $notExact('Transcode') . ' AND ' . $notExact('DirectStream') . '))');
+        }
     }
 
     private function exclusions(): MonitoringExclusions

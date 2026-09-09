@@ -24,6 +24,10 @@
 
     function params(preview) {
         var values = new URLSearchParams(new FormData(form));
+        if (values.get('range') !== 'custom') {
+            values.delete('start');
+            values.delete('end');
+        }
         if (preview) {
             values.set('preview', '1');
         }
@@ -91,6 +95,12 @@
     });
     form.addEventListener('input', scheduleCount);
     form.addEventListener('change', scheduleCount);
+    form.addEventListener('formdata', function (event) {
+        if (event.formData.get('range') !== 'custom') {
+            event.formData.delete('start');
+            event.formData.delete('end');
+        }
+    });
     form.addEventListener('submit', function () {
         window.setTimeout(closeDialog, 0);
     });
@@ -98,6 +108,8 @@
         form.elements.search.value = '';
         form.elements.user.value = '';
         form.elements.library.value = '';
+        form.elements.client.value = '';
+        form.elements.method.value = '';
         form.elements.range.value = 'all';
         updateCount();
     });

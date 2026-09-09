@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Mk\Framework\Jellyfin\HistoryFilters;
 use PHPUnit\Framework\TestCase;
 
 final class HistoryTemplateTest extends TestCase
@@ -30,10 +31,13 @@ final class HistoryTemplateTest extends TestCase
         $this->assertStringContainsString('data-history-export-open', $template);
         $this->assertStringContainsString('history/_export_dialog.twig', $template);
         $this->assertStringContainsString('summary.total > 0', $template);
-        $this->assertStringContainsString('history-export.js?v=20260822-export-dialog', $template);
+        $this->assertStringContainsString('history-export.js?v=20260910-statistics-drilldowns', $template);
+        $this->assertStringContainsString('history-filters.js?v=20260910-statistics-drilldowns', $template);
         $this->assertStringNotContainsString('data-import-history-banner', $template);
         $this->assertStringNotContainsString('history-import.js', $template);
         $this->assertStringContainsString('{% for library in libraries %}', $template);
+        $this->assertStringContainsString('{% for client in clients %}', $template);
+        $this->assertStringContainsString('name="method" aria-label="Playback method"', $template);
         $this->assertStringNotContainsString('option value="Movies"', $template);
         $this->assertStringContainsString('Watch time', $template);
         $this->assertStringNotContainsString('Watch time shown', $template);
@@ -49,6 +53,7 @@ final class HistoryTemplateTest extends TestCase
     {
         $dialog = (string) file_get_contents(TEMPLATES_DIR . '/history/_export_dialog.twig');
         $script = (string) file_get_contents(ROOT_DIR . '/public/assets/js/history-export.js');
+        $filterScript = (string) file_get_contents(ROOT_DIR . '/public/assets/js/history-filters.js');
         $stylesheet = (string) file_get_contents(ROOT_DIR . '/public/assets/css/dashboard.css');
 
         $this->assertStringContainsString('action="/api/history-export.php"', $dialog);
@@ -56,12 +61,18 @@ final class HistoryTemplateTest extends TestCase
         $this->assertStringContainsString('name="search" value="{{ filters.search }}"', $dialog);
         $this->assertStringContainsString('name="user"', $dialog);
         $this->assertStringContainsString('name="library"', $dialog);
+        $this->assertStringContainsString('name="client"', $dialog);
+        $this->assertStringContainsString('name="method"', $dialog);
+        foreach (['direct', 'direct-play', 'direct-stream', 'transcode'] as $method) {
+            $this->assertStringContainsString('value="' . $method . '"', $dialog);
+        }
         $this->assertStringContainsString('name="range" value="7"', $dialog);
         $this->assertStringContainsString('name="range" value="30"', $dialog);
         $this->assertStringContainsString('name="range" value="all"', $dialog);
         $this->assertStringContainsString('data-history-export-count', $dialog);
         $this->assertStringContainsString('data-history-export-all', $dialog);
         $this->assertStringContainsString('data-history-export-download disabled', $dialog);
+        $this->assertStringContainsString('CSV format v2', $dialog);
 
         $this->assertStringContainsString("values.set('preview', '1')", $script);
         $this->assertStringContainsString("fetch('/api/history-export.php?'", $script);
@@ -69,11 +80,50 @@ final class HistoryTemplateTest extends TestCase
         $this->assertStringContainsString('AbortController', $script);
         $this->assertStringContainsString('plays are ready to export', $script);
         $this->assertStringContainsString("form.elements.range.value = 'all'", $script);
+        $this->assertStringContainsString("form.elements.client.value = ''", $script);
+        $this->assertStringContainsString("form.elements.method.value = ''", $script);
+        $this->assertStringContainsString("values.get('range') !== 'custom'", $script);
+        $this->assertStringContainsString("event.formData.get('range') !== 'custom'", $filterScript);
         $this->assertStringContainsString('window.setTimeout(closeDialog, 0)', $script);
 
         $this->assertStringContainsString('.history-export-dialog', $stylesheet);
         $this->assertStringContainsString('.history-export-period-options', $stylesheet);
         $this->assertStringContainsString('.history-export-count.is-ready', $stylesheet);
+    }
+
+    public function testExactPeriodIsVisibleAndPreservedByHistoryAndExportForms(): void
+    {
+        $template = (string) file_get_contents(TEMPLATES_DIR . '/history/index.twig');
+        $dialog = (string) file_get_contents(TEMPLATES_DIR . '/history/_export_dialog.twig');
+
+        foreach ([$template, $dialog] as $source) {
+            $this->assertStringContainsString('name="start" value="{{ filters.start }}"', $source);
+            $this->assertStringContainsString('name="end" value="{{ filters.end }}"', $source);
+            $this->assertStringContainsString('filters.period_label', $source);
+            $this->assertStringContainsString('value="custom"', $source);
+        }
+    }
+
+    public function testHistoryPagerPreservesTheExactPeriod(): void
+    {
+        $controller = new \Mk\Framework\Pages\HistoryController(new \Mk\Framework\View());
+        $url = (new ReflectionMethod($controller, 'historyUrl'))->invoke(
+            $controller,
+            new HistoryFilters(
+                user: 'Martin',
+                client: 'Jellyfin Web',
+                method: 'direct-stream',
+                range: 'custom',
+                start: new DateTimeImmutable('2026-03-02'),
+                end: new DateTimeImmutable('2026-04-01'),
+            ),
+            2,
+        );
+
+        $this->assertSame(
+            '/history?user=Martin&client=Jellyfin+Web&method=direct-stream&range=custom&start=2026-03-02&end=2026-04-01&p=2',
+            $url,
+        );
     }
 
     public function testHistoryRowsUseSharedAvatarPartial(): void

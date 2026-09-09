@@ -134,6 +134,64 @@ final class HistoryCsvExporterTest extends TestCase
         $this->assertSame(1, $clockCalls);
     }
 
+    public function testExportKeepsTheExactPeriodAndIgnoresVisiblePagination(): void
+    {
+        $this->insertPlay('phpunit-csv-custom-before', '2026-03-01 23:59:59', 'Before');
+        $this->insertPlay('phpunit-csv-custom-start', '2026-03-02 00:00:00', 'Start');
+        $this->insertPlay('phpunit-csv-custom-middle', '2026-03-15 12:00:00', 'Middle');
+        $this->insertPlay('phpunit-csv-custom-end', '2026-04-01 00:00:00', 'End');
+
+        $stream = fopen('php://temp', 'w+b');
+        $this->assertIsResource($stream);
+
+        try {
+            $count = (new HistoryCsvExporter($this->repository))->write(
+                new HistoryFilters(
+                    user: 'PHPUnit CSV Export',
+                    range: 'custom',
+                    limit: 1,
+                    offset: 1,
+                    start: new DateTimeImmutable('2026-03-02 00:00:00'),
+                    end: new DateTimeImmutable('2026-04-01 00:00:00'),
+                ),
+                $stream,
+            );
+        } finally {
+            fclose($stream);
+        }
+
+        $this->assertSame(2, $count);
+    }
+
+    public function testExportKeepsExactClientAndPlaybackMethodFilters(): void
+    {
+        $this->insertPlay('phpunit-csv-client-transcode', '2026-09-09 12:04:00', 'Transcode', client: 'Jellyfin Web', method: 'Transcode');
+        $this->insertPlay('phpunit-csv-client-stream', '2026-09-09 12:03:00', 'Stream', client: 'Jellyfin Web', method: 'DirectStream');
+        $this->insertPlay('phpunit-csv-client-legacy', '2026-09-09 12:02:00', 'Legacy', client: 'Jellyfin Web', method: 'LegacyMethod');
+        $this->insertPlay('phpunit-csv-client-case', '2026-09-09 12:01:00', 'Other client', client: 'jellyfin web', method: 'DirectStream');
+
+        $stream = fopen('php://temp', 'w+b');
+        $this->assertIsResource($stream);
+
+        try {
+            $count = (new HistoryCsvExporter($this->repository))->write(
+                new HistoryFilters(
+                    user: 'PHPUnit CSV Export',
+                    client: 'Jellyfin Web',
+                    method: 'direct',
+                    range: 'all',
+                    limit: 1,
+                    offset: 1,
+                ),
+                $stream,
+            );
+        } finally {
+            fclose($stream);
+        }
+
+        $this->assertSame(2, $count);
+    }
+
     public function testEndpointIsAuthenticatedAndDownloadsAFilteredCsv(): void
     {
         $endpoint = (string) file_get_contents(ROOT_DIR . '/public/api/history-export.php');
@@ -155,6 +213,8 @@ final class HistoryCsvExporterTest extends TestCase
         string $startedAt,
         string $itemName,
         string $userName = 'PHPUnit CSV Export',
+        string $client = 'Jellyfin Web',
+        string $method = 'DirectPlay',
     ): void {
         $this->dibi->insert('play_history', [
             'session_key' => $sessionKey,
@@ -165,9 +225,9 @@ final class HistoryCsvExporterTest extends TestCase
             'item_name' => $itemName,
             'library' => 'Movies',
             'library_resolved_at' => $startedAt,
-            'play_method' => 'DirectPlay',
+            'play_method' => $method,
             'play_method_detail' => 'Direct Play',
-            'client' => 'Jellyfin Web',
+            'client' => $client,
             'device' => 'Chrome',
             'source_video_codec' => 'H.264',
             'source_audio_codec' => 'AAC',

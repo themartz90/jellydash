@@ -23,9 +23,13 @@ final class HistoryController extends Controller
             search: $filters->search,
             user: $filters->user,
             library: $filters->library,
+            client: $filters->client,
+            method: $filters->method,
             range: $filters->range,
             limit: $filters->limit,
             offset: ($page - 1) * $filters->limit,
+            start: $filters->start,
+            end: $filters->end,
         );
         $rows = $repository->historyRows($filters);
         $pages = max(1, (int) ceil($totalFiltered / max(1, $filters->limit)));
@@ -40,11 +44,18 @@ final class HistoryController extends Controller
             'pager' => $this->pager($page, $pages, $filters),
             'users' => $repository->users(),
             'libraries' => $repository->libraries(),
+            'clients' => $repository->clients(),
             'filters' => [
                 'search' => $filters->search,
                 'user' => $filters->user,
                 'library' => $filters->library,
+                'client' => $filters->client,
+                'method' => $filters->method,
                 'range' => $filters->range,
+                'is_exact' => $filters->hasExactPeriod(),
+                'period_label' => $this->periodLabel($filters),
+                'start' => $filters->start?->format('Y-m-d') ?? '',
+                'end' => $filters->end?->format('Y-m-d') ?? '',
             ],
         ]);
     }
@@ -88,6 +99,33 @@ final class HistoryController extends Controller
         }
 
         return '/history' . ($query === [] ? '' : '?' . http_build_query($query));
+    }
+
+    private function periodLabel(HistoryFilters $filters): string
+    {
+        if (!$filters->hasExactPeriod()) {
+            return '';
+        }
+
+        $start = $filters->start;
+        $inclusiveEnd = $filters->end?->modify('-1 day');
+        if ($start === null || $inclusiveEnd === null) {
+            return '';
+        }
+
+        if ($start->format('Y-m-d') === $inclusiveEnd->format('Y-m-d')) {
+            return $start->format('M j, Y');
+        }
+
+        if ($start->format('Y') !== $inclusiveEnd->format('Y')) {
+            return $start->format('M j, Y') . ' - ' . $inclusiveEnd->format('M j, Y');
+        }
+
+        if ($start->format('m') === $inclusiveEnd->format('m')) {
+            return $start->format('M j') . ' - ' . $inclusiveEnd->format('j, Y');
+        }
+
+        return $start->format('M j') . ' - ' . $inclusiveEnd->format('M j, Y');
     }
 
     /**

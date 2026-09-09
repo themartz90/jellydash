@@ -14,6 +14,10 @@
         <p id="history-export-summary" class="release-dialog-summary">Pick the plays you want. The CSV includes every match, not only the page currently on screen.</p>
 
         <form class="history-export-form" action="/api/history-export.php" method="get" data-history-export-form>
+            {% if filters.is_exact %}
+                <input type="hidden" name="start" value="{{ filters.start }}">
+                <input type="hidden" name="end" value="{{ filters.end }}">
+            {% endif %}
             <label class="history-export-field">
                 <span>Search</span>
                 <input type="search" name="search" value="{{ filters.search }}" placeholder="Title, user, client or device" autocomplete="off">
@@ -34,14 +38,32 @@
                         {% for library in libraries %}<option value="{{ library }}" {{ filters.library == library ? 'selected' : '' }}>{{ library }}</option>{% endfor %}
                     </select>
                 </label>
+                <label class="history-export-field">
+                    <span>Client</span>
+                    <select name="client">
+                        <option value="" {{ filters.client == '' ? 'selected' : '' }}>All clients</option>
+                        {% for client in clients %}<option value="{{ client }}" {{ filters.client == client ? 'selected' : '' }}>{{ client }}</option>{% endfor %}
+                    </select>
+                </label>
+                <label class="history-export-field">
+                    <span>Playback method</span>
+                    <select name="method">
+                        <option value="" {{ filters.method == '' ? 'selected' : '' }}>All methods</option>
+                        <option value="direct" {{ filters.method == 'direct' ? 'selected' : '' }}>Direct (no transcode)</option>
+                        <option value="direct-play" {{ filters.method == 'direct-play' ? 'selected' : '' }}>Direct Play</option>
+                        <option value="direct-stream" {{ filters.method == 'direct-stream' ? 'selected' : '' }}>Direct Stream</option>
+                        <option value="transcode" {{ filters.method == 'transcode' ? 'selected' : '' }}>Transcode</option>
+                    </select>
+                </label>
             </div>
 
             <fieldset class="history-export-period">
                 <legend>Time period</legend>
                 <div class="history-export-period-options">
-                    <label><input type="radio" name="range" value="7" {{ filters.range == '7' ? 'checked' : '' }}><span><strong>7 days</strong><small>Recent plays</small></span></label>
-                    <label><input type="radio" name="range" value="30" {{ filters.range == '30' ? 'checked' : '' }}><span><strong>30 days</strong><small>Current view</small></span></label>
-                    <label><input type="radio" name="range" value="all" {{ filters.range == 'all' ? 'checked' : '' }}><span><strong>All time</strong><small>Everything</small></span></label>
+                    {% if filters.is_exact %}<label><input type="radio" name="range" value="custom" checked><span><strong>{{ filters.period_label }}</strong><small>Current view</small></span></label>{% endif %}
+                    <label><input type="radio" name="range" value="7" {{ not filters.is_exact and filters.range == '7' ? 'checked' : '' }}><span><strong>7 days</strong><small>Recent plays</small></span></label>
+                    <label><input type="radio" name="range" value="30" {{ not filters.is_exact and filters.range == '30' ? 'checked' : '' }}><span><strong>30 days</strong><small>Current view</small></span></label>
+                    <label><input type="radio" name="range" value="all" {{ not filters.is_exact and filters.range == 'all' ? 'checked' : '' }}><span><strong>All time</strong><small>Everything</small></span></label>
                 </div>
             </fieldset>
 
@@ -52,7 +74,7 @@
 
             <div class="history-export-options-row">
                 <button class="history-export-all" type="button" data-history-export-all>Choose all History</button>
-                <span>CSV format v1</span>
+                <span>CSV format v2</span>
             </div>
 
             <div class="release-dialog-actions history-export-actions">

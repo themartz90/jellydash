@@ -55,12 +55,36 @@ final class PlaybackStatisticsService
         $range = array_key_exists($range, self::RANGES) ? $range : 'week';
         $now ??= new \DateTimeImmutable('now');
         $repository = $this->repository ?? new PlayHistoryRepository();
-        $rows = $repository->statisticsRows($range, $now);
+        $periodStart = StatisticsPeriod::currentStart($range, $now);
+        $periodEnd = $periodStart === null ? null : $now->setTime(0, 0)->modify('+1 day');
+        $rows = $repository->statisticsRowsForPeriod($periodStart, $periodEnd);
         $previousRows = $this->previousRows($repository, $range, $now);
 
-        $users = $this->users($rows);
-        $clients = $this->clients($rows);
+        $users = array_map(function (array $user) use ($range, $periodStart, $periodEnd): array {
+            if ((bool) $user['filterable']) {
+                $user['href'] = $this->historyUrl($range, $periodStart, $periodEnd, (string) $user['user']);
+            }
+
+            unset($user['filterable']);
+
+            return $user;
+        }, $this->users($rows));
+        $clients = $this->clientHistoryLinks(
+            $this->clients($rows),
+            $range,
+            $periodStart,
+            $periodEnd,
+        );
         $directness = $this->directness($rows);
+        foreach ($directness['legend'] as $index => $item) {
+            $directness['legend'][$index]['href'] = $this->historyUrl(
+                $range,
+                $periodStart,
+                $periodEnd,
+                method: (string) $item['method'],
+            );
+            unset($directness['legend'][$index]['method']);
+        }
         $codecCounts = $this->counts($rows, 'source_video_codec');
         $reasonCounts = $this->reasonCounts($rows);
         $codecs = $this->bars($codecCounts, 'Other codecs');
@@ -73,7 +97,7 @@ final class PlaybackStatisticsService
         $transcodeRate = $directness['transcode_pct'];
         $previousDirectness = $this->directness($previousRows);
         $previousTranscodeRate = count($previousRows) > 0 ? $previousDirectness['transcode_pct'] : null;
-        $trending = $this->trending($rows);
+        $trending = $this->trending($rows, $range, $periodStart, $periodEnd);
         $mostWatched = $this->mostWatched($repository, $range, $rows);
 
         return [
@@ -87,9 +111,21 @@ final class PlaybackStatisticsService
             'hasMostWatched' => $mostWatched['series'] !== [] || $mostWatched['movies'] !== [],
             'kpis' => [
                 $this->kpi($watchTimeEstimated ? 'Estimated Watch Time' : 'Total Watch Time', '#7c5cff', $this->duration($watchSeconds), $this->delta($watchSeconds, $previousWatchSeconds, $range, 'watch time')),
-                $this->kpi('Total Plays', '#3b9eff', $this->comma($plays), $this->delta($plays, $previousPlays, $range, 'plays')),
+                $this->kpi(
+                    'Total Plays',
+                    '#3b9eff',
+                    $this->comma($plays),
+                    $this->delta($plays, $previousPlays, $range, 'plays'),
+                    $this->historyUrl($range, $periodStart, $periodEnd),
+                ),
                 $this->kpi('Active Users', '#34d8a6', (string) count($users), ['text' => 'unique viewers', 'color' => 'rgba(255,255,255,0.42)']),
-                $this->kpi('Transcode Rate', '#f7b955', $transcodeRate . '%', $this->rateDelta($transcodeRate, $previousTranscodeRate, $range)),
+                $this->kpi(
+                    'Transcode Rate',
+                    '#f7b955',
+                    $transcodeRate . '%',
+                    $this->rateDelta($transcodeRate, $previousTranscodeRate, $range),
+                    $this->historyUrl($range, $periodStart, $periodEnd, method: 'transcode'),
+                ),
             ],
             'totalWatch' => $this->duration($watchSeconds),
             'watchTimeEstimated' => $watchTimeEstimated,
@@ -126,9 +162,19 @@ final class PlaybackStatisticsService
      * @param array<int, \Dibi\Row> $rows
      * @return array<int, array<string, mixed>>
      */
-    private function trending(array $rows): array
+    private function trending(
+        array $rows,
+        string $range,
+        ?\DateTimeImmutable $periodStart,
+        ?\DateTimeImmutable $periodEnd,
+    ): array
     {
-        $items = $this->titleCards($this->groupTitles($this->titleRowsWithoutExcludedLibraries($rows)));
+        $items = $this->titleCards(
+            $this->groupTitles($this->titleRowsWithoutExcludedLibraries($rows)),
+            $range,
+            $periodStart,
+            $periodEnd,
+        );
 
         usort($items, static fn (array $a, array $b): int => [$b['users'], $b['plays']] <=> [$a['users'], $a['plays']]);
 
@@ -150,11 +196,17 @@ final class PlaybackStatisticsService
         $rows = $range === 'all' ? $rangeRows : $repository->statisticsRowsForPeriod(null, null);
         $groups = $this->groupTitles($this->titleRowsWithoutExcludedLibraries($rows));
 
-        $series = $this->titleCards(array_filter($groups, static fn (array $g): bool => (bool) $g['isEpisode']));
-        $movies = $this->titleCards(array_filter(
-            $groups,
-            static fn (array $g): bool => !$g['isEpisode'] && (string) $g['type'] === 'Movie'
-        ));
+        $series = $this->titleCards(
+            array_filter($groups, static fn (array $g): bool => (bool) $g['isEpisode']),
+            'all',
+        );
+        $movies = $this->titleCards(
+            array_filter(
+                $groups,
+                static fn (array $g): bool => !$g['isEpisode'] && (string) $g['type'] === 'Movie'
+            ),
+            'all',
+        );
 
         $byPlays = static fn (array $a, array $b): int => [$b['plays'], $b['users']] <=> [$a['plays'], $a['users']];
         usort($series, $byPlays);
@@ -249,7 +301,12 @@ final class PlaybackStatisticsService
      * @param array<string, array<string, mixed>> $groups
      * @return array<int, array<string, mixed>>
      */
-    private function titleCards(array $groups): array
+    private function titleCards(
+        array $groups,
+        string $range,
+        ?\DateTimeImmutable $periodStart = null,
+        ?\DateTimeImmutable $periodEnd = null,
+    ): array
     {
         $items = [];
 
@@ -268,7 +325,12 @@ final class PlaybackStatisticsService
                 'meta' => $plays . ($plays === 1 ? ' play' : ' plays')
                     . ' · ' . $userCount . ($userCount === 1 ? ' viewer' : ' viewers'),
                 'poster' => $this->poster((string) $group['itemId'], (bool) $group['isEpisode']),
-                'href' => '/history?search=' . rawurlencode((string) $group['title']),
+                'href' => $this->historyUrl(
+                    $range,
+                    $periodStart,
+                    $periodEnd,
+                    search: (string) $group['title'],
+                ),
                 '_library' => (string) $group['library'],
                 '_libraryConfirmed' => (bool) $group['libraryConfirmed'],
             ];
@@ -445,6 +507,92 @@ final class PlaybackStatisticsService
         return $repository->statisticsRowsForPeriod($period['start'], $period['end']);
     }
 
+    private function historyUrl(
+        string $range,
+        ?\DateTimeImmutable $start,
+        ?\DateTimeImmutable $end,
+        ?string $user = null,
+        ?string $search = null,
+        ?string $client = null,
+        ?string $method = null,
+    ): string {
+        $query = [];
+
+        if ($search !== null) {
+            $query['search'] = $search;
+        }
+
+        if ($user !== null) {
+            $query['user'] = $user;
+        }
+
+        if ($client !== null) {
+            $query['client'] = $client;
+        }
+
+        if ($method !== null) {
+            $query['method'] = $method;
+        }
+
+        if ($range === 'all') {
+            $query['range'] = 'all';
+        } elseif ($start !== null && $end !== null) {
+            $query['range'] = 'custom';
+            $query['start'] = $start->format('Y-m-d');
+            $query['end'] = $end->format('Y-m-d');
+        }
+
+        return '/history?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
+    }
+
+    /**
+     * @param array<string, mixed> $clients
+     * @return array<string, mixed>
+     */
+    private function clientHistoryLinks(
+        array $clients,
+        string $range,
+        ?\DateTimeImmutable $start,
+        ?\DateTimeImmutable $end,
+    ): array {
+        foreach (['breakdown', 'ranked', 'usage'] as $group) {
+            foreach ($clients[$group] as $index => $item) {
+                $clients[$group][$index]['href'] = $this->historyUrl(
+                    $range,
+                    $start,
+                    $end,
+                    client: (string) $item['name'],
+                );
+            }
+        }
+
+        foreach ($clients['transcode'] as $index => $item) {
+            $client = (string) $item['name'];
+            $clients['transcode'][$index]['href'] = $this->historyUrl(
+                $range,
+                $start,
+                $end,
+                client: $client,
+            );
+            $clients['transcode'][$index]['directHref'] = $this->historyUrl(
+                $range,
+                $start,
+                $end,
+                client: $client,
+                method: 'direct',
+            );
+            $clients['transcode'][$index]['transcodeHref'] = $this->historyUrl(
+                $range,
+                $start,
+                $end,
+                client: $client,
+                method: 'transcode',
+            );
+        }
+
+        return $clients;
+    }
+
     /**
      * @return array<int, array{key: string, label: string, href: string, active: bool}>
      */
@@ -472,14 +620,16 @@ final class PlaybackStatisticsService
         $users = [];
 
         foreach ($rows as $row) {
-            $name = (string) ($row['user_name'] ?? 'Unknown user');
+            $name = (string) ($row['user_name'] ?? '');
             $key = $name !== '' ? $name : 'Unknown user';
             $users[$key] ??= [
                 'user' => $key,
                 'user_id' => trim((string) ($row['user_id'] ?? '')),
                 'sec' => 0,
                 'plays' => 0,
+                'filterable' => $name !== '',
             ];
+            $users[$key]['filterable'] = (bool) $users[$key]['filterable'] && $name !== '';
             if ($users[$key]['user_id'] === '') {
                 $users[$key]['user_id'] = trim((string) ($row['user_id'] ?? ''));
             }
@@ -513,6 +663,7 @@ final class PlaybackStatisticsService
                 'avg' => $this->duration($avgMinutes * 60),
                 'w' => (int) round(($seconds / $max) * 100) . '%',
                 'share' => ($sharePercentages[(string) $user['user']] ?? 0) . '%',
+                'filterable' => (bool) $user['filterable'],
             ];
         }, $users));
     }
@@ -634,9 +785,9 @@ final class PlaybackStatisticsService
                 ])
                 : 'conic-gradient(rgba(255,255,255,.08) 0% 100%)',
             'legend' => [
-                ['label' => 'Direct Play', 'color' => '#34d8a6', 'pct' => $directPct . '%'],
-                ['label' => 'Direct Stream', 'color' => '#3b9eff', 'pct' => $streamPct . '%'],
-                ['label' => 'Transcode', 'color' => '#f7b955', 'pct' => $transcodePct . '%'],
+                ['label' => 'Direct Play', 'method' => 'direct-play', 'color' => '#34d8a6', 'pct' => $directPct . '%'],
+                ['label' => 'Direct Stream', 'method' => 'direct-stream', 'color' => '#3b9eff', 'pct' => $streamPct . '%'],
+                ['label' => 'Transcode', 'method' => 'transcode', 'color' => '#f7b955', 'pct' => $transcodePct . '%'],
             ],
         ];
     }
@@ -1026,15 +1177,21 @@ final class PlaybackStatisticsService
      * @param array{text: string, color: string} $delta
      * @return array<string, string>
      */
-    private function kpi(string $label, string $color, string $value, array $delta): array
+    private function kpi(string $label, string $color, string $value, array $delta, ?string $href = null): array
     {
-        return [
+        $kpi = [
             'label' => $label,
             'color' => $color,
             'value' => $value,
             'delta' => $delta['text'],
             'deltaColor' => $delta['color'],
         ];
+
+        if ($href !== null) {
+            $kpi['href'] = $href;
+        }
+
+        return $kpi;
     }
 
     private function duration(int $seconds): string

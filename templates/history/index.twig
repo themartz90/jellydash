@@ -23,7 +23,11 @@
         </div>
         <p data-history-summary>{% if summary.shown > 0 %}Showing {{ summary.from }}-{{ summary.to }} of {{ summary.filtered_total }} plays{% else %}Showing 0 of {{ summary.filtered_total }} plays{% endif %}</p>
     </div>
-    <form class="filter-bar" method="get" action="/history">
+    <form class="filter-bar" method="get" action="/history" data-history-filter-form>
+        {% if filters.is_exact %}
+            <input type="hidden" name="start" value="{{ filters.start }}">
+            <input type="hidden" name="end" value="{{ filters.end }}">
+        {% endif %}
         <label class="search-control">
             <span aria-hidden="true">Search</span>
             <input type="search" name="search" value="{{ filters.search }}" placeholder="Search title or user">
@@ -40,10 +44,24 @@
                 <option value="{{ library }}" {{ filters.library == library ? 'selected' : '' }}>{{ library }}</option>
             {% endfor %}
         </select>
+        <select name="client" aria-label="Client">
+            <option value="" {{ filters.client == '' ? 'selected' : '' }}>All clients</option>
+            {% for client in clients %}
+                <option value="{{ client }}" {{ filters.client == client ? 'selected' : '' }}>{{ client }}</option>
+            {% endfor %}
+        </select>
+        <select name="method" aria-label="Playback method">
+            <option value="" {{ filters.method == '' ? 'selected' : '' }}>All methods</option>
+            <option value="direct" {{ filters.method == 'direct' ? 'selected' : '' }}>Direct (no transcode)</option>
+            <option value="direct-play" {{ filters.method == 'direct-play' ? 'selected' : '' }}>Direct Play</option>
+            <option value="direct-stream" {{ filters.method == 'direct-stream' ? 'selected' : '' }}>Direct Stream</option>
+            <option value="transcode" {{ filters.method == 'transcode' ? 'selected' : '' }}>Transcode</option>
+        </select>
         <select name="range" aria-label="Range">
-            <option value="7" {{ filters.range == '7' ? 'selected' : '' }}>Last 7 days</option>
-            <option value="30" {{ filters.range == '30' ? 'selected' : '' }}>Last 30 days</option>
-            <option value="all" {{ filters.range == 'all' ? 'selected' : '' }}>All time</option>
+            {% if filters.is_exact %}<option value="custom" selected>{{ filters.period_label }}</option>{% endif %}
+            <option value="7" {{ not filters.is_exact and filters.range == '7' ? 'selected' : '' }}>Last 7 days</option>
+            <option value="30" {{ not filters.is_exact and filters.range == '30' ? 'selected' : '' }}>Last 30 days</option>
+            <option value="all" {{ not filters.is_exact and filters.range == 'all' ? 'selected' : '' }}>All time</option>
         </select>
         <button type="submit" class="filter-submit">Apply</button>
     </form>
@@ -85,7 +103,8 @@
 {% endblock %}
 
 {% block page_scripts %}
+    <script src="/assets/js/history-filters.js?v=20260910-statistics-drilldowns"></script>
     {% if summary.total > 0 %}
-        <script src="/assets/js/history-export.js?v=20260822-export-dialog"></script>
+        <script src="/assets/js/history-export.js?v=20260910-statistics-drilldowns"></script>
     {% endif %}
 {% endblock %}
