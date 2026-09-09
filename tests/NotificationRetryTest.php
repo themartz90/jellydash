@@ -7,6 +7,8 @@ use Mk\Framework\Database;
 use Mk\Framework\DatabasePlatform;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
 use Mk\Framework\Jellyseerr\RequestNotifier;
+use Mk\Framework\Health\WorkerMonitor;
+use Mk\Framework\Health\WorkerStatusRepository;
 use Mk\Framework\Jellyseerr\SeerrRequestRepository;
 use Mk\Framework\Notifications\ClaimedNotificationDelivery;
 use Mk\Framework\Notifications\NotificationChannel;
@@ -113,6 +115,37 @@ final class NotificationRetryTest extends TestCase
 
         $this->assertSame(0, $notifier->dispatch());
         $this->assertSame(1, $channel->calls);
+    }
+
+    public function testDeliveryHealthPersistsAcrossIdleAndRecoversAfterSuccess(): void
+    {
+        $statuses = new WorkerStatusRepository($this->database);
+        $monitor = new WorkerMonitor($statuses);
+        $failure = new CountingFailureChannel();
+        $failedNotifier = new RequestNotifier(
+            $this->repository,
+            new NotificationDispatcher(new WebPushSender(), new PushSubscriptionRepository($this->database), [$failure]),
+            null,
+            $monitor,
+        );
+
+        $this->assertSame(0, $failedNotifier->dispatch());
+        $this->assertSame('failed', $statuses->all()['request_delivery']['status']);
+        $this->assertSame('delivery_failed', $statuses->all()['request_delivery']['error_code']);
+        $this->assertSame(0, $failedNotifier->dispatch());
+        $this->assertSame('failed', $statuses->all()['request_delivery']['status']);
+
+        $this->database->getDibi()->update('seerr_requests', ['notification_next_attempt_at_epoch' => null])->execute();
+        $success = new CountingSuccessChannel();
+        $recoveredNotifier = new RequestNotifier(
+            $this->repository,
+            new NotificationDispatcher(new WebPushSender(), new PushSubscriptionRepository($this->database), [$success]),
+            null,
+            $monitor,
+        );
+        $this->assertSame(1, $recoveredNotifier->dispatch());
+        $this->assertSame('success', $statuses->all()['request_delivery']['status']);
+        $this->assertNull($statuses->all()['request_delivery']['error_code']);
     }
 
     public function testDelayedClaimCannotBypassBackoffScheduledByAnotherWorker(): void
@@ -279,5 +312,23 @@ final class CountingFailureChannel implements NotificationChannel
         ++$this->calls;
 
         return false;
+    }
+}
+
+final class CountingSuccessChannel implements NotificationChannel
+{
+    public function name(): string
+    {
+        return 'success';
+    }
+
+    public function isConfigured(): bool
+    {
+        return true;
+    }
+
+    public function send(array $notification): bool
+    {
+        return true;
     }
 }

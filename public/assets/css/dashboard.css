@@ -347,6 +347,22 @@ svg.icon-filled {
     font-size: 10.5px;
 }
 
+.system-status-nav-state {
+    display: flex !important;
+    align-items: center;
+    gap: 5px;
+}
+
+.system-status-nav-state i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-low);
+}
+
+.system-status-nav-state i.is-healthy { background: var(--color-green); }
+.system-status-nav-state i.is-attention { background: var(--color-amber); }
+
 /* Push-notification toggles (sidebar "Notifications" row + header bell). Both
    start [hidden] and are revealed by push.js only when the browser supports it;
    .settings-row's display:flex would otherwise beat the UA [hidden] rule. */
@@ -824,6 +840,90 @@ svg.icon-filled {
     background: var(--color-card);
 }
 
+.settings-card-head.system-status-head {
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+}
+
+.system-status-card {
+    scroll-margin-top: 18px;
+}
+
+.system-status-components {
+    display: grid;
+    gap: 8px;
+}
+
+.system-status-row {
+    display: grid;
+    grid-template-columns: minmax(82px, auto) minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+    padding: 11px 12px;
+    border: 1px solid rgba(255, 255, 255, .07);
+    border-radius: 11px;
+    background: rgba(255, 255, 255, .025);
+}
+
+.system-status-row strong,
+.system-status-row small {
+    display: block;
+}
+
+.system-status-row small {
+    margin-top: 3px;
+    color: var(--color-muted);
+    line-height: 1.45;
+}
+
+.system-status-state {
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.system-status-row.is-healthy .system-status-state { color: var(--color-green-text); }
+.system-status-row.is-delayed .system-status-state,
+.system-status-row.is-failed .system-status-state { color: var(--color-amber); }
+.system-status-row.is-disabled .system-status-state,
+.system-status-row.is-unknown .system-status-state,
+.system-status-row.is-checking .system-status-state { color: var(--color-muted); }
+
+.system-status-feedback {
+    min-height: 1.4em;
+    margin: 12px 0 0;
+    color: var(--color-muted);
+    font-size: 12px;
+}
+
+.system-status-manual {
+    display: grid;
+    gap: 7px;
+    margin-top: 10px;
+    color: var(--color-muted);
+    font-size: 12px;
+}
+
+.system-status-manual[hidden] { display: none; }
+
+.system-status-manual textarea {
+    width: 100%;
+    min-height: 160px;
+    resize: vertical;
+    padding: 10px;
+    color: var(--color-text);
+    font: 12px/1.45 monospace;
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    background: rgba(0, 0, 0, .2);
+}
+
+@media (max-width: 620px) {
+    .settings-card-head.system-status-head { grid-template-columns: 38px minmax(0, 1fr); }
+    .system-status-copy { grid-column: 1 / -1; width: 100%; }
+    .system-status-row { grid-template-columns: 1fr; gap: 5px; }
+    .system-status-card { scroll-margin-top: 76px; }
+}
+
 .settings-card-head {
     display: grid;
     grid-template-columns: 38px minmax(0, 1fr);
@@ -1170,6 +1270,10 @@ svg.icon-filled {
     .settings-layout {
         grid-template-columns: minmax(0, 760px) minmax(400px, 1fr);
     }
+
+    .settings-layout > .settings-form { grid-column: 1; grid-row: 1; }
+    .settings-layout > .settings-import { grid-column: 2; grid-row: 1; }
+    .settings-layout > .system-status-card { grid-column: 1 / -1; grid-row: 2; }
 
     .settings-layout > .settings-import .settings-import-sources {
         grid-template-columns: 1fr;

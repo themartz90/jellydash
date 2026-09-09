@@ -10,6 +10,7 @@ use Mk\Framework\DatabasePlatform;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
 use Mk\Framework\Jellyseerr\SeerrRequestRepository;
 use Mk\Framework\Push\PushSubscriptionRepository;
+use Mk\Framework\Health\WorkerStatusRepository;
 use Mk\Framework\View;
 use PHPUnit\Framework\TestCase;
 
@@ -82,6 +83,7 @@ final class SchemaCompatibilityTest extends TestCase
             'play_history',
             'push_subscriptions',
             'seerr_requests',
+            'system_status',
             'users',
         ], $this->tableNames());
     }
@@ -232,6 +234,7 @@ final class SchemaCompatibilityTest extends TestCase
     public function testConcurrentJellyseerrWorkersClaimRequestOnlyOnce(): void
     {
         new SeerrRequestRepository($this->database);
+        WorkerStatusRepository::ensureSchema($this->database);
         $this->dibi->insert('seerr_requests', [
             'request_id' => 9002,
             'media_type' => 'movie',
@@ -276,6 +279,7 @@ final class SchemaCompatibilityTest extends TestCase
         new PlayHistoryRepository($this->database);
         new PushSubscriptionRepository($this->database);
         new SeerrRequestRepository($this->database);
+        WorkerStatusRepository::ensureSchema($this->database);
     }
 
     private function renderSidebar(): string

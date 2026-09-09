@@ -71,6 +71,8 @@ The project is very young and in very active development.
 
 - **Libraries.** An overview of all your libraries with item counts and type breakdowns. New libraries are picked up automatically.
 
+- **System status.** Check background collection, library refreshes, optional request sync, and notification retries from Settings. Copy a diagnostic summary without service URLs, credentials, or viewing details. See [System status](docs/SYSTEM_STATUS.md) for what the checks mean.
+
 - **Jellyseerr requests** (optional). The latest requests with their current status, plus a push notification when a new request comes in. The page only appears once you connect your Jellyseerr instance.
 
 - **Notifications** (optional). "Anna started watching The Office" straight to your phone or desktop, even with the app closed. Delivered through Telegram, Pushover, a Discord webhook, Web Push, or any combination of them.

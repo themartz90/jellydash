@@ -7,6 +7,7 @@ namespace Mk\Framework;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
 use Mk\Framework\Jellyseerr\SeerrRequestRepository;
 use Mk\Framework\Push\PushSubscriptionRepository;
+use Mk\Framework\Health\WorkerStatusRepository;
 
 final class DatabaseSchemaInitializer
 {
@@ -17,5 +18,6 @@ final class DatabaseSchemaInitializer
         new PlayHistoryRepository($database);
         new PushSubscriptionRepository($database);
         new SeerrRequestRepository($database);
+        WorkerStatusRepository::ensureSchema($database);
     }
 }

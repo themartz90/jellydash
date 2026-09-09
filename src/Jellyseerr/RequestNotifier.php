@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Mk\Framework\Jellyseerr;
 
 use Mk\Framework\Config;
+use Mk\Framework\Health\WorkerMonitor;
 use Mk\Framework\Notifications\ClaimedNotificationDelivery;
 use Mk\Framework\Notifications\NotificationDispatcher;
 
@@ -18,6 +19,7 @@ final class RequestNotifier
         private ?SeerrRequestRepository $requests = null,
         private ?NotificationDispatcher $dispatcher = null,
         private ?ClaimedNotificationDelivery $delivery = null,
+        private ?WorkerMonitor $monitor = null,
     ) {
     }
 
@@ -43,21 +45,28 @@ final class RequestNotifier
         }
 
         $notified = 0;
-        foreach ($pending as $request) {
-            $id = (int) $request['id'];
-            $token = (string) $request['notification_claim_token'];
-            if (($this->delivery ?? new ClaimedNotificationDelivery())->deliver(
-                fn (): int => $dispatcher->send($this->payloadFor($request)),
-                function () use ($repo, $id, $token): void {
-                    $repo->acknowledgeNotificationClaim($id, $token);
-                },
-                function () use ($repo, $id, $token): void {
-                    $repo->failNotificationClaim($id, $token);
-                },
-            )) {
-                $notified++;
+        ($this->monitor ?? new WorkerMonitor())->observe('request_delivery', function () use ($pending, $dispatcher, $repo, &$notified): bool {
+            $allDelivered = true;
+            foreach ($pending as $request) {
+                $id = (int) $request['id'];
+                $token = (string) $request['notification_claim_token'];
+                if (($this->delivery ?? new ClaimedNotificationDelivery())->deliver(
+                    fn (): int => $dispatcher->send($this->payloadFor($request)),
+                    function () use ($repo, $id, $token): void {
+                        $repo->acknowledgeNotificationClaim($id, $token);
+                    },
+                    function () use ($repo, $id, $token): void {
+                        $repo->failNotificationClaim($id, $token);
+                    },
+                )) {
+                    $notified++;
+                } else {
+                    $allDelivered = false;
+                }
             }
-        }
+
+            return $allDelivered;
+        });
 
         return $notified;
     }

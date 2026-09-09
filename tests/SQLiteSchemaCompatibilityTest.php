@@ -9,6 +9,7 @@ use Mk\Framework\Database;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
 use Mk\Framework\Jellyseerr\SeerrRequestRepository;
 use Mk\Framework\Push\PushSubscriptionRepository;
+use Mk\Framework\Health\WorkerStatusRepository;
 use PHPUnit\Framework\TestCase;
 
 final class SQLiteSchemaCompatibilityTest extends TestCase
@@ -52,6 +53,7 @@ final class SQLiteSchemaCompatibilityTest extends TestCase
             'play_history',
             'push_subscriptions',
             'seerr_requests',
+            'system_status',
             'users',
         ], $this->tableNames());
 
@@ -209,6 +211,7 @@ final class SQLiteSchemaCompatibilityTest extends TestCase
         new PlayHistoryRepository($this->database);
         new PushSubscriptionRepository($this->database);
         new SeerrRequestRepository($this->database);
+        WorkerStatusRepository::ensureSchema($this->database);
     }
 
     /** @return list<string> */

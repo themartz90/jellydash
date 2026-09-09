@@ -106,6 +106,7 @@ try {
             break;
 
         case 'history:poll':
+            $monitor = new Health\WorkerMonitor();
             // Once a browser has introduced the one-time library repair, keep
             // advancing it in the background so closing the page cannot lose
             // progress. A missing task is deliberately not started here: the
@@ -122,8 +123,17 @@ try {
             // Alert subscribed devices about plays that just started (skips the
             // users in PUSH_IGNORE_USERS). No-op unless VAPID keys are set.
             (new Console\HistoryPoll(
-                static fn (): int => (new Jellyfin\NowPlayingService())->recordActivePlays(),
-                static fn (): int => (new Push\PlaybackNotifier())->dispatch(),
+                static fn (): int => $monitor->run('history', static fn (): int => (new Jellyfin\NowPlayingService())->recordActivePlays()),
+                static function () use ($monitor): int {
+                    if (!Config::bool('PUSH_ENABLED', true)) {
+                        return 0;
+                    }
+                    $dispatcher = new Notifications\NotificationDispatcher();
+
+                    return $dispatcher->hasAnyChannel()
+                        ? $monitor->run('playback_notifications', static fn (): int => (new Push\PlaybackNotifier(null, $dispatcher))->dispatch())
+                        : 0;
+                },
                 static function (\Throwable $error): void {
                     Log::logException($error);
                 },
@@ -138,14 +148,40 @@ try {
             // a detail lookup only for requests we've never seen) and alert
             // subscribed devices about new ones. The page reads the mirror, so
             // it never waits on Jellyseerr.
-            $added = (new Jellyseerr\RequestSyncService())->sync();
-            if ($added > 0) {
-                echo date('c') . " seerr:poll - stored {$added} new request(s)\n";
+            $monitor = new Health\WorkerMonitor();
+            $client = new Jellyseerr\JellyseerrClient();
+            $syncError = null;
+            try {
+                $added = $client->isConfigured()
+                    ? $monitor->run('jellyseerr', static fn (): int => (new Jellyseerr\RequestSyncService($client))->sync())
+                    : 0;
+                if ($added > 0) {
+                    echo date('c') . " seerr:poll - stored {$added} new request(s)\n";
+                }
+            } catch (\Throwable $error) {
+                $syncError = $error;
             }
 
-            $announced = (new Jellyseerr\RequestNotifier())->dispatch();
-            if ($announced > 0) {
-                echo date('c') . " seerr:poll - sent {$announced} request alert(s)\n";
+            try {
+                $announced = 0;
+                if (Config::bool('PUSH_ENABLED', true) && Config::bool('SEERR_NOTIFY_ENABLED', true)) {
+                    $dispatcher = new Notifications\NotificationDispatcher();
+                    if ($dispatcher->hasAnyChannel()) {
+                        $announced = $monitor->run('request_notifications', static fn (): int => (new Jellyseerr\RequestNotifier(null, $dispatcher))->dispatch());
+                    }
+                }
+                if ($announced > 0) {
+                    echo date('c') . " seerr:poll - sent {$announced} request alert(s)\n";
+                }
+            } catch (\Throwable $error) {
+                if ($syncError === null) {
+                    $syncError = $error;
+                } else {
+                    Log::logException($error);
+                }
+            }
+            if ($syncError !== null) {
+                throw $syncError;
             }
             break;
 
@@ -181,7 +217,7 @@ try {
             // Run on a timer by the entrypoint. Leaves the cache intact if
             // Jellyfin is unavailable.
             try {
-                (new Jellyfin\LibraryOverviewService())->refreshCache();
+                (new Health\WorkerMonitor())->run('libraries', static fn () => (new Jellyfin\LibraryOverviewService())->refreshCache());
                 echo date('c') . " libraries:warm - cache refreshed\n";
             } catch (\Throwable $e) {
                 fwrite(STDERR, date('c') . ' libraries:warm skipped: ' . $e->getMessage() . "\n");

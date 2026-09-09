@@ -27,7 +27,7 @@ final class RememberLoginFrontendTest extends TestCase
         $this->assertStringContainsString("ini_set('session.gc_maxlifetime', (string) Authorization::SESSION_ABSOLUTE_TIMEOUT)", $settings);
         $this->assertStringContainsString("ROOT_DIR . '/var/sessions'", $settings);
         $this->assertStringContainsString("'lifetime' => Authorization::SESSION_ABSOLUTE_TIMEOUT", $settings);
-        $this->assertStringContainsString('dashboard.css?v=20260902-settings-layout-2', $shell);
+        $this->assertStringContainsString('dashboard.css?v=20260908-system-status', $shell);
         $this->assertStringContainsString('dashboard.css?v=20260902-settings-layout-2', $login);
     }
 }

@@ -112,6 +112,15 @@
     {% endif %}
 
     <div class="sidebar-settings" data-update-status data-app-version="{{ app_version }}">
+        <a class="settings-row" href="/settings#system-status" aria-label="System status, checking" data-system-status-nav>
+            <span class="settings-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" role="img" focusable="false"><path d="M3 12h4l2 -7l4 14l2 -7h6"></path></svg>
+            </span>
+            <span>
+                <strong>System status</strong>
+                <small class="system-status-nav-state"><i class="is-unknown" data-system-status-nav-dot aria-hidden="true"></i><span data-system-status-nav-label>Checking</span></small>
+            </span>
+        </a>
         <a class="settings-row {{ active_page == 'settings' ? 'is-active' : '' }}" href="/settings" aria-label="Settings">
             <span class="settings-icon" aria-hidden="true">
                 <svg class="icon-filled" viewBox="0 0 24 24" role="img" focusable="false">

@@ -20,6 +20,7 @@ final class MariaDbToSqliteMigrator
         'play_history',
         'push_subscriptions',
         'seerr_requests',
+        'system_status',
     ];
 
     public function __construct(private readonly Database $source)
@@ -129,7 +130,9 @@ final class MariaDbToSqliteMigrator
             throw new \RuntimeException("No compatible columns found for {$table}.");
         }
 
-        $orderBy = in_array('id', $columns, true) ? 'id' : $columns[0];
+        $orderBy = $table === 'system_status'
+            ? ['source_id', 'component']
+            : [in_array('id', $columns, true) ? 'id' : $columns[0]];
         [$sourceCount, $sourceDigest] = $this->copyRows($table, $columns, $orderBy, $destination);
 
         if ($table === 'play_history' && !in_array('notified', $sourceColumns, true)) {
@@ -146,12 +149,13 @@ final class MariaDbToSqliteMigrator
 
     /**
      * @param list<string> $columns
+     * @param list<string> $orderBy
      * @return array{int, string}
      */
     private function copyRows(
         string $table,
         array $columns,
-        string $orderBy,
+        array $orderBy,
         \Dibi\Connection $destination,
     ): array {
         $source = $this->source->getDibi();
@@ -175,13 +179,14 @@ final class MariaDbToSqliteMigrator
 
     /**
      * @param list<string> $columns
+     * @param list<string> $orderBy
      * @return array{int, string}
      */
     private function tableDigest(
         \Dibi\Connection $connection,
         string $table,
         array $columns,
-        string $orderBy,
+        array $orderBy,
     ): array {
         $hash = hash_init('sha256');
         $count = 0;
@@ -201,22 +206,26 @@ final class MariaDbToSqliteMigrator
 
     /**
      * @param list<string> $columns
+     * @param list<string> $orderBy
      * @return list<\Dibi\Row>
      */
     private function selectBatch(
         \Dibi\Connection $connection,
         string $table,
         array $columns,
-        string $orderBy,
+        array $orderBy,
         int $offset,
     ): array {
         $driver = $connection->getDriver();
         $columnSql = implode(', ', array_map($driver->escapeIdentifier(...), $columns));
 
-        return $connection->select($columnSql)
-            ->from($driver->escapeIdentifier($table))
-            ->orderBy($driver->escapeIdentifier($orderBy))
-            ->limit(self::BATCH_SIZE)
+        $selection = $connection->select($columnSql)
+            ->from($driver->escapeIdentifier($table));
+        foreach ($orderBy as $column) {
+            $selection->orderBy($driver->escapeIdentifier($column));
+        }
+
+        return $selection->limit(self::BATCH_SIZE)
             ->offset($offset)
             ->fetchAll();
     }

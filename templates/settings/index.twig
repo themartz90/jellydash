@@ -122,6 +122,30 @@
 
             </form>
 
+            <section class="settings-card system-status-card" id="system-status" data-system-status aria-labelledby="system-status-title">
+                <header class="settings-card-head system-status-head">
+                    <span class="settings-card-mark" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" focusable="false"><path d="M3 12h4l2 -7l4 14l2 -7h6"></path></svg>
+                    </span>
+                    <span class="settings-card-copy">
+                        <strong id="system-status-title">System status</strong>
+                        <span data-system-status-summary>Checking system status...</span>
+                    </span>
+                    <button class="settings-save-btn system-status-copy" type="button" data-system-status-copy disabled>Copy diagnostics</button>
+                </header>
+                <div class="system-status-components" data-system-status-components aria-live="polite">
+                    <div class="system-status-row is-checking">
+                        <span class="system-status-state">Checking</span>
+                        <span><strong>Loading checks</strong><small>Please wait.</small></span>
+                    </div>
+                </div>
+                <p class="system-status-feedback" data-system-status-feedback role="status" aria-live="polite"></p>
+                <div class="system-status-manual" data-system-status-manual hidden>
+                    <label for="system-status-diagnostics">Copy the diagnostics below manually:</label>
+                    <textarea id="system-status-diagnostics" data-system-status-text readonly></textarea>
+                </div>
+            </section>
+
             <section class="settings-card settings-import" id="import-history">
         <header class="settings-card-head">
             <span class="settings-card-mark" aria-hidden="true">

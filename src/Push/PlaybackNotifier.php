@@ -6,6 +6,7 @@ namespace Mk\Framework\Push;
 
 use Mk\Framework\AppSettings;
 use Mk\Framework\Config;
+use Mk\Framework\Health\WorkerMonitor;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
 use Mk\Framework\Notifications\ClaimedNotificationDelivery;
 use Mk\Framework\Notifications\NotificationDispatcher;
@@ -25,6 +26,7 @@ final class PlaybackNotifier
         private ?PlayHistoryRepository $history = null,
         private ?NotificationDispatcher $dispatcher = null,
         private ?ClaimedNotificationDelivery $delivery = null,
+        private ?WorkerMonitor $monitor = null,
     ) {
     }
 
@@ -50,21 +52,28 @@ final class PlaybackNotifier
         }
 
         $notified = 0;
-        foreach ($plays as $play) {
-            $id = (int) $play['id'];
-            $token = (string) $play['notification_claim_token'];
-            if (($this->delivery ?? new ClaimedNotificationDelivery())->deliver(
-                fn (): int => $dispatcher->send($this->payloadFor($play)),
-                function () use ($history, $id, $token): void {
-                    $history->acknowledgeNotificationClaim($id, $token);
-                },
-                function () use ($history, $id, $token): void {
-                    $history->failNotificationClaim($id, $token);
-                },
-            )) {
-                $notified++;
+        ($this->monitor ?? new WorkerMonitor())->observe('playback_delivery', function () use ($plays, $dispatcher, $history, &$notified): bool {
+            $allDelivered = true;
+            foreach ($plays as $play) {
+                $id = (int) $play['id'];
+                $token = (string) $play['notification_claim_token'];
+                if (($this->delivery ?? new ClaimedNotificationDelivery())->deliver(
+                    fn (): int => $dispatcher->send($this->payloadFor($play)),
+                    function () use ($history, $id, $token): void {
+                        $history->acknowledgeNotificationClaim($id, $token);
+                    },
+                    function () use ($history, $id, $token): void {
+                        $history->failNotificationClaim($id, $token);
+                    },
+                )) {
+                    $notified++;
+                } else {
+                    $allDelivered = false;
+                }
             }
-        }
+
+            return $allDelivered;
+        });
 
         return $notified;
     }

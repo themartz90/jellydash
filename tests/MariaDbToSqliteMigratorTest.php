@@ -102,6 +102,19 @@ final class MariaDbToSqliteMigratorTest extends TestCase
         $this->assertSame(1786442710, (int) $history['notification_claimed_at_epoch']);
         $this->assertSame(1786443000, (int) $history['notification_next_attempt_at_epoch']);
         $this->assertSame('Migration Movie', (string) $sqlite->select('title')->from('seerr_requests')->fetchSingle());
+        $status = $sqlite->select('status, error_code, last_started_at, last_finished_at, last_success_at')
+            ->from('system_status')->where('source_id = %s AND component = %s', 'default', 'history')->fetch();
+        $this->assertNotFalse($status);
+        $this->assertSame('failed', (string) $status['status']);
+        $this->assertSame('request_failed', (string) $status['error_code']);
+        $this->assertSame(1786442400, (int) $status['last_started_at']);
+        $this->assertSame(
+            ['history', 'libraries', 'request_notifications'],
+            array_map(
+                static fn (\Dibi\Row $row): string => (string) $row['component'],
+                $sqlite->select('component')->from('system_status')->where('source_id = %s', 'default')->orderBy('component')->fetchAll(),
+            ),
+        );
         $this->assertSame(
             str_repeat('a', 24),
             (string) $sqlite->select('selector')->from('auth_remember_tokens')->fetchSingle(),
@@ -115,8 +128,9 @@ final class MariaDbToSqliteMigratorTest extends TestCase
         $this->assertSame(102, $destination->addAuthUser('after-migration', 'password-123', 'After Migration', 2));
         $sqlite->disconnect();
 
-        foreach (['users', 'login_attempts', 'auth_remember_tokens', 'app_settings', 'play_history', 'push_subscriptions', 'seerr_requests'] as $table) {
-            $this->assertSame(1, (int) $this->sourceConnection->select('COUNT(*)')->from($table)->fetchSingle());
+        foreach (['users', 'login_attempts', 'auth_remember_tokens', 'app_settings', 'play_history', 'push_subscriptions', 'seerr_requests', 'system_status'] as $table) {
+            $expected = $table === 'system_status' ? 3 : 1;
+            $this->assertSame($expected, (int) $this->sourceConnection->select('COUNT(*)')->from($table)->fetchSingle());
         }
     }
 
@@ -345,6 +359,30 @@ final class MariaDbToSqliteMigratorTest extends TestCase
             'notified' => 1,
             'created_at' => '2026-08-11 12:00:00',
         ])->execute();
+        $this->sourceConnection->insert('system_status', [
+            'source_id' => 'default',
+            'component' => 'history',
+            'attempt_sequence' => 2,
+            'attempt_token' => null,
+            'status' => 'failed',
+            'error_code' => 'request_failed',
+            'last_started_at' => 1786442400,
+            'last_finished_at' => 1786442410,
+            'last_success_at' => 1786442300,
+        ])->execute();
+        foreach (['request_notifications', 'libraries'] as $component) {
+            $this->sourceConnection->insert('system_status', [
+                'source_id' => 'default',
+                'component' => $component,
+                'attempt_sequence' => 1,
+                'attempt_token' => null,
+                'status' => 'success',
+                'error_code' => null,
+                'last_started_at' => 1786442500,
+                'last_finished_at' => 1786442510,
+                'last_success_at' => 1786442510,
+            ])->execute();
+        }
     }
 
     private function dropTemporaryDatabase(): void
