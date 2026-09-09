@@ -56,13 +56,66 @@
         <section class="settings-card">
             <header class="settings-card-head">
                 <span class="settings-card-mark" aria-hidden="true">
-                    <svg class="icon-filled" viewBox="0 0 24 24" focusable="false"><path d="M9.883 2.207a1.9 1.9 0 0 1 2.087 1.522l.025 .167l.005 .104v7a1 1 0 0 0 .883 .993l.117 .007h6.8a2 2 0 0 1 2 2a1 1 0 0 1 -.026 .226a10 10 0 1 1 -12.27 -11.933l.27 -.067l.11 -.02z"></path><path d="M14 3.5v5.5a1 1 0 0 0 1 1h5.5a1 1 0 0 0 .943 -1.332a10 10 0 0 0 -6.11 -6.111a1 1 0 0 0 -1.333 .943z"></path></svg>
+                    <svg class="icon-filled" viewBox="0 0 24 24" focusable="false"><path d="M12 2a10 10 0 1 1 -7.071 2.929a10 10 0 0 1 7.071 -2.929zm0 2a8 8 0 0 0 -5.657 13.657l11.314 -11.314a7.963 7.963 0 0 0 -5.657 -2.343zm7.071 3.757l-11.314 11.314a8 8 0 0 0 11.314 -11.314z"></path></svg>
                 </span>
                 <span class="settings-card-copy">
-                    <strong>Statistics exclusions</strong>
-                    <span>Selected libraries are hidden from Trending and Most Watched.</span>
+                    <strong>Exclusions</strong>
+                    <span>Choose which users and libraries to exclude from activity views and alerts.</span>
                 </span>
             </header>
+            <fieldset class="settings-exclusion-group">
+                <legend>Monitoring</legend>
+            <p class="settings-note">Excluded users are hidden from Now Playing, History, Statistics, and history exports.</p>
+            {% if users is not empty %}
+                <div class="settings-checks">
+                    {% for user in users %}
+                        <label class="settings-check">
+                            <input type="checkbox" name="monitoring_ignore[]" value="{{ user }}"
+                                {{ user|lower in monitoring_ignored_users|map(u => u|lower) ? 'checked' : '' }}>
+                            <span>{{ user }}</span>
+                        </label>
+                    {% endfor %}
+                </div>
+                <label class="settings-field">
+                    <span>Additional excluded users (comma-separated)</span>
+                    <input type="text" name="monitoring_ignore_extra" value="{{ extra_monitoring_ignored }}" placeholder="Optional">
+                </label>
+            {% else %}
+                <label class="settings-field">
+                    <span>Users to exclude (comma-separated)</span>
+                    <input type="text" name="monitoring_ignore_extra" value="{{ monitoring_ignored_users|join(', ') }}" placeholder="e.g. a private profile">
+                </label>
+            {% endif %}
+            <small class="settings-note">Existing rows stay in the database. Removing an exclusion restores that earlier activity, but activity skipped while excluded cannot be reconstructed. Names match exactly and are case-insensitive.</small>
+            </fieldset>
+            <fieldset class="settings-exclusion-group">
+                <legend>Notifications</legend>
+                <p class="settings-note">Selected users never trigger playback alerts. Their activity is still recorded unless they are also excluded from monitoring.</p>
+            {% if users is not empty %}
+                <div class="settings-checks">
+                    {% for user in users %}
+                        <label class="settings-check">
+                            <input type="checkbox" name="push_ignore[]" value="{{ user }}"
+                                {{ user|lower in ignored_users|map(u => u|lower) ? 'checked' : '' }}>
+                            <span>{{ user }}</span>
+                        </label>
+                    {% endfor %}
+                </div>
+                <label class="settings-field">
+                    <span>Additional ignored users (comma-separated)</span>
+                    <input type="text" name="push_ignore_extra" value="{{ extra_ignored }}" placeholder="Optional">
+                </label>
+                <small class="settings-note">Users appear here once they show up in play history. Typically you exclude yourself.</small>
+            {% else %}
+                <label class="settings-field">
+                    <span>Users to ignore (comma-separated)</span>
+                    <input type="text" name="push_ignore_extra" value="{{ ignored_users|join(', ') }}" placeholder="e.g. your own username">
+                </label>
+            {% endif %}
+            </fieldset>
+            <fieldset class="settings-exclusion-group">
+                <legend>Statistics</legend>
+                <p class="settings-note">Selected libraries are hidden from Trending and Most Watched.</p>
             {% if libraries is not null and libraries is not empty %}
                 <div class="settings-checks">
                     {% for library in libraries %}
@@ -85,39 +138,7 @@
                     <small>Jellyfin didn't report its libraries. Enter names manually.</small>
                 </label>
             {% endif %}
-        </section>
-
-        <section class="settings-card">
-            <header class="settings-card-head">
-                <span class="settings-card-mark" aria-hidden="true">
-                    <svg class="icon-filled" viewBox="0 0 24 24" focusable="false"><path d="M14.235 19c.865 0 1.322 1.024 .745 1.668a3.992 3.992 0 0 1 -2.98 1.332a3.992 3.992 0 0 1 -2.98 -1.332c-.552 -.616 -.158 -1.579 .634 -1.661l.11 -.006h4.471z"></path><path d="M12 2c1.358 0 2.506 .903 2.875 2.141l.046 .171l.008 .043a8.013 8.013 0 0 1 4.024 6.069l.028 .287l.019 .289v2.931l.021 .136a3 3 0 0 0 1.143 1.847l.167 .117l.162 .099c.86 .487 .56 1.766 -.377 1.864l-.116 .006h-16c-1.028 0 -1.387 -1.364 -.493 -1.87a3 3 0 0 0 1.472 -2.063l.021 -.143l.001 -2.97a8 8 0 0 1 3.821 -6.454l.248 -.146l.01 -.043a3.003 3.003 0 0 1 2.562 -2.29l.182 -.017l.176 -.004z"></path></svg>
-                </span>
-                <span class="settings-card-copy">
-                    <strong>Notification exclusions</strong>
-                    <span>Selected users never trigger playback alerts.</span>
-                </span>
-            </header>
-            {% if users is not empty %}
-                <div class="settings-checks">
-                    {% for user in users %}
-                        <label class="settings-check">
-                            <input type="checkbox" name="push_ignore[]" value="{{ user }}"
-                                {{ user|lower in ignored_users|map(u => u|lower) ? 'checked' : '' }}>
-                            <span>{{ user }}</span>
-                        </label>
-                    {% endfor %}
-                </div>
-                <label class="settings-field">
-                    <span>Additional ignored users (comma-separated)</span>
-                    <input type="text" name="push_ignore_extra" value="{{ extra_ignored }}" placeholder="Optional">
-                </label>
-                <small class="settings-note">Users appear here once they show up in play history. Typically you exclude yourself.</small>
-            {% else %}
-                <label class="settings-field">
-                    <span>Users to ignore (comma-separated)</span>
-                    <input type="text" name="push_ignore_extra" value="{{ ignored_users|join(', ') }}" placeholder="e.g. your own username">
-                </label>
-            {% endif %}
+            </fieldset>
         </section>
 
             </form>

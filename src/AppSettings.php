@@ -14,18 +14,22 @@ namespace Mk\Framework;
  * real value ("user cleared this") and does NOT fall through.
  *
  * Reads are cached for the request; a DB outage degrades to defaults instead
- * of breaking the page.
+ * of breaking the page. Privacy-sensitive callers can require a successful read.
  */
 final class AppSettings
 {
     /** @var array<string, string>|null */
     private static ?array $cache = null;
+    private static bool $available = true;
     /** @var \WeakMap<\Dibi\Connection, true>|null */
     private static ?\WeakMap $schemaConnections = null;
 
-    public static function get(string $key, ?string $default = null): ?string
+    public static function get(string $key, ?string $default = null, bool $requireAvailable = false): ?string
     {
         $all = self::load();
+        if ($requireAvailable && !self::$available) {
+            throw new \RuntimeException('Application settings are unavailable.');
+        }
 
         return $all[$key] ?? $default;
     }
@@ -84,7 +88,9 @@ final class AppSettings
             self::ensureSchema($database);
             $rows = $db->select('setting_key, setting_value')->from('app_settings')->fetchPairs('setting_key', 'setting_value');
             self::$cache = array_map('strval', $rows);
+            self::$available = true;
         } catch (\Throwable $e) {
+            self::$available = false;
             Log::logException($e);
             self::$cache = [];
         }

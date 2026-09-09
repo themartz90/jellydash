@@ -41,6 +41,7 @@ final class LibraryOverviewService
         private ?LibraryOverviewClient $client = null,
         private ?LibraryHistorySource $history = null,
         private ?string $cachePath = null,
+        private ?MonitoringExclusions $exclusions = null,
     ) {
     }
 
@@ -196,6 +197,7 @@ final class LibraryOverviewService
             'generated_at' => time(),
             'cached' => false,
             'partial' => !$data['complete'],
+            'monitoring_context' => ($this->exclusions ?? new MonitoringExclusions())->fingerprint(),
         ];
     }
 
@@ -255,7 +257,13 @@ final class LibraryOverviewService
      */
     private function readCache(): ?array
     {
-        return $this->cache()->read();
+        $cached = $this->cache()->read();
+        $policy = $this->exclusions ?? new MonitoringExclusions();
+        // Old cache files predate monitoring exclusions and represent an empty
+        // rule set. Never reuse their viewing summaries with active exclusions.
+        $context = $cached['monitoring_context'] ?? (new MonitoringExclusions([]))->fingerprint();
+
+        return $context === $policy->fingerprint() ? $cached : null;
     }
 
     /**

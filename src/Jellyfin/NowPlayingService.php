@@ -13,6 +13,7 @@ final class NowPlayingService
         private ?JellyfinSessionMapper $mapper = null,
         private ?PlayHistoryRepository $history = null,
         private ?LiveLibraryResolver $libraryResolver = null,
+        private ?MonitoringExclusions $exclusions = null,
     ) {
     }
 
@@ -23,7 +24,7 @@ final class NowPlayingService
     {
         $client = $this->client ?? new JellyfinClient();
         $mapper = $this->mapper ?? new JellyfinSessionMapper($client->baseUrl());
-        $mapped = $mapper->map($client->sessions());
+        $mapped = $mapper->map(($this->exclusions ?? new MonitoringExclusions())->filterSessions($client->sessions()));
         /** @var array<int, array<string, mixed>> $streams */
         $streams = $mapped['streams'];
         $watchToday = 0;
@@ -59,7 +60,7 @@ final class NowPlayingService
         $client = $this->client ?? new JellyfinClient();
         $mapper = $this->mapper ?? new JellyfinSessionMapper($client->baseUrl());
         /** @var array<int, array<string, mixed>> $streams */
-        $streams = $mapper->map($client->sessions())['streams'];
+        $streams = $mapper->map(($this->exclusions ?? new MonitoringExclusions())->filterSessions($client->sessions()))['streams'];
 
         $history = $this->history ?? new PlayHistoryRepository();
         $streams = $this->resolveLibraries($streams, $client, $history);

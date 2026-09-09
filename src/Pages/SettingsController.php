@@ -28,10 +28,10 @@ final class SettingsController extends Controller
             $libraries = null;
         }
 
-        // Users seen in play history, for the notification-ignore checkboxes.
+        // Include monitoring-excluded users so they can still be unchecked.
         $users = [];
         try {
-            $users = (new PlayHistoryRepository())->users();
+            $users = (new PlayHistoryRepository())->users(true);
         } catch (\Throwable) {
             $users = [];
         }
@@ -43,6 +43,10 @@ final class SettingsController extends Controller
         $ignoredUsers = $this->csvValues(
             AppSettings::get('push_ignore_users')
                 ?? (string) Config::get('PUSH_IGNORE_USERS', '')
+        );
+        $monitoringIgnoredUsers = $this->csvValues(
+            AppSettings::get('ignore_users')
+                ?? (string) Config::get('IGNORE_USERS', '')
         );
 
         // Excluded names that aren't among the discovered libraries (renamed
@@ -57,6 +61,10 @@ final class SettingsController extends Controller
         $knownUsersLower = array_map('mb_strtolower', $users);
         $extraIgnored = array_values(array_filter(
             $ignoredUsers,
+            static fn (string $name): bool => !in_array(mb_strtolower($name), $knownUsersLower, true)
+        ));
+        $extraMonitoringIgnored = array_values(array_filter(
+            $monitoringIgnoredUsers,
             static fn (string $name): bool => !in_array(mb_strtolower($name), $knownUsersLower, true)
         ));
 
@@ -76,6 +84,8 @@ final class SettingsController extends Controller
             'users' => $users,
             'ignored_users' => $ignoredUsers,
             'extra_ignored' => implode(', ', $extraIgnored),
+            'monitoring_ignored_users' => $monitoringIgnoredUsers,
+            'extra_monitoring_ignored' => implode(', ', $extraMonitoringIgnored),
             'import' => [
                 'inserted' => max(0, (int) (Main::captureGetString('imported') ?? 0)),
                 'skipped' => max(0, (int) (Main::captureGetString('skipped') ?? 0)),

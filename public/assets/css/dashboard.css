@@ -840,6 +840,32 @@ svg.icon-filled {
     background: var(--color-card);
 }
 
+.settings-exclusion-group {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.settings-exclusion-group + .settings-exclusion-group {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--color-border);
+}
+
+.settings-exclusion-group > legend {
+    float: left;
+    width: 100%;
+    margin-bottom: 8px;
+    padding: 0;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.settings-exclusion-group > legend + * {
+    clear: both;
+}
+
 .settings-card-head.system-status-head {
     grid-template-columns: 38px minmax(0, 1fr) auto;
 }

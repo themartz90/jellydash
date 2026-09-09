@@ -107,10 +107,13 @@ final class RouterTest extends TestCase
         }
 
         $this->assertStringContainsString('Show server statistics', $output);
-        $this->assertStringContainsString('Statistics exclusions', $output);
+        $this->assertStringContainsString('<strong>Exclusions</strong>', $output);
+        $this->assertStringContainsString('<legend>Statistics</legend>', $output);
         $this->assertStringContainsString('Selected libraries are hidden from Trending and Most Watched.', $output);
-        $this->assertStringContainsString('Notification exclusions', $output);
+        $this->assertStringContainsString('<legend>Notifications</legend>', $output);
         $this->assertStringContainsString('Selected users never trigger playback alerts.', $output);
+        $this->assertStringContainsString('<legend>Monitoring</legend>', $output);
+        $this->assertStringContainsString('name="monitoring_ignore_extra"', $output);
         $this->assertStringContainsString('/assets/js/server-stats.js?v=20260809-settings', $output);
         $this->assertStringContainsString('/assets/js/nav-count.js?v=20260908-stale-state', $output);
         $this->assertStringContainsString('data-update-status', $output);

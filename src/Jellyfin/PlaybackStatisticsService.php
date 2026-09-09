@@ -412,6 +412,7 @@ final class PlaybackStatisticsService
         return hash('sha256', json_encode([
             'timezone' => date_default_timezone_get(),
             'excludedLibraries' => $this->excludedLibraries(),
+            'excludedUsers' => (new MonitoringExclusions())->fingerprint(),
         ], JSON_THROW_ON_ERROR));
     }
 

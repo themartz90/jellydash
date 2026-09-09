@@ -36,6 +36,8 @@ services:
       VAPID_PRIVATE_KEY: "${VAPID_PRIVATE_KEY:-}"
       VAPID_SUBJECT: "${VAPID_SUBJECT:-mailto:admin@example.com}"
       PUSH_IGNORE_USERS: "${PUSH_IGNORE_USERS:-}"
+      # Exclude usernames from playback monitoring (also editable in Settings)
+      IGNORE_USERS: "${IGNORE_USERS:-}"
       # Public base URL (optional): external alert links point back here.
       APP_URL: "${APP_URL:-}"
       # Extra notification channels; each is active once its config is set.

@@ -63,6 +63,7 @@ foreach ([
     'PUSHOVER_APP_TOKEN',
     'PUSHOVER_USER_KEY',
     'DISCORD_WEBHOOK_URL',
+    'IGNORE_USERS',
 ] as $key) {
     putenv($key . '=');
     $_ENV[$key] = '';

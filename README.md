@@ -73,6 +73,8 @@ The project is very young and in very active development.
 
 - **System status.** Check background collection, library refreshes, optional request sync, and notification retries from Settings. Copy a diagnostic summary without service URLs, credentials, or viewing details. See [System status](docs/SYSTEM_STATUS.md) for what the checks mean.
 
+- **Monitoring exclusions.** Hide selected Jellyfin users from Now Playing, History, Statistics, and history exports, and stop collecting new activity for them. Existing rows are kept. See [Monitoring exclusions](docs/MONITORING_EXCLUSIONS.md) before enabling this setting.
+
 - **Jellyseerr requests** (optional). The latest requests with their current status, plus a push notification when a new request comes in. The page only appears once you connect your Jellyseerr instance.
 
 - **Notifications** (optional). "Anna started watching The Office" straight to your phone or desktop, even with the app closed. Delivered through Telegram, Pushover, a Discord webhook, Web Push, or any combination of them.
@@ -259,9 +261,23 @@ The password needs at least 8 characters. The admin user is created automaticall
 
 On the login page, **Keep me signed in** lets that browser restore your login for up to 90 days. The remembered login is renewed when you return and removed when you sign out or change your password.
 
+## Exclusions in Settings or the environment
+
+Open **Settings > Exclusions** to manage these options:
+
+| Option | What it excludes | Environment fallback |
+| --- | --- | --- |
+| Monitoring | Selected users from Now Playing, History, Statistics, library playback summaries and CSV exports. New plays and history imports for those users are skipped. | `IGNORE_USERS` |
+| Notifications | Playback alerts for selected users. Their activity is still recorded unless they are also excluded from monitoring. | `PUSH_IGNORE_USERS` |
+| Statistics | Selected libraries from Trending and Most Watched. Other statistics and History remain visible. | `TRENDING_EXCLUDE_LIBRARIES` |
+
+Environment values are comma-separated names, for example `IGNORE_USERS=Admin,Test`. Saved Settings values take priority over the environment, including an empty selection. To change a saved exclusion, use Settings. For Docker environment changes, recreate the app container so it receives the new values.
+
+Monitoring exclusions preserve existing database rows. Removing an exclusion makes that earlier activity visible again; Jellydash cannot reconstruct activity it skipped while the user was excluded. Username matching is exact and case-insensitive. If you rename an account, update its exclusion. See [Monitoring exclusions](docs/MONITORING_EXCLUSIONS.md) for details.
+
 ## Exporting History
 
-Use **Export CSV** on the History page to choose a search, user, library and time period before downloading. Jellydash shows the exact number of matching plays, and the export is never limited to the page you are viewing. Its versioned format keeps the playback fields Jellydash needs for a native round-trip import. See [docs/HISTORY_CSV.md](docs/HISTORY_CSV.md) for the v1 format.
+Use **Export CSV** on the History page to choose a search, user, library and time period before downloading. Jellydash shows the exact number of matching plays, and the export is never limited to the page you are viewing. Its versioned format keeps the playback fields Jellydash needs for a native round-trip import. See [docs/HISTORY_CSV.md](docs/HISTORY_CSV.md) for the format and compatibility details.
 
 To restore that file, open **Settings → Import play history** and choose **Jellydash CSV**. Jellydash previews new and already-present plays before asking you to confirm. Imports are transactional, skip duplicates and never trigger playback notifications.
 
@@ -284,6 +300,7 @@ This compatibility only covers Playback Reporting imports from Emby. Jellydash i
 - Brave blocks Web Push by default. It works after enabling "Use Google services for push messaging" in Brave's privacy settings.
 - Edge hides Web Push permission prompts behind a small bell icon in the address bar ("quiet notification requests"). If enabling notifications keeps snapping back to off, allow notifications for the site there, and check that Windows itself allows notifications from Edge.
 - Trending and Most Watched can exclude libraries you pick (Settings page). Useful for libraries full of temporary stuff.
+- Monitoring exclusions match complete Jellyfin usernames without caring about letter case. They do not change notification exclusions.
 
 ## Support Jellydash
 

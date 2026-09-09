@@ -90,12 +90,14 @@ use Mk\Framework\View;
 
         $exclude = is_array($_POST['trending_exclude'] ?? null) ? $_POST['trending_exclude'] : [];
         $ignore = is_array($_POST['push_ignore'] ?? null) ? $_POST['push_ignore'] : [];
+        $monitoringIgnore = is_array($_POST['monitoring_ignore'] ?? null) ? $_POST['monitoring_ignore'] : [];
 
         \Mk\Framework\AppSettings::set('server_label', mb_substr(trim((string) ($_POST['server_label'] ?? '')), 0, 64));
         \Mk\Framework\AppSettings::set('show_server_stats', isset($_POST['show_server_stats']) ? '1' : '0');
         \Mk\Framework\AppSettings::set('show_recently_added', isset($_POST['show_recently_added']) ? '1' : '0');
         \Mk\Framework\AppSettings::set('trending_exclude_libraries', $csv($exclude, 'trending_exclude_extra'));
         \Mk\Framework\AppSettings::set('push_ignore_users', $csv($ignore, 'push_ignore_extra'));
+        \Mk\Framework\AppSettings::set('ignore_users', $csv($monitoringIgnore, 'monitoring_ignore_extra'));
 
         header('Location: /settings?saved=1');
         exit;
