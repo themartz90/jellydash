@@ -1,0 +1,19 @@
+{
+  "version": "1.8.0",
+  "auto_show": true,
+  "title": "Monitoring exclusions and system status",
+  "summary": "Choose which users Jellydash monitors and check whether background workers are running. This release also corrects viewing-time tracking and fixes history imports, notification retries and remembered login.",
+  "highlights": [
+    "Manage Monitoring, Notifications and Statistics exclusions together in Settings. Environment values remain available as fallbacks.",
+    "Hide existing activity for excluded users and skip new collection and imports. Earlier rows stay in the database if you remove an exclusion later.",
+    "Check background worker status from the sidebar or Settings, and copy diagnostics for troubleshooting.",
+    "Measure viewing time going forward and label older playback-position totals as estimates.",
+    "Preserve native History restore data, retry failed notifications and handle concurrent remembered-login requests."
+  ],
+  "links": [
+    {
+      "label": "Full release notes",
+      "url": "https://github.com/themartz90/jellydash/releases/tag/v1.8.0"
+    }
+  ]
+}
