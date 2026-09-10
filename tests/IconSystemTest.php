@@ -29,7 +29,7 @@ final class IconSystemTest extends TestCase
         $this->assertStringContainsString('svg.icon-filled', $stylesheet);
         $this->assertStringContainsString('fill: currentColor;', $stylesheet);
         $this->assertStringContainsString('stroke: none;', $stylesheet);
-        $this->assertStringContainsString('dashboard.css?v=20260909-exclusions', $shell);
+        $this->assertStringContainsString('dashboard.css?v=20260910-statistics-hint-2', $shell);
         $this->assertStringNotContainsString('api.iconify.design', $sources);
         $this->assertStringNotContainsString('code.iconify.design', $sources);
     }

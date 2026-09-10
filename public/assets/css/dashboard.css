@@ -3922,6 +3922,35 @@ a.history-pager-btn:hover {
     padding-bottom: 8px;
 }
 
+.stats-history-hint {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: fit-content;
+    max-width: 100%;
+    min-height: 36px;
+    margin: 0 0 18px;
+    padding: 7px 10px;
+    color: rgba(255, 255, 255, .56);
+    font-size: 12px;
+    line-height: 1.45;
+    border: 1px solid rgba(124, 92, 255, .16);
+    border-radius: 10px;
+    background: rgba(124, 92, 255, .055);
+}
+
+.stats-history-hint svg {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    color: rgba(183, 166, 255, .86);
+}
+
 .trending-section {
     margin-bottom: 32px;
 }
@@ -4979,6 +5008,16 @@ a.history-pager-btn:hover {
 .stats-user-table-link:focus-visible {
     outline-offset: -2px;
     background: rgba(124, 92, 255, .08);
+}
+
+.stats-kpi.has-link:active,
+.stats-user-link:active,
+.stats-user-table-link:active,
+.stats-drilldown-link:active,
+.stats-client-name-link:active,
+.stats-stack-filter-links a:active {
+    color: #fff;
+    background: rgba(124, 92, 255, .14);
 }
 
 .stats-user-table-row:first-of-type {

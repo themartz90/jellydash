@@ -68,4 +68,19 @@ final class StatisticsRangeFrontendTest extends TestCase
         $this->assertStringContainsString('.stats-stack-filter-links a {', $stylesheet);
         $this->assertStringContainsString('min-height: 44px;', $stylesheet);
     }
+
+    public function testStatisticsExplainsThatBreakdownsOpenHistory(): void
+    {
+        $template = file_get_contents(TEMPLATES_DIR . '/statistics/index.twig');
+        $stylesheet = file_get_contents(ROOT_DIR . '/public/assets/css/dashboard.css');
+
+        $this->assertIsString($template);
+        $this->assertIsString($stylesheet);
+        $this->assertStringContainsString('class="stats-history-hint"', $template);
+        $this->assertStringContainsString('Select a title, user, client or playback type to view matching plays in History.', $template);
+        $this->assertStringContainsString('.stats-history-hint {', $stylesheet);
+        $this->assertStringContainsString(".stats-history-hint svg {\n    width: 16px;", $stylesheet);
+        $this->assertStringContainsString('stroke: currentColor;', $stylesheet);
+        $this->assertStringContainsString('.stats-user-table-link:active,', $stylesheet);
+    }
 }
