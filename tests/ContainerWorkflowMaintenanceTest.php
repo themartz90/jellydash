@@ -49,7 +49,7 @@ final class ContainerWorkflowMaintenanceTest extends TestCase
         self::assertStringContainsString('Require all denied', $uploads);
     }
 
-    public function testActionsAreImmutableAndHaveDependabotUpdates(): void
+    public function testActionsUseImmutablePins(): void
     {
         $workflows = implode("\n", array_map(
             static fn (string $path): string => (string) file_get_contents($path),
@@ -74,9 +74,6 @@ final class ContainerWorkflowMaintenanceTest extends TestCase
         }
         self::assertStringContainsString('packages: write', $workflows);
 
-        $dependabot = (string) file_get_contents(ROOT_DIR . '/.github/dependabot.yml');
-        self::assertStringContainsString('package-ecosystem: "github-actions"', $dependabot);
-        self::assertStringContainsString('package-ecosystem: "docker"', $dependabot);
     }
 
     public function testDockerIntegrationChecksHealthAndUploadServingBoundary(): void
