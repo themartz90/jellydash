@@ -163,10 +163,50 @@ async function testNavCountTransitions() {
     assert.equal(nav.classList.contains('is-stale'), false);
 }
 
+function testDashboardContentScrollRestoration() {
+    const listeners = {};
+    const frames = [];
+    const pane = { scrollTop: 684 };
+    let replacedState = null;
+    let replacedUrl = null;
+    const window = {
+        history: {
+            state: { existing: 'kept' },
+            replaceState(state, title, url) {
+                this.state = state;
+                replacedState = state;
+                replacedUrl = url;
+            },
+        },
+        location: { href: 'http://jellydash.loc/statistics?range=all' },
+        addEventListener(type, callback) { listeners[type] = callback; },
+        requestAnimationFrame(callback) { frames.push(callback); },
+        scrollY: 321,
+    };
+    const document = {
+        querySelector: (selector) => selector === '.dashboard-content' ? pane : null,
+    };
+
+    runScript('public/assets/js/dashboard-scroll.js', { window, document, Number });
+    listeners.pagehide();
+
+    assert.equal(replacedState.existing, 'kept');
+    assert.equal(replacedState.jellydashContentScrollTop, 684);
+    assert.equal(replacedUrl, window.location.href);
+
+    pane.scrollTop = 0;
+    listeners.pageshow();
+    assert.equal(frames.length, 1);
+    frames.shift()();
+    assert.equal(pane.scrollTop, 684);
+    assert.equal(window.scrollY, 321);
+}
+
 (async () => {
     await testHistoryStreams();
     await testNowPlayingTransitions();
     await testNavCountTransitions();
+    testDashboardContentScrollRestoration();
     console.log('Frontend state tests passed.');
 })().catch((error) => {
     console.error(error);

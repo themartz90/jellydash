@@ -48,6 +48,7 @@ final class RouterTest extends TestCase
 
         $this->assertStringContainsString('Now Playing', $output);
         $this->assertStringContainsString('app-shell', $output);
+        $this->assertStringContainsString('/assets/js/dashboard-scroll.js?v=20260910-scroll-restore', $output);
         $this->assertStringNotContainsString('history-import.js', $output);
         $this->assertStringNotContainsString('data-import-history-dialog', $output);
         $this->assertSame(200, http_response_code());
