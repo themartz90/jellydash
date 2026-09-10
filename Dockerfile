@@ -1,4 +1,4 @@
-FROM php:8.3.32-apache-bookworm@sha256:ff23b916a51fb99b2a2afddb8649d1b96e15337f6b15fb0ce5179a950c00aae2
+FROM php:8.3.33-apache-bookworm@sha256:fa8852a2e01747ffe8c8768bfd6bbc2f296f974aa0de90ee157a66664996d263
 
 ARG APP_ENV=production
 

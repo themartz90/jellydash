@@ -11,7 +11,7 @@ final class ContainerWorkflowMaintenanceTest extends TestCase
         $dockerfile = (string) file_get_contents(ROOT_DIR . '/Dockerfile');
 
         self::assertStringContainsString(
-            'FROM php:8.3.32-apache-bookworm@sha256:ff23b916a51fb99b2a2afddb8649d1b96e15337f6b15fb0ce5179a950c00aae2',
+            'FROM php:8.3.33-apache-bookworm@sha256:fa8852a2e01747ffe8c8768bfd6bbc2f296f974aa0de90ee157a66664996d263',
             $dockerfile,
         );
         self::assertStringContainsString(
@@ -62,18 +62,39 @@ final class ContainerWorkflowMaintenanceTest extends TestCase
             self::assertMatchesRegularExpression('/^[0-9a-f]{40}$/', $reference);
         }
         foreach ([
-            'actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0',
+            'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
             'shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2',
-            'docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0',
-            'docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0',
-            'docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0',
-            'docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0',
-            'docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2',
+            'docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0',
+            'docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0',
+            'docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0',
+            'docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0',
+            'docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0',
         ] as $pin) {
             self::assertStringContainsString($pin, $workflows);
         }
         self::assertStringContainsString('packages: write', $workflows);
+    }
 
+    public function testManualReleaseChecksCannotPublishAnImage(): void
+    {
+        $release = (string) file_get_contents(ROOT_DIR . '/.github/workflows/release.yml');
+        $build = (string) file_get_contents(ROOT_DIR . '/.github/workflows/build-image.yml');
+        $dryRun = substr($release, (int) strpos($release, '  dry-run:'));
+
+        self::assertStringContainsString("if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')", $release);
+        self::assertStringContainsString("if: github.event_name == 'workflow_dispatch'", $dryRun);
+        self::assertStringContainsString('packages: read', $dryRun);
+        self::assertStringNotContainsString('packages: write', $dryRun);
+        self::assertStringContainsString('publish: false', $dryRun);
+        self::assertStringNotContainsString('publish: true', $dryRun);
+        self::assertSame(2, substr_count($release, 'uses: ./.github/workflows/build-image.yml'));
+        self::assertStringContainsString('type: boolean', $build);
+        self::assertStringContainsString('default: false', $build);
+        self::assertStringContainsString('push: ${{ inputs.publish }}', $build);
+        self::assertStringNotContainsString('push: true', $build);
+        self::assertStringContainsString('type=oci,dest=', $build);
+        self::assertStringContainsString('platforms: linux/amd64,linux/arm64', $build);
+        self::assertStringContainsString("required = {'linux/amd64', 'linux/arm64'}", $build);
     }
 
     public function testDockerIntegrationChecksHealthAndUploadServingBoundary(): void

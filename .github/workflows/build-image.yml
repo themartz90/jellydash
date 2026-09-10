@@ -1,0 +1,87 @@
+name: Build image
+
+on:
+  workflow_call:
+    inputs:
+      publish:
+        description: Push the image to GHCR for a tagged release.
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/jellydash
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ inputs.publish && !contains(github.ref_name, '-') }}
+            type=raw,value=build-check,enable=${{ !inputs.publish }}
+
+      - name: Build image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ inputs.publish }}
+          outputs: ${{ !inputs.publish && format('type=oci,dest={0}/jellydash-build.tar', runner.temp) || '' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: ${{ inputs.publish && 'type=gha,mode=max' || '' }}
+
+      - name: Check dry-run image platforms
+        if: ${{ !inputs.publish }}
+        env:
+          OCI_ARCHIVE: ${{ runner.temp }}/jellydash-build.tar
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import tarfile
+
+          platforms = set()
+          with tarfile.open(os.environ['OCI_ARCHIVE']) as archive:
+              def read_json(path):
+                  with archive.extractfile(path) as stream:
+                      return json.load(stream)
+
+              def inspect_manifest(descriptor):
+                  manifest = read_json('blobs/' + descriptor['digest'].replace(':', '/'))
+                  if 'manifests' in manifest:
+                      for child in manifest['manifests']:
+                          inspect_manifest(child)
+                  elif 'config' in manifest:
+                      config = read_json('blobs/' + manifest['config']['digest'].replace(':', '/'))
+                      platforms.add(config.get('os', '') + '/' + config.get('architecture', ''))
+
+              for descriptor in read_json('index.json')['manifests']:
+                  inspect_manifest(descriptor)
+
+          required = {'linux/amd64', 'linux/arm64'}
+          if not required.issubset(platforms):
+              raise SystemExit('Missing image platforms: ' + ', '.join(sorted(required - platforms)))
+          print('Built and verified linux/amd64 and linux/arm64 without publishing an image.')
+          PY
