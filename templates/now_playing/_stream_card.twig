@@ -5,7 +5,7 @@
 
     <div class="stream-card-content">
         <div class="stream-card-top">
-            <span class="now-pill {{ stream.isPaused|default(false) ? 'is-paused' : '' }}"><i></i>{{ stream.statusLabel|default('Now Playing') }}</span>
+            <span class="now-pill {{ stream.isPaused|default(false) ? 'is-paused' : (stream.isLive|default(false) ? 'is-live-tv' : '') }}"><i></i>{{ stream.statusLabel|default('Now Playing') }}</span>
             <div class="playback-stack">
                 {% include "_badge.twig" with { item: stream } %}
                 <span class="quality-chip">{{ stream.quality }}</span>

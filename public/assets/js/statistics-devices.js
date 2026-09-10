@@ -95,10 +95,14 @@
         }
 
         const manageLink = section.querySelector('[data-device-manage]');
+        if (manageLink) {
+            manageLink.hidden = true;
+            manageLink.removeAttribute('href');
+        }
         if (manageLink && payload.manageUrl) {
             try {
                 const url = new URL(payload.manageUrl);
-                if (url.protocol === 'http:' || url.protocol === 'https:') {
+                if ((url.protocol === 'http:' || url.protocol === 'https:') && !url.username && !url.password) {
                     manageLink.href = url.href;
                     manageLink.hidden = false;
                 }
@@ -112,10 +116,18 @@
 
     async function loadDevices() {
         const range = section.dataset.range || 'week';
-        const response = await fetch(`/api/client-activity.php?range=${encodeURIComponent(range)}`, {
-            headers: { Accept: 'application/json' },
-            cache: 'no-store',
-        });
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        const timer = window.setTimeout(() => controller?.abort(), 8000);
+        let response;
+        try {
+            response = await fetch(`/api/client-activity.php?range=${encodeURIComponent(range)}`, {
+                headers: { Accept: 'application/json' },
+                cache: 'no-store',
+                signal: controller?.signal,
+            });
+        } finally {
+            window.clearTimeout(timer);
+        }
         if (!response.ok) {
             return;
         }

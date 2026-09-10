@@ -19,14 +19,14 @@ use Mk\Framework\View;
     $isPost = ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST';
 
     // LOGIN -----------------------------------------------------------------------------------------------------------
-    if ($requests->authIs("login") && $isPost) {
+    if ($requests->authIs('login') && $isPost) {
         Csrf::check();
 
         $auth_class = new Authorization();
 
         // password is passed raw to password_verify (never escaped)
-        $username = Main::capturePostString("username");
-        $password = $_POST["pwd"] ?? null;
+        $username = Main::capturePostString('username');
+        $password = $_POST['pwd'] ?? null;
         $remember = isset($_POST['remember_me']) && $_POST['remember_me'] === '1';
 
         if ($auth_class->userLogin($username, $password, $remember)) {
@@ -34,23 +34,22 @@ use Mk\Framework\View;
         }
 
         // Bad credentials -> generic message (DB errors propagate to ErrorHandler).
-        (new LoginController(new View()))->withError("Invalid username or password.")->handle();
+        (new LoginController(new View()))->withError('Invalid username or password.')->handle();
         exit;
     }
 
     // UPLOAD ----------------------------------------------------------------------------------------------------------
-    if ($requests->requestIs("upload") && $isPost) {
+    if ($requests->requestIs('upload') && $isPost) {
         Csrf::check();
 
-        // Gate behind authentication; the endpoint is no longer public.
         $auth_class = new Authorization();
-        if (!$auth_class->isUserLoggedIn()) {
+        if (!$auth_class->can(Authorization::CAPABILITY_MANAGE_GLOBAL)) {
             http_response_code(403);
             exit('Forbidden');
         }
 
         $upload = new Upload();
-        $upload->uploadImage("photo", "img");
+        $upload->uploadImage('photo', 'img');
 
         if ($upload->getResult()) {
             // Get filename
@@ -62,11 +61,10 @@ use Mk\Framework\View;
     }
 
     // SETTINGS --------------------------------------------------------------------------------------------------------
-    if ($requests->requestIs("settings") && $isPost) {
+    if ($requests->requestIs('settings') && $isPost) {
         Csrf::check();
 
-        // When auth is enabled, only a logged-in user may change settings.
-        if (\Mk\Framework\Config::bool('AUTH_ENABLED', false) && !(new Authorization())->isUserLoggedIn()) {
+        if (!(new Authorization())->can(Authorization::CAPABILITY_MANAGE_GLOBAL)) {
             http_response_code(403);
             exit('Forbidden');
         }
@@ -107,8 +105,7 @@ use Mk\Framework\View;
     if ($requests->requestIs('statistics-default') && $isPost) {
         Csrf::check();
 
-        // Match the Settings page protection when authentication is enabled.
-        if (\Mk\Framework\Config::bool('AUTH_ENABLED', false) && !(new Authorization())->isUserLoggedIn()) {
+        if (!(new Authorization())->can(Authorization::CAPABILITY_MANAGE_GLOBAL)) {
             http_response_code(403);
             exit('Forbidden');
         }
@@ -125,8 +122,29 @@ use Mk\Framework\View;
         exit;
     }
 
+    // NOTIFICATION DEVICE REVOCATION --------------------------------------------------------------------------------
+    if ($requests->requestIs('push-revoke') && $isPost) {
+        Csrf::check();
+
+        $auth_class = new Authorization();
+        if (!$auth_class->can(Authorization::CAPABILITY_MANAGE_OWN_PUSH)) {
+            http_response_code(403);
+            exit('Forbidden');
+        }
+        $authEnabled = \Mk\Framework\Config::bool('AUTH_ENABLED', false);
+        $verifiedUser = $authEnabled ? $auth_class->verifiedUser() : null;
+        $userId = $verifiedUser !== null ? $verifiedUser['id'] : null;
+        $canManageAll = $auth_class->can(Authorization::CAPABILITY_MANAGE_ALL_PUSH);
+        $deviceId = max(0, (int) ($_POST['device_id'] ?? 0));
+        (new \Mk\Framework\Push\PushSubscriptionRepository())
+            ->revokeById($deviceId, $userId, $canManageAll, $authEnabled);
+
+        header('Location: /settings#notification-devices');
+        exit;
+    }
+
     // LOGOUT ----------------------------------------------------------------------------------------------------------
-    if ($requests->authIs("logout") && $isPost) {
+    if ($requests->authIs('logout') && $isPost) {
         Csrf::check();
 
         $auth_class = new Authorization();

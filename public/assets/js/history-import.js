@@ -166,19 +166,6 @@
         });
     }
 
-    function finishImport(payload) {
-        var inserted = payload && typeof payload.inserted === 'number' ? payload.inserted : 0;
-        var skipped = payload && typeof payload.skipped === 'number' ? payload.skipped : 0;
-        if (document.querySelector('[data-import-drop]')) {
-            window.location.href = '/settings?' + new URLSearchParams({
-                imported: String(inserted),
-                skipped: String(skipped),
-                unresolved: String(typeof payload.unresolved === 'number' ? payload.unresolved : 0),
-            }).toString();
-            return;
-        }
-    }
-
     function runImport(body, dialog, gen, endpoint) {
         dialog.setState('importing', { processed: 0, total: 0 });
         applyProgress({ phase: 'preparing', processed: 0, total: 0, inserted: 0, skipped: 0 });
@@ -192,10 +179,8 @@
             if (dialog.isCurrent(gen) || (dialog.element && dialog.element.open)) {
                 dialog.setState('done', payload || {});
             }
-            finishImport(payload || {});
         }).catch(function (error) {
-            hideProgress();
-            if (!dialog.isCurrent(gen) && !(dialog.element && dialog.element.open)) {
+            if (!dialog.isCurrent(gen)) {
                 return;
             }
             dialog.setState('error', { error: error.message || 'Could not import.' });
@@ -254,6 +239,10 @@
             if (!dialog || !CSRF_TOKEN) {
                 allowSubmit = true;
                 form.requestSubmit(submitter || undefined);
+                return;
+            }
+            if (dialog.isImporting()) {
+                dialog.reopen();
                 return;
             }
 
@@ -350,12 +339,23 @@
         var progress = dialog.querySelector('[data-import-history-progress]');
         var closeButtons = dialog.querySelectorAll('[data-import-history-close]');
         var dismissBtn = dialog.querySelector('.release-dialog-dismiss');
+        var reopenBtn = document.querySelector('[data-import-history-reopen]');
         var token = 0;
         var pending = null;
         var importing = false;
+        var lastState = 'confirm';
+        var lastOptions = {};
 
         function isCurrent(generation) {
-            return generation === token && dialog.open;
+            return generation === token;
+        }
+
+        function updateReopenButton() {
+            if (!reopenBtn) {
+                return;
+            }
+            reopenBtn.hidden = dialog.open || (!importing && lastState !== 'done' && lastState !== 'error');
+            reopenBtn.textContent = lastState === 'done' || lastState === 'error' ? 'Show import result' : 'Show import progress';
         }
 
         function setProgressVisible(visible) {
@@ -366,6 +366,8 @@
 
         function setState(state, options) {
             options = options || {};
+            lastState = state;
+            lastOptions = options;
             if (!title || !summary || !confirmBtn) {
                 return;
             }
@@ -387,13 +389,15 @@
             if (state === 'importing') {
                 importing = true;
                 title.textContent = 'Importing history…';
-                summary.textContent = 'Jellydash is restoring the selected history. Keep this window open.';
+                summary.textContent = 'Jellydash is restoring the selected history. Keep this page open. You can hide this progress panel.';
                 confirmBtn.hidden = true;
                 confirmBtn.disabled = true;
                 setProgressVisible(true);
                 if (dismissBtn) {
-                    dismissBtn.hidden = true;
+                    dismissBtn.hidden = false;
+                    dismissBtn.textContent = 'Hide progress';
                 }
+                updateReopenButton();
                 return;
             }
 
@@ -410,6 +414,7 @@
                     dismissBtn.hidden = false;
                     dismissBtn.textContent = 'Close';
                 }
+                updateReopenButton();
                 return;
             }
 
@@ -424,6 +429,7 @@
                     dismissBtn.hidden = false;
                     dismissBtn.textContent = 'Close';
                 }
+                updateReopenButton();
                 return;
             }
 
@@ -483,17 +489,27 @@
 
         function dismiss() {
             if (importing) {
+                if (dialog.open) {
+                    dialog.close();
+                }
+                updateReopenButton();
                 return;
             }
             pending = null;
             token += 1;
+            lastState = 'dismissed';
             hideProgress();
             if (dialog.open) {
                 dialog.close();
             }
+            updateReopenButton();
         }
 
         function openConfirm(options) {
+            if (importing) {
+                reopen();
+                return token;
+            }
             pending = options || {};
             token += 1;
             if (kicker) {
@@ -502,7 +518,16 @@
             if (!dialog.open) {
                 dialog.showModal();
             }
+            updateReopenButton();
             return token;
+        }
+
+        function reopen() {
+            if (!dialog.open) {
+                dialog.showModal();
+            }
+            setState(lastState, lastOptions);
+            updateReopenButton();
         }
 
         closeButtons.forEach(function (button) {
@@ -516,12 +541,18 @@
         dialog.addEventListener('cancel', function (event) {
             if (importing) {
                 event.preventDefault();
+                dialog.close();
+                updateReopenButton();
                 return;
             }
             pending = null;
             token += 1;
             hideProgress();
+            updateReopenButton();
         });
+        if (reopenBtn) {
+            reopenBtn.addEventListener('click', reopen);
+        }
         if (form) {
             form.addEventListener('submit', function (event) {
                 event.preventDefault();
@@ -542,6 +573,8 @@
             openConfirm: openConfirm,
             setState: setState,
             isCurrent: isCurrent,
+            isImporting: function () { return importing; },
+            reopen: reopen,
             element: dialog,
         };
 

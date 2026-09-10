@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Dotenv\Dotenv;
+use Mk\Framework\Authorization;
 use Mk\Framework\Config;
 use Mk\Framework\Csrf;
 use Mk\Framework\Jellyfin\HistoryCsvImporter;
@@ -25,6 +26,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
     header('Allow: POST');
     http_response_code(405);
     exit('Method not allowed.');
+}
+
+if (!(new Authorization())->can(Authorization::CAPABILITY_MANAGE_GLOBAL)) {
+    http_response_code(403);
+    exit('Forbidden');
 }
 
 $csrfToken = $_POST[Csrf::fieldName()] ?? null;

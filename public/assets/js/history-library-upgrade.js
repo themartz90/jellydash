@@ -19,6 +19,7 @@
     var continueButton = dialog && dialog.querySelector('[data-history-library-upgrade-continue]');
     var completeActions = dialog && dialog.querySelector('[data-history-library-upgrade-complete]');
     var closeButton = dialog && dialog.querySelector('[data-history-library-upgrade-close]');
+    var reopenButton = document.querySelector('[data-history-library-upgrade-reopen]');
     var csrfMeta = document.querySelector('meta[name="csrf-token"]');
     var csrfToken = csrfMeta && csrfMeta.content ? csrfMeta.content : '';
     var settled = false;
@@ -35,7 +36,7 @@
         resolveUpgrade();
     }
 
-    if (!dialog || typeof dialog.showModal !== 'function' || !title || !summary || !count || !percent || !track || !bar || !note || !errorActions || !retry || !continueButton || !completeActions || !closeButton || !csrfToken) {
+    if (!dialog || typeof dialog.showModal !== 'function' || !title || !summary || !count || !percent || !track || !bar || !note || !errorActions || !retry || !continueButton || !completeActions || !closeButton || !reopenButton || !csrfToken) {
         settle();
         return;
     }
@@ -97,6 +98,7 @@
         errorActions.hidden = true;
         completeActions.hidden = false;
         closeButton.focus();
+        reopenButton.hidden = true;
     }
 
     function advance() {
@@ -118,34 +120,62 @@
         });
     }
 
-    dialog.addEventListener('cancel', function (event) {
-        event.preventDefault();
-    });
-    retry.addEventListener('click', advance);
-    continueButton.addEventListener('click', function () {
+    function hideForNow() {
+        if (timer !== null) {
+            window.clearTimeout(timer);
+            timer = null;
+        }
         if (dialog.open) {
             dialog.close();
         }
+        reopenButton.hidden = false;
         settle();
-    });
-    closeButton.addEventListener('click', function () {
-        if (dialog.open) {
-            dialog.close();
-        }
-        settle();
-    });
+    }
 
-    request('GET').then(function (payload) {
+    function showStatus(payload) {
         if (!payload.required) {
+            reopenButton.hidden = true;
             settle();
             return;
         }
 
         render(payload);
-        dialog.showModal();
+        if (!dialog.open) {
+            dialog.showModal();
+        }
         dialog.focus();
+        reopenButton.hidden = true;
+        if (payload.state === 'complete') {
+            finish(payload);
+            return;
+        }
         timer = window.setTimeout(advance, 120);
-    }).catch(function () {
+    }
+
+    dialog.addEventListener('cancel', function (event) {
+        event.preventDefault();
+        hideForNow();
+    });
+    retry.addEventListener('click', advance);
+    continueButton.addEventListener('click', hideForNow);
+    reopenButton.addEventListener('click', function () {
+        request('GET').then(showStatus).catch(function (error) {
+            if (!dialog.open) {
+                dialog.showModal();
+            }
+            reopenButton.hidden = true;
+            showError(error.message || 'Jellydash could not continue the History update.');
+        });
+    });
+    closeButton.addEventListener('click', function () {
+        if (dialog.open) {
+            dialog.close();
+        }
+        reopenButton.hidden = true;
+        settle();
+    });
+
+    request('GET').then(showStatus).catch(function () {
         settle();
     });
 }());

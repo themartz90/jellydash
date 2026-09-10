@@ -80,7 +80,15 @@ final class WorkerStatusRepository
         ];
         foreach ($columns as $name => [$mariaDb, $sqlite]) {
             if (!$platform->columnExists('system_status', $name)) {
-                $platform->addColumn('system_status', $mariaDb, $sqlite);
+                try {
+                    $platform->addColumn('system_status', $mariaDb, $sqlite);
+                } catch (\Dibi\Exception $e) {
+                    // Another request may have completed the same lazy schema
+                    // upgrade after our existence check.
+                    if (!$platform->columnExists('system_status', $name)) {
+                        throw $e;
+                    }
+                }
             }
         }
     }

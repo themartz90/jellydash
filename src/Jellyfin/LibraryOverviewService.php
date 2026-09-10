@@ -42,11 +42,14 @@ final class LibraryOverviewService
         private ?LibraryHistorySource $history = null,
         private ?string $cachePath = null,
         private ?MonitoringExclusions $exclusions = null,
+        private ?\Closure $clock = null,
+        private int $failureBackoff = 30,
     ) {
+        $this->failureBackoff = max(1, $this->failureBackoff);
     }
 
     /**
-     * @return array{summary: array<int, array<string, string>>, libraries: array<int, array<string, mixed>>, refreshedLabel: string, complete: bool}
+     * @return array{summary: array<int, array<string, string>>, libraries: array<int, array<string, mixed>>, refreshedLabel: string, complete: bool, historyAvailable: bool}
      */
     public function data(): array
     {
@@ -59,12 +62,15 @@ final class LibraryOverviewService
                 'libraries' => [],
                 'refreshedLabel' => 'Jellyfin unavailable',
                 'complete' => false,
+                'historyAvailable' => false,
             ];
         }
 
-        $historyRows = $this->historyRows();
+        $history = $this->historySnapshot();
+        $historyRows = $history['rows'];
+        $historyAvailable = $history['available'];
         $libraries = [];
-        $complete = true;
+        $complete = $historyAvailable;
 
         foreach ($folders as $folder) {
             try {
@@ -72,7 +78,7 @@ final class LibraryOverviewService
                 $id = (string) ($folder['Id'] ?? '');
                 $kind = (string) ($meta['kind'] ?? 'mixed');
                 $counts = $this->countSnapshot($client, $id, $kind, (string) ($meta['accent'] ?? '#7c5cff'));
-                $libraries[] = $this->libraryCard($folder, $counts, $historyRows);
+                $libraries[] = $this->libraryCard($folder, $counts, $historyRows, $historyAvailable);
             } catch (\Throwable $e) {
                 $complete = false;
                 $name = (string) ($folder['DashboardName'] ?? $folder['Name'] ?? 'Unknown library');
@@ -80,15 +86,21 @@ final class LibraryOverviewService
                     'Could not load Jellyfin library "' . $name . '": ' . $e->getMessage(),
                     previous: $e,
                 ));
-                $libraries[] = $this->unavailableLibraryCard($folder, $historyRows);
+                $libraries[] = $this->unavailableLibraryCard($folder, $historyRows, $historyAvailable);
             }
+        }
+
+        $refreshedLabel = $complete ? 'Live from Jellyfin' : 'Some library details unavailable';
+        if (!$historyAvailable) {
+            $refreshedLabel = 'Playback history unavailable';
         }
 
         return [
             'summary' => $this->summary($libraries),
             'libraries' => $libraries,
-            'refreshedLabel' => $complete ? 'Live from Jellyfin' : 'Some library details unavailable',
+            'refreshedLabel' => $refreshedLabel,
             'complete' => $complete,
+            'historyAvailable' => $historyAvailable,
         ];
     }
 
@@ -103,19 +115,29 @@ final class LibraryOverviewService
     {
         $cached = $this->readCache();
 
-        if ($cached !== null && (time() - (int) ($cached['generated_at'] ?? 0)) < $this->ttl()) {
+        if ($cached !== null && ($this->now() - (int) ($cached['generated_at'] ?? 0)) < $this->ttl()) {
             $cached['cached'] = true;
 
             return $cached;
         }
 
+        $backoff = $this->backoffPayload($cached);
+        if ($backoff !== null) {
+            return $backoff;
+        }
+
         try {
             return $this->cache()->withExclusiveLock(function (): array {
                 $cached = $this->readCache();
-                if ($cached !== null && (time() - (int) ($cached['generated_at'] ?? 0)) < $this->ttl()) {
+                if ($cached !== null && ($this->now() - (int) ($cached['generated_at'] ?? 0)) < $this->ttl()) {
                     $cached['cached'] = true;
 
                     return $cached;
+                }
+
+                $backoff = $this->backoffPayload($cached);
+                if ($backoff !== null) {
+                    return $backoff;
                 }
 
                 return $this->rebuildCachedPayload($cached);
@@ -134,23 +156,30 @@ final class LibraryOverviewService
     {
         $data = $this->data();
         if ($data['refreshedLabel'] === 'Jellyfin unavailable') {
+            $this->rememberFailure(null, 'Jellyfin unavailable; no library cache is available.');
             if ($cached === null) {
                 throw new \RuntimeException('Jellyfin unavailable; no library cache is available.');
             }
 
-            return $this->stalePayload($cached);
+            return $this->retryingPayload($this->stalePayload($cached));
         }
 
         if (!$data['complete']) {
+            $partial = $this->payload($data);
             if ($cached !== null && $this->cacheCoversLibraries($cached, $data)) {
-                return $this->stalePayload($cached, 'Showing cached stats after an incomplete refresh');
+                $this->rememberFailure(null, 'The library refresh was incomplete.');
+
+                return $this->retryingPayload($this->stalePayload($cached, 'Showing cached stats after an incomplete refresh'));
             }
 
-            return $this->payload($data);
+            $this->rememberFailure($partial, 'The library refresh was incomplete.');
+
+            return $partial;
         }
 
         $payload = $this->payload($data);
         $this->writeCache($payload);
+        $this->clearFailure();
 
         return $payload;
     }
@@ -174,12 +203,14 @@ final class LibraryOverviewService
         $data = $this->data();
 
         if ($data['refreshedLabel'] === 'Jellyfin unavailable' || !$data['complete']) {
+            $this->rememberFailure(null, 'One or more library details are unavailable.');
             throw new \RuntimeException('One or more Jellyfin libraries are unavailable; keeping the existing library cache.');
         }
 
         $payload = $this->payload($data);
 
         $this->writeCache($payload);
+        $this->clearFailure();
 
         return $payload;
     }
@@ -194,7 +225,7 @@ final class LibraryOverviewService
             'summary' => $data['summary'],
             'libraries' => $data['libraries'],
             'refreshedLabel' => $data['refreshedLabel'],
-            'generated_at' => time(),
+            'generated_at' => $this->now(),
             'cached' => false,
             'partial' => !$data['complete'],
             'monitoring_context' => ($this->exclusions ?? new MonitoringExclusions())->fingerprint(),
@@ -212,6 +243,80 @@ final class LibraryOverviewService
         $cached['refreshedLabel'] = $label;
 
         return $cached;
+    }
+
+    /** @param array<string, mixed>|null $cached @return array<string, mixed>|null */
+    private function backoffPayload(?array $cached): ?array
+    {
+        $failure = $this->readFailure();
+        if ($failure === null || (int) ($failure['retry_after'] ?? 0) <= $this->now()) {
+            return null;
+        }
+
+        if ($cached !== null) {
+            return $this->retryingPayload($this->stalePayload($cached, 'Showing cached stats while refresh waits to retry'));
+        }
+
+        if (is_array($failure['payload'] ?? null)) {
+            $payload = $failure['payload'];
+            $payload['cached'] = true;
+
+            return $this->retryingPayload($payload);
+        }
+
+        throw new \RuntimeException((string) ($failure['message'] ?? 'Library refresh is waiting to retry.'));
+    }
+
+    /** @param array<string, mixed> $payload @return array<string, mixed> */
+    private function retryingPayload(array $payload): array
+    {
+        $payload['retrying'] = true;
+
+        return $payload;
+    }
+
+    /** @param array<string, mixed>|null $payload */
+    private function rememberFailure(?array $payload, string $message): void
+    {
+        try {
+            $this->failureCache()->write([
+                'retry_after' => $this->now() + $this->failureBackoff,
+                'monitoring_context' => ($this->exclusions ?? new MonitoringExclusions())->fingerprint(),
+                'message' => $message,
+                'payload' => $payload,
+            ]);
+        } catch (\Throwable) {
+            // A failed retry marker must never hide the usable partial or stale response.
+        }
+    }
+
+    /** @return array<string, mixed>|null */
+    private function readFailure(): ?array
+    {
+        $failure = $this->failureCache()->read();
+        if ($failure === null) {
+            return null;
+        }
+
+        $context = (string) ($failure['monitoring_context'] ?? '');
+        $expected = ($this->exclusions ?? new MonitoringExclusions())->fingerprint();
+
+        return $context !== '' && hash_equals($expected, $context) ? $failure : null;
+    }
+
+    private function clearFailure(): void
+    {
+        @unlink($this->cacheFile() . '.retry');
+    }
+
+    private function failureCache(): AtomicJsonFile
+    {
+        return new AtomicJsonFile($this->cacheFile() . '.retry');
+    }
+
+    private function now(): int
+    {
+        return ($this->clock ?? static fn (): int => time())();
     }
 
     /**
@@ -349,15 +454,18 @@ final class LibraryOverviewService
         return mb_substr($letters !== '' ? $letters : strtoupper(mb_substr($name, 0, 1)), 0, 3);
     }
 
-    /**
-     * @return array<int, \Dibi\Row>
-     */
-    private function historyRows(): array
+    /** @return array{rows: array<int, \Dibi\Row>, available: bool} */
+    private function historySnapshot(): array
     {
         try {
-            return ($this->history ?? new PlayHistoryRepository())->itemPlaySummaries();
-        } catch (\Throwable) {
-            return [];
+            return [
+                'rows' => ($this->history ?? new PlayHistoryRepository())->itemPlaySummaries(),
+                'available' => true,
+            ];
+        } catch (\Throwable $e) {
+            Log::logException(new \RuntimeException('Could not read library playback history.', previous: $e));
+
+            return ['rows' => [], 'available' => false];
         }
     }
 
@@ -366,7 +474,7 @@ final class LibraryOverviewService
      * @param array<int, \Dibi\Row> $historyRows
      * @return array<string, mixed>
      */
-    private function libraryCard(array $folder, array $counts, array $historyRows): array
+    private function libraryCard(array $folder, array $counts, array $historyRows, bool $historyAvailable): array
     {
         /** @var array<string, string> $meta */
         $meta = $folder['DashboardMeta'];
@@ -375,7 +483,9 @@ final class LibraryOverviewService
         $kind = (string) $meta['kind'];
         $accent = (string) $meta['accent'];
         $actualName = (string) ($folder['DashboardName'] ?? $name);
-        $libraryHistory = $this->libraryHistory($historyRows, $name, $actualName);
+        $libraryHistory = $historyAvailable
+            ? $this->libraryHistory($historyRows, $name, $actualName)
+            : $this->unavailableHistory();
         $totalFiles = (int) ($counts['total'] ?? 0);
 
         return [
@@ -389,11 +499,12 @@ final class LibraryOverviewService
             'banner' => $this->banner($id, $kind),
             'totalFiles' => $this->comma($totalFiles),
             'totalFilesRaw' => $totalFiles,
-            'totalPlays' => $this->comma((int) $libraryHistory['plays']),
+            'totalPlays' => $historyAvailable ? $this->comma((int) $libraryHistory['plays']) : 'Unavailable',
             'totalPlaysRaw' => (int) $libraryHistory['plays'],
-            'playback' => $this->longDuration((int) $libraryHistory['watch_sec']),
+            'playback' => $historyAvailable ? $this->longDuration((int) $libraryHistory['watch_sec']) : 'Unavailable',
             'playbackRaw' => (int) $libraryHistory['watch_sec'],
             'playbackEstimated' => $libraryHistory['estimated'],
+            'playbackAvailable' => $historyAvailable,
             'lastActivity' => (string) $libraryHistory['last_activity'],
             'lastPlayed' => (string) $libraryHistory['last_played'],
             'lastUser' => (string) $libraryHistory['last_user'],
@@ -411,7 +522,7 @@ final class LibraryOverviewService
      * @param array<int, \Dibi\Row> $historyRows
      * @return array<string, mixed>
      */
-    private function unavailableLibraryCard(array $folder, array $historyRows): array
+    private function unavailableLibraryCard(array $folder, array $historyRows, bool $historyAvailable): array
     {
         /** @var array<string, string> $meta */
         $meta = is_array($folder['DashboardMeta'] ?? null) ? $folder['DashboardMeta'] : $this->metaFor(
@@ -423,7 +534,9 @@ final class LibraryOverviewService
         $kind = (string) ($meta['kind'] ?? 'mixed');
         $accent = (string) ($meta['accent'] ?? '#7c5cff');
         $actualName = (string) ($folder['DashboardName'] ?? $folder['Name'] ?? $name);
-        $libraryHistory = $this->libraryHistory($historyRows, $name, $actualName);
+        $libraryHistory = $historyAvailable
+            ? $this->libraryHistory($historyRows, $name, $actualName)
+            : $this->unavailableHistory();
 
         return [
             'name' => $name,
@@ -436,11 +549,12 @@ final class LibraryOverviewService
             'banner' => $this->banner($id, $kind),
             'totalFiles' => 'Unavailable',
             'totalFilesRaw' => 0,
-            'totalPlays' => $this->comma((int) $libraryHistory['plays']),
+            'totalPlays' => $historyAvailable ? $this->comma((int) $libraryHistory['plays']) : 'Unavailable',
             'totalPlaysRaw' => (int) $libraryHistory['plays'],
-            'playback' => $this->longDuration((int) $libraryHistory['watch_sec']),
+            'playback' => $historyAvailable ? $this->longDuration((int) $libraryHistory['watch_sec']) : 'Unavailable',
             'playbackRaw' => (int) $libraryHistory['watch_sec'],
             'playbackEstimated' => $libraryHistory['estimated'],
+            'playbackAvailable' => $historyAvailable,
             'lastActivity' => (string) $libraryHistory['last_activity'],
             'lastPlayed' => (string) $libraryHistory['last_played'],
             'lastUser' => (string) $libraryHistory['last_user'],
@@ -598,6 +712,19 @@ final class LibraryOverviewService
         ];
     }
 
+    /** @return array{plays: int, watch_sec: int, estimated: bool, last_activity: string, last_played: string, last_user: string} */
+    private function unavailableHistory(): array
+    {
+        return [
+            'plays' => 0,
+            'watch_sec' => 0,
+            'estimated' => false,
+            'last_activity' => 'History unavailable',
+            'last_played' => 'Playback history could not be read',
+            'last_user' => 'Unavailable',
+        ];
+    }
+
     /**
      * @param array<int, array<string, mixed>> $libraries
      * @return array<int, array<string, string>>
@@ -609,6 +736,7 @@ final class LibraryOverviewService
         $playback = 0;
         $estimated = false;
         $complete = true;
+        $historyAvailable = true;
 
         foreach ($libraries as $library) {
             $items += (int) ($library['totalFilesRaw'] ?? 0);
@@ -616,13 +744,14 @@ final class LibraryOverviewService
             $playback += (int) ($library['playbackRaw'] ?? 0);
             $estimated = $estimated || ($library['playbackEstimated'] ?? false);
             $complete = $complete && ($library['available'] ?? true) === true;
+            $historyAvailable = $historyAvailable && ($library['playbackAvailable'] ?? true) === true;
         }
 
         return [
             ['label' => 'Libraries', 'color' => '#7c5cff', 'value' => $this->comma(count($libraries)), 'sub' => 'selected media libraries'],
             ['label' => 'Total Items', 'color' => '#3b9eff', 'value' => $complete ? $this->comma($items) : 'Unavailable', 'sub' => $complete ? 'movies - episodes - songs - videos' : 'one or more libraries could not be counted'],
-            ['label' => $estimated ? 'Estimated Playback' : 'Total Playback', 'color' => '#f7b955', 'value' => $this->longDuration($playback), 'sub' => 'recorded by dashboard'],
-            ['label' => 'Total Plays', 'color' => '#34d8a6', 'value' => $this->comma($plays), 'sub' => 'recorded by dashboard'],
+            ['label' => $estimated ? 'Estimated Playback' : 'Total Playback', 'color' => '#f7b955', 'value' => $historyAvailable ? $this->longDuration($playback) : 'Unavailable', 'sub' => $historyAvailable ? 'recorded by dashboard' : 'playback history could not be read'],
+            ['label' => 'Total Plays', 'color' => '#34d8a6', 'value' => $historyAvailable ? $this->comma($plays) : 'Unavailable', 'sub' => $historyAvailable ? 'recorded by dashboard' : 'playback history could not be read'],
         ];
     }
 
@@ -679,7 +808,7 @@ final class LibraryOverviewService
 
     private function relativeTime(\DateTimeImmutable $date): string
     {
-        $diff = max(0, time() - $date->getTimestamp());
+        $diff = max(0, $this->now() - $date->getTimestamp());
         if ($diff < 3600) {
             $minutes = max(1, intdiv($diff, 60));
 

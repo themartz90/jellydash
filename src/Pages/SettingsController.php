@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace Mk\Framework\Pages;
 
 use Mk\Framework\AppSettings;
+use Mk\Framework\Authorization;
 use Mk\Framework\Config;
 use Mk\Framework\Controller;
 use Mk\Framework\Jellyfin\JellyfinClient;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
 use Mk\Framework\Main;
+use Mk\Framework\Push\PushDeviceCapability;
+use Mk\Framework\Push\PushSubscriptionRepository;
 
 /**
  * The Settings page: user preferences stored in the DB (AppSettings), as
@@ -19,21 +22,47 @@ final class SettingsController extends Controller
 {
     public function handle(): void
     {
+        $authorization = new Authorization();
+        $authEnabled = Config::bool('AUTH_ENABLED', false);
+        $verifiedUser = $authEnabled ? $authorization->verifiedUser() : null;
+        $userId = $verifiedUser !== null ? $verifiedUser['id'] : null;
+        $canManageGlobal = $authorization->can(Authorization::CAPABILITY_MANAGE_GLOBAL);
+        $canManagePush = $authorization->can(Authorization::CAPABILITY_MANAGE_OWN_PUSH);
+        $canManageAllPush = $authorization->can(Authorization::CAPABILITY_MANAGE_ALL_PUSH);
+
         // Library names for the trending-exclusion checkboxes. A Jellyfin
         // outage degrades to a free-text field instead of an error page.
         $libraries = null;
-        try {
-            $libraries = (new JellyfinClient())->libraryNames();
-        } catch (\Throwable) {
-            $libraries = null;
+        if ($canManageGlobal) {
+            try {
+                $libraries = (new JellyfinClient())->libraryNames();
+            } catch (\Throwable) {
+                $libraries = null;
+            }
         }
 
         // Include monitoring-excluded users so they can still be unchecked.
         $users = [];
-        try {
-            $users = (new PlayHistoryRepository())->users(true);
-        } catch (\Throwable) {
-            $users = [];
+        if ($canManageGlobal) {
+            try {
+                $users = (new PlayHistoryRepository())->users(true);
+            } catch (\Throwable) {
+                $users = [];
+            }
+        }
+
+        $devices = [];
+        if ($canManagePush) {
+            try {
+                $devices = (new PushSubscriptionRepository())->devices(
+                    $userId,
+                    $canManageAllPush,
+                    $authEnabled,
+                    (new PushDeviceCapability())->existingHash(),
+                );
+            } catch (\Throwable) {
+                $devices = [];
+            }
         }
 
         $excluded = $this->csvValues(
@@ -75,6 +104,10 @@ final class SettingsController extends Controller
                 'hide_footer' => true,
             ]),
             'saved' => isset($_GET['saved']),
+            'can_manage_global' => $canManageGlobal,
+            'can_manage_push' => $canManagePush,
+            'can_manage_all_push' => $canManageAllPush,
+            'push_devices' => $devices,
             'server_label_value' => AppSettings::get('server_label', 'Jellyfin dashboard'),
             'show_server_stats' => AppSettings::bool('show_server_stats', true),
             'show_recently_added' => AppSettings::bool('show_recently_added', true),

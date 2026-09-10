@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Dotenv\Dotenv;
+use Mk\Framework\Authorization;
 use Mk\Framework\Config;
 use Mk\Framework\Csrf;
 use Mk\Framework\Jellyfin\HistoryLibraryBackfillService;
@@ -32,6 +33,12 @@ if (!in_array($method, ['GET', 'POST'], true)) {
 if ($method === 'POST' && !Csrf::validateHeader()) {
     http_response_code(419);
     echo json_encode(['error' => 'Invalid or missing CSRF token.'], JSON_THROW_ON_ERROR);
+    exit;
+}
+
+if ($method === 'POST' && !(new Authorization())->can(Authorization::CAPABILITY_MANAGE_GLOBAL)) {
+    http_response_code(403);
+    echo json_encode(['error' => 'Forbidden.'], JSON_THROW_ON_ERROR);
     exit;
 }
 

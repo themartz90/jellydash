@@ -12,6 +12,9 @@ final class JellyfinClient implements LibraryOverviewClient
     private string $token;
     private bool $verifySsl;
 
+    /** @var (\Closure(string, string, ?array, int): mixed)|null */
+    private ?\Closure $requester;
+
     /** @var array<string, array<int, string>>|null lowercased library name => physical locations */
     private static ?array $libraryLocations = null;
 
@@ -21,11 +24,17 @@ final class JellyfinClient implements LibraryOverviewClient
     /** @var array<string, string> per-process cache of itemId => file path */
     private static array $itemPathCache = [];
 
-    public function __construct(?string $baseUrl = null, ?string $token = null, ?bool $verifySsl = null)
-    {
+    /** @param (\Closure(string, string, ?array, int): mixed)|null $requester */
+    public function __construct(
+        ?string $baseUrl = null,
+        ?string $token = null,
+        ?bool $verifySsl = null,
+        ?\Closure $requester = null,
+    ) {
         $this->baseUrl = rtrim((string) ($baseUrl ?? Config::get('JELLYFIN_URL', '')), '/');
         $this->token = (string) ($token ?? Config::get('JELLYFIN_API_TOKEN', Config::get('JELLYFIN_API_KEY', '')));
         $this->verifySsl = $verifySsl ?? Config::bool('JELLYFIN_VERIFY_SSL', true);
+        $this->requester = $requester;
     }
 
     /**
@@ -140,9 +149,9 @@ final class JellyfinClient implements LibraryOverviewClient
             return self::$libraryLocations;
         }
 
-        self::$libraryLocations = [];
-        self::$libraryNames = [];
         $payload = $this->getJson('/Library/VirtualFolders');
+        $locationsByName = [];
+        $libraryNames = [];
 
         if (is_array($payload)) {
             foreach ($payload as $folder) {
@@ -155,11 +164,14 @@ final class JellyfinClient implements LibraryOverviewClient
                     ? array_values(array_filter(array_map('strval', $folder['Locations'])))
                     : [];
                 if ($name !== '' && $locations !== []) {
-                    self::$libraryLocations[$name] = $locations;
-                    self::$libraryNames[] = $displayName;
+                    $locationsByName[$name] = $locations;
+                    $libraryNames[] = $displayName;
                 }
             }
         }
+
+        self::$libraryLocations = $locationsByName;
+        self::$libraryNames = $libraryNames;
 
         return self::$libraryLocations;
     }
@@ -362,6 +374,10 @@ final class JellyfinClient implements LibraryOverviewClient
      */
     private function requestJson(string $path, string $method = 'GET', ?array $payload = null, int $timeout = 8): mixed
     {
+        if ($this->requester !== null) {
+            return ($this->requester)($path, $method, $payload, $timeout);
+        }
+
         if ($this->baseUrl === '' || $this->token === '') {
             throw new \RuntimeException('Jellyfin URL or API token is missing.');
         }

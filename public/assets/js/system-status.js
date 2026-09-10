@@ -18,6 +18,7 @@
     let requestSequence = 0;
     let inFlight = false;
     let firstResult = true;
+    let activeController = null;
 
     function settleInitialAnchor() {
         if (firstResult && window.location.hash === '#system-status') {
@@ -129,6 +130,7 @@
         inFlight = true;
         const sequence = ++requestSequence;
         const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        activeController = controller;
         const timeout = window.setTimeout(() => controller && controller.abort(), 8000);
         try {
             const response = await fetch('/api/system-status.php', { headers: { Accept: 'application/json' }, cache: 'no-store', signal: controller ? controller.signal : undefined });
@@ -143,6 +145,7 @@
             if (sequence === requestSequence) renderFailure(error);
         } finally {
             window.clearTimeout(timeout);
+            if (activeController === controller) activeController = null;
             inFlight = false;
         }
     }
@@ -166,6 +169,10 @@
 
     if (copyButton) copyButton.addEventListener('click', copyDiagnostics);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+    if (window.addEventListener) {
+        window.addEventListener('pagehide', () => activeController?.abort());
+        window.addEventListener('pageshow', refresh);
+    }
     if (window.JellydashFrontendTestHooks) window.JellydashFrontendTestHooks.systemStatus = { render, renderFailure, refresh, copyDiagnostics };
     refresh();
     window.setInterval(refresh, 30000);

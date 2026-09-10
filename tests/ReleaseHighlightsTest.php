@@ -65,6 +65,8 @@ final class ReleaseHighlightsTest extends TestCase
         $this->assertStringContainsString('commit', $importJs);
         $this->assertStringContainsString('application/x-ndjson', $importJs);
         $this->assertStringContainsString('data-import-history-progress', $importJs);
+        $this->assertStringContainsString('data-import-history-reopen', $importJs);
+        $this->assertStringContainsString('Hide progress', $importJs);
         $this->assertStringContainsString('Import ', $importJs);
         $this->assertStringContainsString('Checking the import', $importJs);
         $this->assertStringContainsString('Importing history', $importJs);

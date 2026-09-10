@@ -9,10 +9,12 @@
     var downloadButton = dialog && dialog.querySelector('[data-history-export-download]');
     var allButton = dialog && dialog.querySelector('[data-history-export-all]');
     var closeButtons = dialog && dialog.querySelectorAll('[data-history-export-close]');
+    var downloadFrame = dialog && dialog.querySelector('[data-history-export-frame]');
     var timer = null;
     var requestController = null;
+    var downloadRequested = false;
 
-    if (!dialog || typeof dialog.showModal !== 'function' || !openButton || !form || !countBox || !countLabel || !downloadButton || !allButton || !closeButtons) {
+    if (!dialog || typeof dialog.showModal !== 'function' || !openButton || !form || !countBox || !countLabel || !downloadButton || !allButton || !closeButtons || !downloadFrame) {
         return;
     }
 
@@ -102,7 +104,29 @@
         }
     });
     form.addEventListener('submit', function () {
+        downloadRequested = true;
+        setCountState('loading', 'Download requested. Your browser will save the CSV when it is ready.');
         window.setTimeout(closeDialog, 0);
+    });
+    downloadFrame.addEventListener('load', function () {
+        if (!downloadRequested) {
+            return;
+        }
+        try {
+            var frameDocument = downloadFrame.contentDocument;
+            var contentType = frameDocument && String(frameDocument.contentType || '').toLowerCase();
+            if (contentType && contentType !== 'text/csv' && contentType !== 'application/octet-stream') {
+                downloadRequested = false;
+                setCountState('error', contentType.indexOf('text/html') !== -1
+                    ? 'The export session expired or the download could not start.'
+                    : 'Could not prepare the History export.');
+                if (!dialog.open) {
+                    dialog.showModal();
+                }
+            }
+        } catch (error) {
+            // A successful attachment may not expose a document to its target frame.
+        }
     });
     allButton.addEventListener('click', function () {
         form.elements.search.value = '';

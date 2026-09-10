@@ -3,9 +3,11 @@
 declare(strict_types=1);
 
 use Dotenv\Dotenv;
+use Mk\Framework\Authorization;
 use Mk\Framework\Config;
 use Mk\Framework\Csrf;
 use Mk\Framework\Log;
+use Mk\Framework\Push\PushDeviceCapability;
 use Mk\Framework\Push\PushSubscriptionRepository;
 use Mk\Framework\Push\PushSubscriptionValidator;
 
@@ -31,6 +33,18 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
 
 Csrf::checkHeader();
 
+$authEnabled = Config::bool('AUTH_ENABLED', false);
+$authorization = new Authorization();
+if (!$authorization->can(Authorization::CAPABILITY_MANAGE_OWN_PUSH)) {
+    http_response_code(403);
+    echo json_encode(['error' => 'This account cannot manage notification devices.']);
+
+    return;
+}
+$verifiedUser = $authEnabled ? $authorization->verifiedUser() : null;
+$userId = $verifiedUser !== null ? $verifiedUser['id'] : null;
+$capabilityHash = (new PushDeviceCapability())->existingHash();
+
 if (session_status() === PHP_SESSION_ACTIVE) {
     session_write_close();
 }
@@ -46,7 +60,14 @@ try {
         return;
     }
 
-    (new PushSubscriptionRepository())->delete($endpoint);
+    $removed = $capabilityHash !== null
+        && (new PushSubscriptionRepository())->revokeCurrentEndpoint($endpoint, $capabilityHash, $userId, $authEnabled);
+    if (!$removed) {
+        http_response_code(404);
+        echo json_encode(['error' => 'No matching notification device was found.']);
+
+        return;
+    }
 
     echo json_encode(['ok' => true]);
 } catch (\Throwable $e) {

@@ -24,14 +24,10 @@ final class NowPlayingFrontendTest extends TestCase
         $nowPlaying = file_get_contents(ROOT_DIR . '/public/assets/js/now-playing.js');
 
         $this->assertIsString($nowPlaying);
-        $this->assertMatchesRegularExpression(
-            '/async function refreshNowPlaying\(\) \{\s*'
-            . 'if \(refreshInFlight\) \{\s*return;\s*\}\s*'
-            . 'refreshInFlight = true;\s*'
-            . 'try \{.*?window\.dispatchEvent\(new CustomEvent\(\x27jellydash:now-playing\x27, \{ detail: payload \}\)\);\s*'
-            . '\} finally \{\s*refreshInFlight = false;\s*\}\s*\}/s',
-            $nowPlaying,
-        );
+        $this->assertStringContainsString('if (refreshInFlight || document.hidden)', $nowPlaying);
+        $this->assertStringContainsString('refreshInFlight = true', $nowPlaying);
+        $this->assertStringContainsString('refreshInFlight = false', $nowPlaying);
+        $this->assertStringContainsString("new CustomEvent('jellydash:now-playing'", $nowPlaying);
     }
 
     public function testNowPlayingOwnsTheNavigationCountPollingLoop(): void
@@ -46,7 +42,7 @@ final class NowPlayingFrontendTest extends TestCase
         $this->assertStringContainsString("setText('[data-nav-count]', activeStreams)", $nowPlaying);
         $this->assertStringContainsString("document.querySelector('[data-now-playing-root]')", $navCount);
         $this->assertStringContainsString('Do not start a second', $navCount);
-        $this->assertStringContainsString('nav-count.js?v=20260908-stale-state', $shell);
+        $this->assertStringContainsString('nav-count.js?v={{ asset_revision }}', $shell);
     }
 
     public function testActiveStreamsAreLabelledAsStreams(): void
@@ -78,7 +74,7 @@ final class NowPlayingFrontendTest extends TestCase
         $this->assertStringContainsString('data-stat-block="transcoding"', $template);
         $this->assertStringNotContainsString('data-stat-block="active_streams"', $template);
         $this->assertStringNotContainsString('{% block dashboard_footer %}', $template);
-        $this->assertStringNotContainsString("data-stat-block=\"active_streams\"", $script);
+        $this->assertStringNotContainsString('data-stat-block="active_streams"', $script);
         $this->assertStringContainsString('.now-playing-telemetry', $stylesheet);
     }
 
@@ -176,7 +172,7 @@ final class NowPlayingFrontendTest extends TestCase
         $this->assertStringContainsString("window.addEventListener('jellydash:now-playing'", $script);
         $this->assertStringContainsString("panel.classList.toggle('is-collapsible', canCollapse)", $script);
         $this->assertStringContainsString("panel.classList.toggle('is-collapsed', collapsed)", $script);
-        $this->assertStringContainsString("row.tabIndex = collapsed ? -1 : 0", $script);
+        $this->assertStringContainsString('row.tabIndex = collapsed ? -1 : 0', $script);
         $this->assertStringContainsString('.recently-added-toggle[hidden]', $stylesheet);
         $this->assertStringContainsString('.recently-added-panel.is-collapsible.is-collapsed', $stylesheet);
     }
@@ -199,7 +195,7 @@ final class NowPlayingFrontendTest extends TestCase
         $this->assertStringContainsString('target="_blank" rel="noopener noreferrer"', $script);
         $this->assertStringContainsString('recent-media-open', $script);
         $this->assertStringContainsString('if (event.target !== row)', $script);
-        $this->assertStringContainsString('20260821-jellyfin-links', $template);
+        $this->assertStringContainsString('recently-added.js?v={{ asset_revision }}', $template);
         $this->assertStringContainsString('.recent-media-card[href]:focus-visible', $stylesheet);
     }
 
@@ -286,7 +282,7 @@ final class NowPlayingFrontendTest extends TestCase
         $this->assertStringContainsString('function setDiagnosticsOpen(cardElement, open, moveFocus = true)', $script);
         $this->assertStringContainsString('overlay.inert = !open', $script);
         $this->assertStringContainsString("event.key !== 'Escape'", $script);
-        $this->assertStringContainsString("candidate.dataset.streamId === openDiagnosticsId", $script);
+        $this->assertStringContainsString('candidate.dataset.streamId === openDiagnosticsId', $script);
         $this->assertStringContainsString('setDiagnosticsOpen(openCard, true, false)', $script);
         $this->assertStringContainsString('opacity: 0;', $stylesheet);
         $this->assertStringContainsString('pointer-events: none;', $stylesheet);

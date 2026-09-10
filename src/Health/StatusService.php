@@ -85,6 +85,9 @@ final class StatusService
                 } elseif ($queue['stalled'] > 0) {
                     $component['state'] = 'delayed';
                     $component['message'] = 'A delivery attempt stopped before finishing. The next worker run can recover it.';
+                } elseif ($component['state'] === 'checking' && $queue['pending_retries'] > 0) {
+                    $component['message'] = 'A delivery attempt is running. ' . $queue['pending_retries']
+                        . ' ' . ($queue['pending_retries'] === 1 ? 'retry is' : 'retries are') . ' queued.';
                 } elseif ($queue['pending_retries'] > 0 && !in_array($component['state'], ['failed', 'delayed'], true)) {
                     $component['state'] = 'delayed';
                     $component['message'] = 'Delivery retries are waiting for the next attempt.';

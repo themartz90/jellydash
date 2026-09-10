@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Dotenv\Dotenv;
+use Mk\Framework\Authorization;
 use Mk\Framework\Config;
 use Mk\Framework\Csrf;
 use Mk\Framework\Jellyfin\PlaybackReportingClient;
@@ -24,6 +25,11 @@ include_once ROOT_DIR . '/utils/@api-guard.php';
 header('Cache-Control: no-store, no-cache, must-revalidate');
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    if (!(new Authorization())->can(Authorization::CAPABILITY_MANAGE_GLOBAL)) {
+        http_response_code(403);
+        exit('Forbidden');
+    }
+
     $csrfToken = $_POST[Csrf::fieldName()] ?? null;
     if (!Csrf::validateHeader() && !Csrf::validate(is_string($csrfToken) ? $csrfToken : null)) {
         http_response_code(419);

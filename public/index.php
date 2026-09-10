@@ -28,7 +28,7 @@ error_reporting(E_ALL);
 ErrorHandler::register();
 
 // SETTINGS AND CONFIG
-include_once ROOT_DIR . "/utils/@settings.php";
+include_once ROOT_DIR . '/utils/@settings.php';
 
 // SECURITY HEADERS
 // Sent before the request handler below, which can render output and exit()
@@ -47,16 +47,16 @@ if ($jellyfinUrl !== null) {
     }
 }
 
-header("X-Content-Type-Options: nosniff");
-header("X-Frame-Options: DENY");
-header("Referrer-Policy: strict-origin-when-cross-origin");
+header('X-Content-Type-Options: nosniff');
+header('X-Frame-Options: DENY');
+header('Referrer-Policy: strict-origin-when-cross-origin');
 header("Content-Security-Policy: default-src 'self'; img-src {$imgSrc}; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
-if (!empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off') {
-    header("Strict-Transport-Security: max-age=31536000; includeSubDomains");
+if ($requestContext->isHttps($_SERVER)) {
+    header('Strict-Transport-Security: max-age=31536000');
 }
 
 // REQUESTS & AJAX (actions: ?req= / ?auth=)
-include_once ROOT_DIR . "/operations/@request.php";
+include_once ROOT_DIR . '/operations/@request.php';
 
 // ROUTE & RENDER: map the current page/category to a controller
 (new Router(new View()))->dispatch(PAGE, CATEGORY);

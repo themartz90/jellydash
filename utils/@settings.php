@@ -2,9 +2,28 @@
 
 declare(strict_types=1);
 
-use Mk\Framework\Config;
 use Mk\Framework\Authorization;
+use Mk\Framework\Config;
 use Mk\Framework\Pager;
+use Mk\Framework\RequestContext;
+
+// Enforce the external request policy for pages and direct API requests before
+// opening a session or restoring a remembered login.
+try {
+    $requestContext = RequestContext::fromConfig();
+} catch (\InvalidArgumentException $e) {
+    \Mk\Framework\Log::logException($e);
+    http_response_code(503);
+    header('Content-Type: text/plain; charset=utf-8');
+    header('Cache-Control: no-store');
+    exit('Jellydash request configuration is invalid. Check the server configuration.');
+}
+$httpsRedirect = $requestContext->httpsRedirectUrl($_SERVER);
+if ($httpsRedirect !== null) {
+    header('Cache-Control: no-store');
+    header('Location: ' . $httpsRedirect, true, 308);
+    exit;
+}
 
 // Database: credentials come from the environment (.env / .env.example)
 define('DATABASE_NAME', Config::get('DB_NAME', 'framework'));
@@ -18,9 +37,7 @@ define('DATABASE_PASSWORD', Config::get('DB_PASS', ''));
 // Harden the session cookie. `secure` follows the actual connection so local
 // HTTP development still works, while production over HTTPS gets the flag.
 // (Made env-driven in a later phase; see docs/ROADMAP.md.)
-$isHttps = (!empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off')
-    || (($_SERVER['SERVER_PORT'] ?? null) == 443)
-    || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+$isHttps = $requestContext->secureCookies($_SERVER);
 
 // Own cookie name so Jellydash never fights other PHP apps (or a second
 // Jellydash instance) on the same host over the default PHPSESSID cookie.

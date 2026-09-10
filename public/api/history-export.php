@@ -63,7 +63,9 @@ try {
         header('Content-Length: ' . (int) $size['size']);
     }
 
-    fpassthru($output);
+    if (fpassthru($output) === false) {
+        Log::logErrorMessage('History export output stopped before the response completed.', HistoryCsvExporter::class);
+    }
 } catch (\Throwable $e) {
     Log::logException($e);
     http_response_code(500);

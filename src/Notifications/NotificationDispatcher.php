@@ -71,7 +71,7 @@ final class NotificationDispatcher
         $delivered = 0;
 
         if ($this->webPush->isConfigured()) {
-            $subs = $this->subscriptions->all();
+            $subs = $this->subscriptions->deliverySubscriptions(Config::bool('AUTH_ENABLED', false));
             if ($subs !== []) {
                 $result = $this->webPush->send($subs, $notification);
                 foreach ($result['expired'] as $endpoint) {
@@ -113,8 +113,10 @@ final class NotificationDispatcher
         $notification = $this->withAbsoluteUrl($notification);
         $report = [];
 
-        $subs = $this->webPush->isConfigured() ? $this->subscriptions->all() : [];
-        $webPushResult = ['sent' => 0, 'failed' => 0, 'expired' => []];
+        $subs = $this->webPush->isConfigured()
+            ? $this->subscriptions->deliverySubscriptions(Config::bool('AUTH_ENABLED', false))
+            : [];
+        $webPushResult = ['sent' => 0, 'failed' => 0, 'expired' => [], 'ineligible' => 0];
         if ($this->webPush->isConfigured() && $subs !== []) {
             $webPushResult = $this->webPush->send($subs, $notification);
             foreach ($webPushResult['expired'] as $endpoint) {
@@ -126,6 +128,7 @@ final class NotificationDispatcher
             'subscriptions' => count($subs),
             'sent' => $webPushResult['sent'],
             'failed' => $webPushResult['failed'],
+            'ineligible' => $webPushResult['ineligible'],
         ];
 
         foreach ($this->channels as $channel) {
@@ -141,6 +144,31 @@ final class NotificationDispatcher
         }
 
         return $report;
+    }
+
+    /**
+     * Send the Web Push confirmation only to the browser that just enrolled.
+     *
+     * @param array{endpoint: string, p256dh: string, auth: string} $subscription
+     * @param array<string, mixed>                                  $notification
+     * @return array{configured: bool, sent: int, failed: int, ineligible: int}
+     */
+    public function testCurrentWebPush(array $subscription, array $notification): array
+    {
+        $result = ['sent' => 0, 'failed' => 0, 'expired' => [], 'ineligible' => 0];
+        if ($this->webPush->isConfigured()) {
+            $result = $this->webPush->send([$subscription], $this->withAbsoluteUrl($notification));
+            foreach ($result['expired'] as $endpoint) {
+                $this->subscriptions->delete($endpoint);
+            }
+        }
+
+        return [
+            'configured' => $this->webPush->isConfigured(),
+            'sent' => $result['sent'],
+            'failed' => $result['failed'],
+            'ineligible' => $result['ineligible'],
+        ];
     }
 
     /**

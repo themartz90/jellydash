@@ -11,7 +11,7 @@
         <h2 id="import-history-title" data-import-history-title>Import existing playback history?</h2>
         <p id="import-history-summary" class="release-dialog-summary" data-import-history-summary>The Playback Reporting plugin is still installed. Jellydash can copy that history so History and Statistics are not empty. Imported plays never trigger notifications.</p>
 
-        <div class="import-progress" data-import-history-progress hidden>
+        <div class="import-progress" data-import-history-progress role="status" aria-live="polite" aria-atomic="true" hidden>
             <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-import-history-progress-track>
                 <span data-import-history-progress-bar style="width: 0%"></span>
             </div>
@@ -27,3 +27,4 @@
         </form>
     </section>
 </dialog>
+<button class="settings-secondary-btn import-progress-reopen" type="button" data-import-history-reopen hidden>Show import progress</button>

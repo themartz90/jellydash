@@ -6,10 +6,10 @@ use Mk\Framework\AppSettings;
 use Mk\Framework\Authorization;
 use Mk\Framework\Container;
 use Mk\Framework\Database;
+use Mk\Framework\Health\WorkerStatusRepository;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
 use Mk\Framework\Jellyseerr\SeerrRequestRepository;
 use Mk\Framework\Push\PushSubscriptionRepository;
-use Mk\Framework\Health\WorkerStatusRepository;
 use PHPUnit\Framework\TestCase;
 
 final class SQLiteSchemaCompatibilityTest extends TestCase
@@ -125,6 +125,9 @@ final class SQLiteSchemaCompatibilityTest extends TestCase
         foreach (['previous_validator_hash', 'rotation_nonce', 'rotation_valid_until'] as $column) {
             $this->dibi->query('ALTER TABLE `auth_remember_tokens` DROP COLUMN %n', $column);
         }
+        $this->dibi->query('ALTER TABLE `login_attempts` DROP COLUMN `window_started_at`');
+        $this->dibi->query('DROP INDEX `idx_login_attempts_updated`');
+        $this->dibi->query('DROP INDEX `idx_push_subscription_user`');
 
         $this->resetSchemaState();
         $this->initializeAllSchemas();
@@ -132,6 +135,15 @@ final class SQLiteSchemaCompatibilityTest extends TestCase
         $row = $this->dibi->select('watched_sec, notified, library_resolved_at, notification_attempts, notification_claim_token, notification_claimed_at_epoch, notification_next_attempt_at_epoch')->from('play_history')->fetch();
         $this->assertNotFalse($row);
         $this->assertSame(300, (int) $row['watched_sec']);
+        $this->assertNull($this->dibi->select('window_started_at')->from('login_attempts')->fetchSingle());
+        $this->assertArrayHasKey(
+            'idx_login_attempts_updated',
+            $this->dibi->getDatabaseInfo()->getTable('login_attempts')->getIndexes(),
+        );
+        $this->assertArrayHasKey(
+            'idx_push_subscription_user',
+            $this->dibi->getDatabaseInfo()->getTable('push_subscriptions')->getIndexes(),
+        );
         $this->assertSame(1, (int) $row['notified']);
         $this->assertNull($row['library_resolved_at']);
         $this->assertSame(0, (int) $row['notification_attempts']);
@@ -161,7 +173,7 @@ final class SQLiteSchemaCompatibilityTest extends TestCase
         $this->assertSame('updated', AppSettings::get('sqlite_test'));
 
         $subscriptions = new PushSubscriptionRepository($this->database);
-        $endpoint = 'https://push.example.test/sqlite';
+        $endpoint = 'https://updates.push.services.mozilla.com/wpush/v2/sqlite-fixture';
         $subscriptions->save($endpoint, $this->encodedBytes(65), $this->encodedBytes(16), 'First agent');
         $subscriptions->save($endpoint, $this->encodedBytes(65), $this->encodedBytes(16), 'Updated agent');
         $this->assertSame(1, $subscriptions->count());

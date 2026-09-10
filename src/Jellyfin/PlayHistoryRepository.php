@@ -52,8 +52,12 @@ final class PlayHistoryRepository implements LibraryHistorySource
     private const LIVE_OVERLAP_SECONDS = 300;
     private const MAX_SAMPLE_GAP_SECONDS = 120;
 
-    public function __construct(?Database $database = null, ?MonitoringExclusions $monitoringExclusions = null)
-    {
+    /** @param (\Closure(array<string, mixed>): void)|null $beforeImportWrite */
+    public function __construct(
+        ?Database $database = null,
+        ?MonitoringExclusions $monitoringExclusions = null,
+        private ?\Closure $beforeImportWrite = null,
+    ) {
         $database ??= Container::db();
         $this->db = $database->getDibi();
         $this->platform = $database->getPlatform();
@@ -528,11 +532,14 @@ final class PlayHistoryRepository implements LibraryHistorySource
         $exactTranscode = $this->platform->isSqlite()
             ? "play_method COLLATE BINARY = 'Transcode'"
             : "BINARY play_method = 'Transcode'";
+        $uniqueUsers = $this->platform->isSqlite()
+            ? "COUNT(DISTINCT COALESCE(user_name, '') COLLATE BINARY)"
+            : "COUNT(DISTINCT BINARY COALESCE(user_name, ''))";
         $row = $this->filteredSelection(
             $filters,
             $now,
             "COUNT(*) AS plays,
-                COUNT(DISTINCT NULLIF(user_name, '')) AS unique_users,
+                {$uniqueUsers} AS unique_users,
                 COALESCE(SUM(COALESCE(watch_duration_sec, watched_sec)), 0) AS watch_sec,
                 COALESCE(SUM(CASE WHEN watch_duration_sec IS NULL THEN 1 ELSE 0 END), 0) AS estimated_plays,
                 COALESCE(SUM(CASE WHEN {$exactTranscode} THEN 1 ELSE 0 END), 0) AS transcodes",
@@ -631,6 +638,31 @@ final class PlayHistoryRepository implements LibraryHistorySource
      */
     public function importHistoricalPlays(array $rows, bool $dryRun = false, ?callable $onProgress = null): array
     {
+        if ($dryRun) {
+            return $this->importHistoricalPlaysBatch($rows, true, $onProgress);
+        }
+
+        $this->db->begin();
+        try {
+            $result = $this->importHistoricalPlaysBatch($rows, false, null);
+            $this->db->commit();
+        } catch (\Throwable $e) {
+            $this->db->rollback();
+            throw $e;
+        }
+
+        $this->reportImportProgress($onProgress, count($rows), count($rows), $result['inserted'], $result['skipped']);
+
+        return $result;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $rows
+     * @param callable(array{phase: string, processed: int, total: int, inserted: int, skipped: int}): void|null $onProgress
+     * @return array{inserted: int, skipped: int, repaired: int}
+     */
+    private function importHistoricalPlaysBatch(array $rows, bool $dryRun, ?callable $onProgress): array
+    {
         $inserted = 0;
         $skipped = 0;
         $repaired = 0;
@@ -659,6 +691,9 @@ final class PlayHistoryRepository implements LibraryHistorySource
                     $inserted++;
                 }
             } else {
+                if ($this->beforeImportWrite !== null) {
+                    ($this->beforeImportWrite)($row);
+                }
                 try {
                     $this->db->insert('play_history', $row)->execute();
                     $inserted++;
@@ -968,7 +1003,9 @@ final class PlayHistoryRepository implements LibraryHistorySource
      */
     public function libraries(): array
     {
-        $pairs = $this->db->select('DISTINCT library')
+        $pairs = $this->db->select($this->platform->isSqlite()
+            ? 'DISTINCT library COLLATE BINARY AS library'
+            : 'DISTINCT BINARY library AS library')
             ->from('play_history')
             ->where('library IS NOT NULL')
             ->where('library <> %s', '')
@@ -1195,11 +1232,15 @@ final class PlayHistoryRepository implements LibraryHistorySource
         }
 
         if ($filters->user !== '') {
-            $selection->where('user_name = %s', $filters->user);
+            $selection->where($this->platform->isSqlite()
+                ? 'user_name COLLATE BINARY = %s'
+                : 'BINARY user_name = %s', $filters->user);
         }
 
         if ($filters->library !== '') {
-            $selection->where('library = %s', $filters->library);
+            $selection->where($this->platform->isSqlite()
+                ? 'library COLLATE BINARY = %s'
+                : 'BINARY library = %s', $filters->library);
         }
 
         if ($filters->client !== '') {

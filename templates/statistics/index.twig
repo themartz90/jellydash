@@ -53,7 +53,7 @@
         {% if stats.hasTrending %}
             <section class="trending-section" aria-label="Trending media">
                 <header class="stats-section-header">
-                    <strong>Trending</strong>
+                    <h2>Trending</h2>
                     <span>Most-watched this period</span>
                     <i></i>
                 </header>
@@ -127,7 +127,7 @@
         </section>
 
         <header class="stats-section-header">
-            <strong>General</strong>
+            <h2>General</h2>
             <span>Total watch time - top users</span>
             <i></i>
         </header>
@@ -145,6 +145,7 @@
                 <div class="stats-trend-bars" aria-label="Watch time trend">
                     {% for bar in stats.trend %}
                         <span aria-label="{{ bar.label }}: {{ bar.value }}">
+                            <span class="visually-hidden">{{ bar.label }}: {{ bar.value }}</span>
                             <i style="height: {{ bar.h }}" title="{{ bar.value }}"></i>
                             <b>{{ bar.label }}</b>
                         </span>
@@ -178,7 +179,7 @@
         </section>
 
         <header class="stats-section-header">
-            <strong>Transcoding</strong>
+            <h2>Transcoding</h2>
             <span>Directness - codecs - reasons</span>
             <i></i>
         </header>
@@ -241,7 +242,7 @@
         </section>
 
         <header class="stats-section-header">
-            <strong>Clients</strong>
+            <h2>Clients</h2>
             <span>Breakdown - popularity - transcoding - usage</span>
             <i></i>
         </header>
@@ -334,7 +335,7 @@
         <div class="stats-devices-section" data-statistics-devices data-range="{{ stats.range }}" hidden>
             {% include "statistics/_device_icons.twig" %}
             <header class="stats-section-header">
-                <strong>Devices</strong>
+                <h2>Devices</h2>
                 <span>Registered Jellyfin clients - last activity</span>
                 <i></i>
                 <a class="stats-devices-manage" data-device-manage href="#" target="_blank" rel="noopener noreferrer" aria-label="Manage devices in Jellyfin" hidden>
@@ -360,7 +361,7 @@
         </div>
 
         <header class="stats-section-header">
-            <strong>Users</strong>
+            <h2>Users</h2>
             <span>Watch time - plays - average per play</span>
             <i></i>
         </header>
@@ -386,7 +387,7 @@
                     <span class="history-mono">{{ user.watch }}</span>
                     <span class="history-mono">{{ user.plays }}</span>
                     <span class="history-mono">{{ user.avg }}</span>
-                    <span class="stats-track" aria-label="{{ user.share }} of total watch time"><i style="width: {{ user.share }}"></i></span>
+                    <span class="stats-track"><i style="width: {{ user.share }}"></i><span class="visually-hidden">{{ user.share }} of total watch time</span></span>
                 {% if user.href is defined %}</a>{% else %}</article>{% endif %}
             {% else %}
                 <article class="stats-user-table-row is-empty">
@@ -399,5 +400,5 @@
 
 {% block page_scripts %}
     <script src="/assets/js/statistics-most-watched.js?v=20260901-disclosure"></script>
-    <script src="/assets/js/statistics-devices.js?v=20260819-device-icons"></script>
+    <script src="/assets/js/statistics-devices.js?v={{ asset_revision }}"></script>
 {% endblock %}

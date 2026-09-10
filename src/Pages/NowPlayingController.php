@@ -23,7 +23,10 @@ final class NowPlayingController extends Controller
             'hidden_count' => 0,
             'hidden_sources' => '',
             'stats' => [
-                'watch_today' => '0m',
+                'watch_today' => 'Unavailable',
+                'watch_today_available' => false,
+                'collection_status' => 'checking',
+                'metadata_available' => false,
                 'active_streams' => 0,
                 'active_users' => 0,
                 'bandwidth_mbps' => '0.0',

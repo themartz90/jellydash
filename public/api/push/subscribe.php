@@ -3,9 +3,13 @@
 declare(strict_types=1);
 
 use Dotenv\Dotenv;
+use Mk\Framework\Authorization;
 use Mk\Framework\Config;
 use Mk\Framework\Csrf;
 use Mk\Framework\Log;
+use Mk\Framework\Push\PushDeviceCapability;
+use Mk\Framework\Push\PushSubscriptionLimitExceeded;
+use Mk\Framework\Push\PushSubscriptionOwnershipException;
 use Mk\Framework\Push\PushSubscriptionRepository;
 use Mk\Framework\Push\PushSubscriptionValidator;
 
@@ -31,6 +35,17 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
 
 Csrf::checkHeader();
 
+$authEnabled = Config::bool('AUTH_ENABLED', false);
+$authorization = new Authorization();
+if (!$authorization->can(Authorization::CAPABILITY_ENROLL_PUSH)) {
+    http_response_code(403);
+    echo json_encode(['error' => 'This account cannot register notification devices.']);
+
+    return;
+}
+$verifiedUser = $authEnabled ? $authorization->verifiedUser() : null;
+$userId = $verifiedUser !== null ? $verifiedUser['id'] : null;
+
 if (session_status() === PHP_SESSION_ACTIVE) {
     session_write_close();
 }
@@ -49,14 +64,26 @@ try {
         return;
     }
 
+    $deviceCapabilityHash = (new PushDeviceCapability())->hashForEnrollment();
     (new PushSubscriptionRepository())->save(
         $endpoint,
         $p256dh,
         $auth,
-        isset($_SERVER['HTTP_USER_AGENT']) ? (string) $_SERVER['HTTP_USER_AGENT'] : null
+        isset($_SERVER['HTTP_USER_AGENT']) ? (string) $_SERVER['HTTP_USER_AGENT'] : null,
+        $deviceCapabilityHash,
+        $userId,
+        $authEnabled,
     );
 
     echo json_encode(['ok' => true]);
+} catch (PushSubscriptionLimitExceeded $e) {
+    http_response_code(409);
+    echo json_encode(['error' => str_contains($e->getMessage(), 'account limit')
+        ? 'This account has reached its notification device limit.'
+        : 'This Jellydash install has reached its notification device limit.']);
+} catch (PushSubscriptionOwnershipException) {
+    http_response_code(409);
+    echo json_encode(['error' => 'This notification device could not be associated with the current account.']);
 } catch (\Throwable $e) {
     http_response_code(500);
     Log::logException($e);

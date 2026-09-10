@@ -4,6 +4,9 @@
     const dot = document.querySelector('[data-live-dot]');
     let hasLoaded = false;
     let refreshInFlight = false;
+    let activeController = null;
+    let requestSequence = 0;
+    let latestAppliedSequence = 0;
     let openDiagnosticsId = null;
     let lastSuccessfulRefresh = null;
 
@@ -37,10 +40,10 @@
     function progress(stream, large) {
         return `
             <div class="progress-block ${large ? 'is-large' : ''}">
-                <div class="progress-track"><span style="width: ${escapeAttr(stream.progressPct || '0%')}"></span></div>
+                <div class="progress-track"><span data-progress-fill style="width: ${escapeAttr(stream.progressPct || '0%')}"></span></div>
                 <div class="progress-labels">
-                    <span>${escapeHtml(stream.timeLabel || '0:00 / 0:00')}</span>
-                    <span>${escapeHtml(stream.remaining || '0 min left')}</span>
+                    <span data-progress-time>${escapeHtml(stream.timeLabel || '0:00 / Unknown')}</span>
+                    <span data-progress-remaining>${escapeHtml(stream.remaining || 'Remaining time unknown')}</span>
                 </div>
             </div>
         `;
@@ -159,7 +162,7 @@
 
                 <div class="stream-card-content">
                     <div class="stream-card-top">
-                        <span class="now-pill ${stream.isPaused ? 'is-paused' : ''} ${stream.isLive && !stream.isPaused ? 'is-live-tv' : ''}"><i></i>${escapeHtml(stream.statusLabel || 'Now Playing')}</span>
+                        <span class="now-pill ${stream.isPaused ? 'is-paused' : ''} ${stream.isLive && !stream.isPaused ? 'is-live-tv' : ''}" data-stream-status><i></i>${escapeHtml(stream.statusLabel || 'Now Playing')}</span>
                         <div class="playback-stack">
                             ${methodBadge(stream)}
                             <span class="quality-chip">${escapeHtml(stream.quality || '')}</span>
@@ -215,19 +218,107 @@
         `;
     }
 
+    function createCard(stream) {
+        const template = document.createElement('template');
+        template.innerHTML = card(stream).trim();
+        return template.content.firstElementChild;
+    }
+
+    function updateProtectedCard(existing, replacement) {
+        const currentFill = existing.querySelector('[data-progress-fill]');
+        const nextFill = replacement.querySelector('[data-progress-fill]');
+        if (currentFill && nextFill) {
+            currentFill.style.width = nextFill.style.width;
+        }
+        ['progress-time', 'progress-remaining'].forEach((name) => {
+            const current = existing.querySelector(`[data-${name}]`);
+            const next = replacement.querySelector(`[data-${name}]`);
+            if (current && next) {
+                current.textContent = next.textContent;
+            }
+        });
+        const currentStatus = existing.querySelector('[data-stream-status]');
+        const nextStatus = replacement.querySelector('[data-stream-status]');
+        if (currentStatus && nextStatus) {
+            currentStatus.className = nextStatus.className;
+            const currentText = Array.from(currentStatus.childNodes).find((node) => node.nodeType === 3);
+            const nextText = Array.from(nextStatus.childNodes).find((node) => node.nodeType === 3);
+            if (currentText && nextText) {
+                currentText.nodeValue = nextText.nodeValue;
+            }
+        }
+    }
+
+    function focusAfterRemoval() {
+        const fallback = root.querySelector('[data-diagnostics-open]')
+            || document.querySelector('[data-nav-toggle]')
+            || document.querySelector('.dashboard-nav a');
+        if (fallback && typeof fallback.focus === 'function') {
+            fallback.focus();
+        }
+    }
+
+    function reconcileStreams(streams) {
+        let grid = root.querySelector('.stream-grid');
+        if (!grid) {
+            root.innerHTML = '<div class="stream-grid"></div>';
+            grid = root.querySelector('.stream-grid');
+        }
+
+        const existingCards = new Map(Array.from(grid.querySelectorAll('[data-stream-id]'))
+            .map((element) => [element.dataset.streamId, element]));
+        const activeElement = document.activeElement;
+        const selection = typeof window.getSelection === 'function' ? window.getSelection() : null;
+
+        streams.forEach((stream) => {
+            const key = String(stream.id || '');
+            const replacement = createCard(stream);
+            const existing = existingCards.get(key);
+            if (!existing) {
+                grid.append(replacement);
+                return;
+            }
+
+            const protectsInteraction = existing.classList.contains('is-diagnostics-open')
+                || (activeElement && existing.contains(activeElement))
+                || (selection && !selection.isCollapsed && (
+                    (selection.anchorNode && existing.contains(selection.anchorNode))
+                    || (selection.focusNode && existing.contains(selection.focusNode))
+                ));
+            if (protectsInteraction) {
+                updateProtectedCard(existing, replacement);
+            } else {
+                existing.className = replacement.className;
+                existing.innerHTML = replacement.innerHTML;
+            }
+            grid.append(existing);
+            existingCards.delete(key);
+        });
+
+        existingCards.forEach((element) => {
+            const containedFocus = activeElement && element.contains(activeElement);
+            element.remove();
+            if (containedFocus) {
+                focusAfterRemoval();
+            }
+        });
+    }
+
     function renderStreams(payload) {
         const streams = Array.isArray(payload.streams) ? payload.streams : [];
         root.classList.toggle('has-streams', streams.length > 0);
 
         if (streams.length === 0) {
+            const containedFocus = document.activeElement && root.contains(document.activeElement);
             openDiagnosticsId = null;
             root.innerHTML = emptyState();
+            if (containedFocus) {
+                focusAfterRemoval();
+            }
             return;
         }
 
-        const cards = streams.map(card).join('');
-
-        root.innerHTML = `<div class="stream-grid">${cards}</div>`;
+        reconcileStreams(streams);
 
         if (openDiagnosticsId !== null) {
             const openCard = Array.from(root.querySelectorAll('[data-stream-id]'))
@@ -294,7 +385,17 @@
         root.classList.remove('is-stale');
 
         setText('[data-nav-count]', activeStreams);
-        setText('[data-stat="watch_today"]', stats.watch_today || '0m');
+        setText('[data-stat="watch_today"]', stats.watch_today_available === false ? 'Unavailable' : (stats.watch_today || 'Unavailable'));
+
+        const collectionStatus = document.querySelector('[data-collection-status]');
+        if (collectionStatus) {
+            const degraded = stats.collection_status === 'degraded';
+            const metadataUnavailable = stats.metadata_available === false;
+            collectionStatus.hidden = !degraded && !metadataUnavailable;
+            collectionStatus.textContent = degraded
+                ? 'Playback history collection is delayed.'
+                : (metadataUnavailable ? 'Some playback details are unavailable.' : '');
+        }
 
         const bandwidthBlock = document.querySelector('[data-stat-block="bandwidth"]');
         const transcodeBlock = document.querySelector('[data-stat-block="transcoding"]');
@@ -351,16 +452,21 @@
     }
 
     async function refreshNowPlaying() {
-        if (refreshInFlight) {
+        if (refreshInFlight || document.hidden) {
             return;
         }
 
         refreshInFlight = true;
+        const sequence = ++requestSequence;
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        activeController = controller;
+        const timer = window.setTimeout ? window.setTimeout(() => controller?.abort(), 8000) : null;
 
         try {
             const response = await fetch('/api/now-playing.php', {
                 headers: { Accept: 'application/json' },
                 cache: 'no-store',
+                signal: controller?.signal,
             });
 
             if (!response.ok) {
@@ -370,6 +476,10 @@
             }
 
             const payload = await response.json();
+            if (sequence < latestAppliedSequence) {
+                return;
+            }
+            latestAppliedSequence = sequence;
             updateStats(payload);
             renderStreams(payload);
             hasLoaded = true;
@@ -377,6 +487,12 @@
 
             window.dispatchEvent(new CustomEvent('jellydash:now-playing', { detail: payload }));
         } finally {
+            if (timer !== null && window.clearTimeout) {
+                window.clearTimeout(timer);
+            }
+            if (activeController === controller) {
+                activeController = null;
+            }
             refreshInFlight = false;
         }
     }
@@ -418,4 +534,13 @@
     window.setInterval(() => {
         refreshNowPlaying().catch(renderError);
     }, 5000);
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            refreshNowPlaying().catch(renderError);
+        }
+    });
+    if (window.addEventListener) {
+        window.addEventListener('pagehide', () => activeController?.abort());
+        window.addEventListener('pageshow', () => refreshNowPlaying().catch(renderError));
+    }
 }());

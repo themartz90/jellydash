@@ -96,7 +96,7 @@
         </section>
     {% endif %}
 
-    {% if push_enabled and vapid_public_key %}
+    {% if push_enabled and vapid_public_key and push_enrollment_allowed %}
         <button class="settings-row push-row" type="button" data-push-toggle aria-pressed="false" hidden>
             <span class="settings-icon" aria-hidden="true">
                 <svg class="icon-filled" viewBox="0 0 24 24" role="img" focusable="false">

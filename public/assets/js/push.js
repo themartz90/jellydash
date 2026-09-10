@@ -15,6 +15,7 @@
     var CSRF_TOKEN = csrfMeta.content;
     var supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
     var busy = false;
+    var NETWORK_TIMEOUT_MS = 8000;
 
     function urlBase64ToUint8Array(base64String) {
         var padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -32,10 +33,12 @@
         off: 'Off',
         working: 'Working…',
         blocked: 'Blocked in browser',
-        unsupported: 'Not supported'
+        unsupported: 'Notifications need browser support.',
+        timeout: 'Setup timed out. Try again.',
+        error: 'Could not update. Try again.'
     };
 
-    function setState(state) {
+    function setState(state, detail) {
         toggles.forEach(function (el) {
             el.hidden = false;
             var isOn = state === 'on';
@@ -46,24 +49,118 @@
             if (label) {
                 label.textContent = LABELS[state] || '';
             }
-            if (state === 'blocked') {
-                el.title = 'Notifications are blocked for this site in your browser settings.';
+            if (state === 'blocked' || state === 'unsupported') {
+                el.title = state === 'blocked'
+                    ? 'Notifications are blocked for this site. Allow them in your browser settings.'
+                    : LABELS.unsupported;
+            } else if (state === 'timeout' || state === 'error') {
+                el.title = detail || LABELS[state];
             } else {
                 el.removeAttribute('title');
             }
         });
     }
 
-    function postJson(url, body) {
-        return fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRF-Token': CSRF_TOKEN
-            },
-            credentials: 'same-origin',
-            body: body ? JSON.stringify(body) : null
+    function waitForServiceWorker() {
+        return new Promise(function (resolve, reject) {
+            var timer = window.setTimeout(function () {
+                var error = new Error('Service worker setup timed out');
+                error.name = 'TimeoutError';
+                reject(error);
+            }, NETWORK_TIMEOUT_MS);
+
+            navigator.serviceWorker.ready.then(function (registration) {
+                window.clearTimeout(timer);
+                resolve(registration);
+            }, function (error) {
+                window.clearTimeout(timer);
+                reject(error);
+            });
         });
+    }
+
+    function postJson(url, body) {
+        return new Promise(function (resolve, reject) {
+            var settled = false;
+            var controller = typeof AbortController === 'function' ? new AbortController() : null;
+            var timer = window.setTimeout(function () {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                if (controller) {
+                    controller.abort();
+                }
+                var error = new Error('The request timed out');
+                error.name = 'TimeoutError';
+                reject(error);
+            }, NETWORK_TIMEOUT_MS);
+            var options = {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': CSRF_TOKEN
+                },
+                credentials: 'same-origin',
+                body: body ? JSON.stringify(body) : null
+            };
+            if (controller) {
+                options.signal = controller.signal;
+            }
+            fetch(url, options).then(function (response) {
+                if (response.ok) {
+                    if (settled) {
+                        return;
+                    }
+                    settled = true;
+                    window.clearTimeout(timer);
+                    resolve(response);
+                    return;
+                }
+                var fallback = 'The request failed with HTTP ' + response.status + '.';
+                response.json().then(function (responseBody) {
+                    if (settled) {
+                        return;
+                    }
+                    settled = true;
+                    window.clearTimeout(timer);
+                    var message = responseBody && typeof responseBody.error === 'string' && responseBody.error
+                        ? responseBody.error
+                        : fallback;
+                    var error = new Error(message);
+                    error.userMessage = message;
+                    reject(error);
+                }, function () {
+                    if (settled) {
+                        return;
+                    }
+                    settled = true;
+                    window.clearTimeout(timer);
+                    reject(new Error(fallback));
+                });
+            }, function (error) {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                window.clearTimeout(timer);
+                reject(error);
+            });
+        });
+    }
+
+    function storeSubscription(subscription, sendConfirmation) {
+        return postJson('/api/push/subscribe.php', subscription).then(function () {
+            setState('on');
+            if (sendConfirmation) {
+                postJson('/api/push/test.php', { scope: 'current' }).catch(function () {});
+            }
+        });
+    }
+
+    function setFailedState(error, action) {
+        console.warn('[jellydash] ' + action + ' notifications failed:', error && error.name, error && error.message);
+        setState(error && error.name === 'TimeoutError' ? 'timeout' : 'error', error && error.userMessage);
     }
 
     function subscribe() {
@@ -73,7 +170,7 @@
                 setState(permission === 'denied' ? 'blocked' : 'off');
                 return;
             }
-            return navigator.serviceWorker.ready.then(function (reg) {
+            return waitForServiceWorker().then(function (reg) {
                 return reg.pushManager.getSubscription().then(function (existing) {
                     return existing || reg.pushManager.subscribe({
                         userVisibleOnly: true,
@@ -81,26 +178,18 @@
                     });
                 });
             }).then(function (sub) {
-                return postJson('/api/push/subscribe.php', sub).then(function (res) {
-                    if (!res.ok) {
-                        throw new Error('storing the subscription failed with HTTP ' + res.status);
-                    }
-                    setState('on');
-                    // Immediate confirmation so the user knows it works.
-                    postJson('/api/push/test.php').catch(function () {});
-                });
+                return storeSubscription(sub, true);
             }).catch(function (err) {
                 // Surface the real reason (push-service errors differ per
                 // browser/OS) instead of silently snapping back to off.
-                console.warn('[jellydash] enabling notifications failed:', err && err.name, err && err.message);
-                setState('off');
+                setFailedState(err, 'enabling');
             });
         });
     }
 
     function unsubscribe() {
         setState('working');
-        return navigator.serviceWorker.ready.then(function (reg) {
+        return waitForServiceWorker().then(function (reg) {
             return reg.pushManager.getSubscription();
         }).then(function (sub) {
             if (!sub) {
@@ -114,8 +203,7 @@
                 setState('off');
             });
         }).catch(function (err) {
-            console.warn('[jellydash] disabling notifications failed:', err && err.name, err && err.message);
-            setState('off');
+            setFailedState(err, 'disabling');
         });
     }
 
@@ -149,16 +237,25 @@
         el.addEventListener('click', onToggle);
     });
 
-    // Reflect the current subscription state on load.
+    // A browser subscription can outlive its server registration. Confirm it
+    // with Jellydash before showing the controls as enabled.
     if (Notification.permission === 'denied') {
         setState('blocked');
     } else {
-        navigator.serviceWorker.ready.then(function (reg) {
+        busy = true;
+        setState('working');
+        waitForServiceWorker().then(function (reg) {
             return reg.pushManager.getSubscription();
         }).then(function (sub) {
-            setState(sub ? 'on' : 'off');
-        }).catch(function () {
-            setState('off');
+            if (!sub) {
+                setState('off');
+                return;
+            }
+            return storeSubscription(sub, false);
+        }).catch(function (error) {
+            setFailedState(error, 'reconciling');
+        }).then(function () {
+            busy = false;
         });
     }
 })();

@@ -8,6 +8,16 @@
         return;
     }
 
+    async function boundedFetch(url) {
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        const timer = window.setTimeout(() => controller?.abort(), 8000);
+        try {
+            return await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store', signal: controller?.signal });
+        } finally {
+            window.clearTimeout(timer);
+        }
+    }
+
     function escapeHtml(value) {
         return String(value ?? '')
             .replace(/&/g, '&amp;')
@@ -75,9 +85,10 @@
     function renderLibrary(library) {
         const breakdown = Array.isArray(library.breakdown) ? library.breakdown : [];
         const unavailable = library.available === false;
+        const playbackUnavailable = library.playbackAvailable === false;
 
         return `
-            <article class="library-card${unavailable ? ' is-unavailable' : ''}" style="--library-accent: ${escapeAttr(library.accent)}; --library-chip-bg: ${escapeAttr(library.chipBg)}; --library-chip-border: ${escapeAttr(library.chipBorder)};">
+            <article class="library-card${unavailable ? ' is-unavailable' : ''}${playbackUnavailable ? ' is-playback-unavailable' : ''}" style="--library-accent: ${escapeAttr(library.accent)}; --library-chip-bg: ${escapeAttr(library.chipBg)}; --library-chip-border: ${escapeAttr(library.chipBorder)};">
                 <div class="library-banner">
                     <span class="library-banner-art" style="background-image: ${escapeAttr(library.banner)}"></span>
                     <span class="library-banner-overlay"></span>
@@ -92,17 +103,17 @@
                 </div>
 
                 <div class="library-body">
-                    ${unavailable ? `
+                    ${unavailable || playbackUnavailable ? `
                         <div class="library-unavailable-note">
-                            <strong>Live item counts are unavailable.</strong>
-                            <span>Recorded playback stats are still shown below.</span>
+                            <strong>${unavailable ? 'Live item counts are unavailable.' : 'Playback history is unavailable.'}</strong>
+                            <span>${playbackUnavailable && unavailable ? 'Playback history is also unavailable.' : (playbackUnavailable ? 'Live item counts are still shown below.' : 'Recorded playback stats are shown below.')}</span>
                         </div>
                     ` : ''}
 
                     <dl class="library-stat-grid">
                         ${stat('Total Items', library.totalFiles)}
-                        ${stat('Total Plays', library.totalPlays)}
-                        ${stat(library.playbackEstimated ? 'Estimated Playback' : 'Total Playback', library.playback)}
+                        ${stat(playbackUnavailable ? 'Total Plays Unavailable' : 'Total Plays', library.totalPlays)}
+                        ${stat(playbackUnavailable ? 'Playback Unavailable' : (library.playbackEstimated ? 'Estimated Playback' : 'Total Playback'), library.playback)}
                         ${stat('Last Activity', library.lastActivity)}
                     </dl>
 
@@ -143,10 +154,7 @@
     }
 
     async function loadLibraries() {
-        const response = await fetch('/api/libraries.php', {
-            headers: { Accept: 'application/json' },
-            cache: 'no-store',
-        });
+        const response = await boundedFetch('/api/libraries.php');
 
         if (!response.ok) {
             throw new Error('Libraries request failed with HTTP ' + response.status);

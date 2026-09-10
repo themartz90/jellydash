@@ -41,8 +41,13 @@ class Log
 
     public static function userIP(): string
     {
-        // REMOTE_ADDR only; forwarded headers are spoofable (see Phase 2 / S8).
-        return $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+        try {
+            return RequestContext::fromConfig()->clientIp($_SERVER);
+        } catch (\InvalidArgumentException) {
+            $remote = $_SERVER['REMOTE_ADDR'] ?? null;
+
+            return is_string($remote) && filter_var($remote, FILTER_VALIDATE_IP) !== false ? $remote : 'unknown';
+        }
     }
 
     private static function error(string $msg, \Throwable $e): void

@@ -69,19 +69,36 @@ class Database
                 `identifier` varchar(190) NOT NULL,
                 `attempts` int NOT NULL DEFAULT 0,
                 `locked_until` datetime DEFAULT NULL,
+                `window_started_at` datetime DEFAULT NULL,
                 `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (`id`),
-                UNIQUE KEY `uniq_identifier` (`identifier`)
+                UNIQUE KEY `uniq_identifier` (`identifier`),
+                KEY `idx_login_attempts_updated` (`updated_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci',
             'CREATE TABLE IF NOT EXISTS `login_attempts` (
                 `id` INTEGER PRIMARY KEY AUTOINCREMENT,
                 `identifier` TEXT NOT NULL,
                 `attempts` INTEGER NOT NULL DEFAULT 0,
                 `locked_until` TEXT DEFAULT NULL,
+                `window_started_at` TEXT DEFAULT NULL,
                 `updated_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (`identifier`)
             )'
         );
+        if (!$this->platform->columnExists('login_attempts', 'window_started_at')) {
+            try {
+                $this->platform->addColumn(
+                    'login_attempts',
+                    '`window_started_at` datetime DEFAULT NULL AFTER `locked_until`',
+                    '`window_started_at` TEXT DEFAULT NULL',
+                );
+            } catch (\Dibi\Exception $e) {
+                if (!$this->platform->columnExists('login_attempts', 'window_started_at')) {
+                    throw $e;
+                }
+            }
+        }
+        $this->platform->createIndexIfMissing('idx_login_attempts_updated', 'login_attempts', ['updated_at']);
 
         $this->platform->createTable(
             'CREATE TABLE IF NOT EXISTS `auth_remember_tokens` (
@@ -173,11 +190,16 @@ class Database
             );
         }
 
+        $role = (int) $role;
+        if (!Authorization::isValidRole($role)) {
+            throw new \InvalidArgumentException('Role must be between 1 and 4.');
+        }
+
         $dibi_data = [
             'username' => strtolower($username),
             'password' => password_hash((string) $password, PASSWORD_DEFAULT),
             'name' => ucfirst($name),
-            'role' => intval($role),
+            'role' => $role,
         ];
 
         // Returns the new row id; throws \Dibi\Exception on failure.
@@ -213,6 +235,20 @@ class Database
         }
 
         return true;
+    }
+
+    public function setUserRole(string $username, int $role): bool
+    {
+        $this->ensureAuthSchema();
+        if (!Authorization::isValidRole($role)) {
+            throw new \InvalidArgumentException('Role must be between 1 and 4.');
+        }
+
+        $this->dibi->update('users', ['role' => $role])
+            ->where('username = %s', trim(strtolower($username)))
+            ->execute();
+
+        return $this->dibi->getAffectedRows() > 0;
     }
 
     public function getUser($id): ?array

@@ -27,24 +27,43 @@ final class NowPlayingService
         $mapped = $mapper->map(($this->exclusions ?? new MonitoringExclusions())->filterSessions($client->sessions()));
         /** @var array<int, array<string, mixed>> $streams */
         $streams = $mapped['streams'];
-        $watchToday = 0;
-        $watchTodayEstimated = false;
+        $cycle = [
+            'streams' => $streams,
+            'metadata_available' => false,
+            'recording_available' => false,
+            'watch_today' => null,
+            'watch_today_available' => false,
+            'watch_today_estimated' => true,
+            'watch_today_estimate_available' => false,
+        ];
 
         try {
             $history = $this->history ?? new PlayHistoryRepository();
-            $streams = $this->resolveLibraries($streams, $client, $history);
-            $history->logActiveStreams($streams);
-            $watchToday = $history->watchTimeToday();
-            $watchTodayEstimated = $history->watchTimeTodayIsEstimated();
+            $cycle = $this->historyCycle(
+                $streams,
+                fn (array $activeStreams): array => $this->resolveLibraries($activeStreams, $client, $history),
+                $history->logActiveStreams(...),
+                $history->watchTimeToday(...),
+                $history->watchTimeTodayIsEstimated(...),
+            );
         } catch (\Throwable $e) {
             Log::logException($e);
         }
+        $streams = $cycle['streams'];
 
         return [
             'streams' => $streams,
             'hidden_count' => $mapped['hidden_count'],
             'hidden_sources' => $mapped['hidden_sources'],
-            'stats' => $this->stats($streams, $watchToday, $watchTodayEstimated),
+            'stats' => $this->stats(
+                $streams,
+                $cycle['watch_today'],
+                $cycle['watch_today_estimated'],
+                $cycle['watch_today_available'],
+                $cycle['watch_today_estimate_available'],
+                $cycle['recording_available'],
+                $cycle['metadata_available'],
+            ),
             'refreshed_at' => gmdate('c'),
         ];
     }
@@ -95,11 +114,91 @@ final class NowPlayingService
     }
 
     /**
+     * Keep optional metadata, recording, and summary reads independent so one
+     * failure cannot turn a different operation into a false success value.
+     *
+     * @param array<int, array<string, mixed>> $streams
+     * @param callable(array<int, array<string, mixed>>): array<int, array<string, mixed>> $resolve
+     * @param callable(array<int, array<string, mixed>>): void $record
+     * @param callable(): int $readWatchTime
+     * @param callable(): bool $readEstimated
+     * @return array{
+     *     streams: array<int, array<string, mixed>>,
+     *     metadata_available: bool,
+     *     recording_available: bool,
+     *     watch_today: int|null,
+     *     watch_today_available: bool,
+     *     watch_today_estimated: bool,
+     *     watch_today_estimate_available: bool
+     * }
+     */
+    private function historyCycle(
+        array $streams,
+        callable $resolve,
+        callable $record,
+        callable $readWatchTime,
+        callable $readEstimated,
+    ): array {
+        $metadataAvailable = true;
+        try {
+            $streams = $resolve($streams);
+        } catch (\Throwable $e) {
+            $metadataAvailable = false;
+            Log::logException($e);
+        }
+
+        $recordingAvailable = true;
+        try {
+            $record($streams);
+        } catch (\Throwable $e) {
+            $recordingAvailable = false;
+            Log::logException($e);
+        }
+
+        $watchToday = null;
+        $watchTodayAvailable = false;
+        try {
+            $watchToday = $readWatchTime();
+            $watchTodayAvailable = true;
+        } catch (\Throwable $e) {
+            Log::logException($e);
+        }
+
+        $watchTodayEstimated = true;
+        $watchTodayEstimateAvailable = false;
+        if ($watchTodayAvailable) {
+            try {
+                $watchTodayEstimated = $readEstimated();
+                $watchTodayEstimateAvailable = true;
+            } catch (\Throwable $e) {
+                Log::logException($e);
+            }
+        }
+
+        return [
+            'streams' => $streams,
+            'metadata_available' => $metadataAvailable,
+            'recording_available' => $recordingAvailable,
+            'watch_today' => $watchToday,
+            'watch_today_available' => $watchTodayAvailable,
+            'watch_today_estimated' => $watchTodayEstimated,
+            'watch_today_estimate_available' => $watchTodayEstimateAvailable,
+        ];
+    }
+
+    /**
      * @param array<int, array<string, mixed>> $streams
      * @return array<string, mixed>
      */
-    private function stats(array $streams, int $watchToday, bool $watchTodayEstimated): array
-    {
+    private function stats(
+        array $streams,
+        ?int $watchToday,
+        bool $watchTodayEstimated,
+        bool $watchTodayAvailable = true,
+        bool $watchTodayEstimateAvailable = true,
+        bool $recordingAvailable = true,
+        bool $metadataAvailable = true,
+    ): array {
         $users = [];
         $bitrate = 0;
         $transcodes = 0;
@@ -116,7 +215,17 @@ final class NowPlayingService
         }
 
         return [
-            'watch_today' => ($watchTodayEstimated ? 'about ' : '') . $this->durationLabel($watchToday),
+            'watch_today' => $watchTodayAvailable
+                ? (($watchTodayEstimated || !$watchTodayEstimateAvailable) ? 'about ' : '')
+                    . PlaybackStatisticsService::formatDuration((int) $watchToday)
+                : 'Unavailable',
+            'watch_today_available' => $watchTodayAvailable,
+            'watch_today_estimated' => $watchTodayAvailable
+                && ($watchTodayEstimated || !$watchTodayEstimateAvailable),
+            'watch_today_estimate_available' => $watchTodayEstimateAvailable,
+            'collection_status' => $recordingAvailable ? 'ok' : 'degraded',
+            'recording_available' => $recordingAvailable,
+            'metadata_available' => $metadataAvailable,
             'active_streams' => count($streams),
             'active_users' => count($users),
             'bandwidth_mbps' => number_format($bitrate / 1000000, 1, '.', ''),
@@ -124,16 +233,4 @@ final class NowPlayingService
         ];
     }
 
-    private function durationLabel(int $seconds): string
-    {
-        $minutes = (int) floor($seconds / 60);
-        if ($minutes <= 0) {
-            return '0m';
-        }
-
-        $hours = intdiv($minutes, 60);
-        $remainingMinutes = $minutes % 60;
-
-        return $hours > 0 ? $hours . 'h ' . $remainingMinutes . 'm' : $remainingMinutes . 'm';
-    }
 }

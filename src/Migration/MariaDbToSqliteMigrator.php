@@ -23,6 +23,25 @@ final class MariaDbToSqliteMigrator
         'system_status',
     ];
 
+    /**
+     * Old Jellydash releases legitimately lack later additive columns. These
+     * are the minimum columns that identify a supported version of each core
+     * table. Every source column still has to exist in the current destination
+     * schema, so an unknown newer column can never be dropped silently.
+     *
+     * @var array<string, list<string>>
+     */
+    private const REQUIRED_SOURCE_COLUMNS = [
+        'users' => ['id', 'username', 'password', 'name', 'role'],
+        'login_attempts' => ['id', 'identifier', 'attempts', 'locked_until', 'updated_at'],
+        'auth_remember_tokens' => ['id', 'user_id', 'selector', 'validator_hash', 'expires_at', 'created_at', 'last_used_at'],
+        'app_settings' => ['setting_key', 'setting_value', 'updated_at'],
+        'play_history' => ['id', 'session_key', 'item_id', 'item_type', 'play_method', 'watched_sec', 'runtime_sec', 'started_at', 'updated_at', 'is_finished'],
+        'push_subscriptions' => ['id', 'endpoint', 'endpoint_hash', 'p256dh', 'auth', 'failure_count', 'created_at'],
+        'seerr_requests' => ['id', 'request_id', 'media_type', 'tmdb_id', 'title', 'request_status', 'media_status', 'is_4k', 'requested_at', 'notified', 'created_at'],
+        'system_status' => ['source_id', 'component', 'status'],
+    ];
+
     public function __construct(private readonly Database $source)
     {
     }
@@ -125,6 +144,7 @@ final class MariaDbToSqliteMigrator
 
         $sourceColumns = $sourceInfo->getTable($table)->getColumnNames();
         $destinationColumns = $destination->getDatabaseInfo()->getTable($table)->getColumnNames();
+        $this->assertColumnContract($table, $sourceColumns, $destinationColumns);
         $columns = array_values(array_intersect($destinationColumns, $sourceColumns));
         if ($columns === []) {
             throw new \RuntimeException("No compatible columns found for {$table}.");
@@ -133,7 +153,12 @@ final class MariaDbToSqliteMigrator
         $orderBy = $table === 'system_status'
             ? ['source_id', 'component']
             : [in_array('id', $columns, true) ? 'id' : $columns[0]];
+        $expectedSourceCount = (int) $this->source->getDibi()
+            ->select('COUNT(*)')->from($table)->fetchSingle();
         [$sourceCount, $sourceDigest] = $this->copyRows($table, $columns, $orderBy, $destination);
+        if ($sourceCount !== $expectedSourceCount) {
+            throw new \RuntimeException("Source row count changed while copying {$table}.");
+        }
 
         if ($table === 'play_history' && !in_array('notified', $sourceColumns, true)) {
             $destination->query('UPDATE `play_history` SET `notified` = 1');
@@ -145,6 +170,31 @@ final class MariaDbToSqliteMigrator
         }
 
         return $sourceCount;
+    }
+
+    /**
+     * @param list<string> $sourceColumns
+     * @param list<string> $destinationColumns
+     */
+    private function assertColumnContract(string $table, array $sourceColumns, array $destinationColumns): void
+    {
+        $unexpected = array_values(array_diff($sourceColumns, $destinationColumns));
+        if ($unexpected !== []) {
+            throw new \RuntimeException(sprintf(
+                'Unsupported source column(s) in %s: %s. Upgrade Jellydash before migrating so no data is discarded.',
+                $table,
+                implode(', ', $unexpected),
+            ));
+        }
+
+        $missing = array_values(array_diff(self::REQUIRED_SOURCE_COLUMNS[$table], $sourceColumns));
+        if ($missing !== []) {
+            throw new \RuntimeException(sprintf(
+                'The %s source table is missing required column(s): %s.',
+                $table,
+                implode(', ', $missing),
+            ));
+        }
     }
 
     /**

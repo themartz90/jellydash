@@ -13,6 +13,8 @@ use Twig\Loader\FilesystemLoader;
  */
 class View
 {
+    public const ASSET_REVISION = '20260910-audit-remediation-2';
+
     private Environment $twig;
 
     public function __construct()
@@ -34,11 +36,16 @@ class View
 
         // Expose the CSRF token to every template (for forms).
         $this->twig->addGlobal('csrf_token', Csrf::token());
+        $this->twig->addGlobal('asset_revision', self::ASSET_REVISION);
 
         // Web Push: the public VAPID key the browser needs to subscribe, and
         // whether notifications are switched on. Absent key => the toggle hides.
         $this->twig->addGlobal('vapid_public_key', Config::get('VAPID_PUBLIC_KEY'));
         $this->twig->addGlobal('push_enabled', Config::bool('PUSH_ENABLED', true));
+        $this->twig->addGlobal(
+            'push_enrollment_allowed',
+            (new Authorization())->can(Authorization::CAPABILITY_ENROLL_PUSH),
+        );
 
         // Sidebar subtitle under the brand: user-configurable, empty hides it.
         $this->twig->addGlobal('server_label', AppSettings::get('server_label', 'Jellyfin dashboard'));

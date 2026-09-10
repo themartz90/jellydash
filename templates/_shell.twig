@@ -18,11 +18,11 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Jellydash">
     <meta name="csrf-token" content="{{ csrf_token }}">
-    {% if push_enabled and vapid_public_key %}
+    {% if push_enabled and vapid_public_key and push_enrollment_allowed %}
         <meta name="vapid-public-key" content="{{ vapid_public_key }}">
     {% endif %}
 
-    <link rel="stylesheet" href="/assets/css/dashboard.css?v=20260910-statistics-hint-2">
+    <link rel="stylesheet" href="/assets/css/dashboard.css?v={{ asset_revision }}">
     {% for href in module_styles %}
         <link rel="stylesheet" href="{{ href }}">
     {% endfor %}
@@ -43,7 +43,7 @@
             </span>
             <strong>Jellydash</strong>
         </a>
-        {% if push_enabled and vapid_public_key %}
+        {% if push_enabled and vapid_public_key and push_enrollment_allowed %}
             <button class="topbar-bell" type="button" data-push-toggle aria-label="Playback notifications" aria-pressed="false" hidden>
                 <svg class="bell-off" viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true">
                     <path d="M9.346 5.353c.21 -.129 .428 -.246 .654 -.353a2 2 0 1 1 4 0a7 7 0 0 1 4 6v3m-1 3h-13a4 4 0 0 0 2 -3v-3a6.996 6.996 0 0 1 1.273 -3.707"></path>
@@ -85,15 +85,15 @@
 
 {% block page_scripts %}{% endblock %}
 <script src="/assets/js/pwa.js?v=20260624-pwa"></script>
-<script src="/assets/js/push.js?v=20260809-csrf"></script>
+<script src="/assets/js/push.js?v={{ asset_revision }}"></script>
 <script src="/assets/js/nav.js?v=20260620-nav"></script>
 <script src="/assets/js/dashboard-scroll.js?v=20260910-scroll-restore"></script>
-<script src="/assets/js/server-stats.js?v=20260809-settings"></script>
-<script src="/assets/js/nav-count.js?v=20260908-stale-state"></script>
-<script src="/assets/js/update-status.js?v=20260810-update"></script>
-<script src="/assets/js/system-status.js?v=20260908-health-2"></script>
-<script src="/assets/js/avatars.js?v=20260814-avatars"></script>
-<script src="/assets/js/history-library-upgrade.js?v=20260822-history-upgrade-finish"></script>
+<script src="/assets/js/server-stats.js?v={{ asset_revision }}"></script>
+<script src="/assets/js/nav-count.js?v={{ asset_revision }}"></script>
+<script src="/assets/js/update-status.js?v={{ asset_revision }}"></script>
+<script src="/assets/js/system-status.js?v={{ asset_revision }}"></script>
+<script src="/assets/js/avatars.js?v={{ asset_revision }}"></script>
+<script src="/assets/js/history-library-upgrade.js?v={{ asset_revision }}"></script>
 <script src="/assets/js/release-highlights.js?v=20260822-history-upgrade"></script>
 {% for src in module_scripts %}
     <script src="{{ src }}"></script>

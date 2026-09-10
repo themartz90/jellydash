@@ -5,16 +5,17 @@ declare(strict_types=1);
 use Mk\Framework\Container;
 use Mk\Framework\Database;
 use Mk\Framework\DatabasePlatform;
-use Mk\Framework\Jellyfin\PlayHistoryRepository;
-use Mk\Framework\Jellyseerr\RequestNotifier;
 use Mk\Framework\Health\WorkerMonitor;
 use Mk\Framework\Health\WorkerStatusRepository;
+use Mk\Framework\Jellyfin\PlayHistoryRepository;
+use Mk\Framework\Jellyseerr\RequestNotifier;
 use Mk\Framework\Jellyseerr\SeerrRequestRepository;
 use Mk\Framework\Notifications\ClaimedNotificationDelivery;
 use Mk\Framework\Notifications\NotificationChannel;
 use Mk\Framework\Notifications\NotificationDispatcher;
 use Mk\Framework\Push\PushSubscriptionRepository;
 use Mk\Framework\Push\WebPushSender;
+use Mk\Framework\Push\WebPushTransport;
 use PHPUnit\Framework\TestCase;
 
 final class NotificationRetryTest extends TestCase
@@ -115,6 +116,28 @@ final class NotificationRetryTest extends TestCase
 
         $this->assertSame(0, $notifier->dispatch());
         $this->assertSame(1, $channel->calls);
+    }
+
+    public function testCurrentDeviceConfirmationUsesOnlyTheSuppliedWebPushSubscription(): void
+    {
+        $transport = new CurrentDeviceRecordingTransport();
+        $channel = new CountingFailureChannel();
+        $dispatcher = new NotificationDispatcher(
+            new WebPushSender($transport, 'public-key', 'private-key'),
+            new PushSubscriptionRepository($this->database),
+            [$channel],
+        );
+        $subscription = [
+            'endpoint' => 'https://updates.push.services.mozilla.com/wpush/v2/current-confirmation',
+            'p256dh' => rtrim(strtr(base64_encode(str_repeat('a', 65)), '+/', '-_'), '='),
+            'auth' => rtrim(strtr(base64_encode(str_repeat('b', 16)), '+/', '-_'), '='),
+        ];
+
+        $report = $dispatcher->testCurrentWebPush($subscription, ['title' => 'Current device']);
+
+        $this->assertSame(1, $report['sent']);
+        $this->assertSame(0, $channel->calls);
+        $this->assertSame([$subscription], $transport->subscriptions);
     }
 
     public function testDeliveryHealthPersistsAcrossIdleAndRecoversAfterSuccess(): void
@@ -330,5 +353,23 @@ final class CountingSuccessChannel implements NotificationChannel
     public function send(array $notification): bool
     {
         return true;
+    }
+}
+
+final class CurrentDeviceRecordingTransport implements WebPushTransport
+{
+    /** @var list<array{endpoint: string, p256dh: string, auth: string}> */
+    public array $subscriptions = [];
+
+    public function send(array $subscriptions, ?string $payload): iterable
+    {
+        $this->subscriptions = $subscriptions;
+        foreach ($subscriptions as $subscription) {
+            yield [
+                'endpoint' => $subscription['endpoint'],
+                'success' => true,
+                'expired' => false,
+            ];
+        }
     }
 }

@@ -111,6 +111,7 @@ final class LibraryOverviewServiceTest extends TestCase
             $this->assertSame($cached, json_decode((string) file_get_contents($cachePath), true, flags: JSON_THROW_ON_ERROR));
         } finally {
             @unlink($cachePath);
+            @unlink($cachePath . '.retry');
         }
     }
 
@@ -193,7 +194,70 @@ final class LibraryOverviewServiceTest extends TestCase
             $this->assertFileDoesNotExist($cachePath);
         } finally {
             @unlink($cachePath);
+            @unlink($cachePath . '.retry');
         }
+    }
+
+    public function testPartialFirstLoadUsesFailureBackoffWithoutReplacingTheGoodCache(): void
+    {
+        $cachePath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'jellydash-libraries-' . bin2hex(random_bytes(8)) . '.json';
+        $client = new FakeLibraryOverviewClient(
+            [['Id' => 'tv', 'Name' => 'TV Shows', 'CollectionType' => 'tvshows']],
+            [],
+            ['tv'],
+        );
+        $now = 1_800_000_000;
+        $service = new LibraryOverviewService(
+            $client,
+            new FakeLibraryHistorySource(),
+            $cachePath,
+            null,
+            static fn (): int => $now,
+            30,
+        );
+
+        try {
+            $first = $service->cachedPayload();
+            $second = $service->cachedPayload();
+
+            $this->assertTrue($first['partial']);
+            $this->assertFalse($first['cached']);
+            $this->assertTrue($second['partial']);
+            $this->assertTrue($second['cached']);
+            $this->assertTrue($second['retrying']);
+            $this->assertSame(1, $client->folderCalls);
+            $this->assertFileDoesNotExist($cachePath);
+            $this->assertFileExists($cachePath . '.retry');
+        } finally {
+            @unlink($cachePath);
+            @unlink($cachePath . '.retry');
+            @unlink($cachePath . '.lock');
+        }
+    }
+
+    public function testHistoryFailureIsShownAsUnavailableInsteadOfZero(): void
+    {
+        $client = new FakeLibraryOverviewClient(
+            [['Id' => 'movies', 'Name' => 'Movies', 'CollectionType' => 'movies']],
+            ['movies|Movie' => 4, 'movies|Video' => 0],
+        );
+        $history = new class () implements LibraryHistorySource {
+            public function itemPlaySummaries(): array
+            {
+                throw new RuntimeException('History database is unavailable.');
+            }
+        };
+
+        $data = (new LibraryOverviewService($client, $history))->data();
+
+        $this->assertFalse($data['complete']);
+        $this->assertFalse($data['historyAvailable']);
+        $this->assertSame('Playback history unavailable', $data['refreshedLabel']);
+        $this->assertFalse($data['libraries'][0]['playbackAvailable']);
+        $this->assertSame('Unavailable', $data['libraries'][0]['totalPlays']);
+        $this->assertSame('Unavailable', $data['libraries'][0]['playback']);
+        $this->assertSame('Unavailable', $data['summary'][2]['value']);
+        $this->assertSame('Unavailable', $data['summary'][3]['value']);
     }
 
     public function testLegacyPartialCacheDoesNotKeepDiscoveredLibrariesHidden(): void
@@ -231,6 +295,7 @@ final class LibraryOverviewServiceTest extends TestCase
             $this->assertSame($cached, json_decode((string) file_get_contents($cachePath), true, flags: JSON_THROW_ON_ERROR));
         } finally {
             @unlink($cachePath);
+            @unlink($cachePath . '.retry');
         }
     }
 
@@ -255,6 +320,7 @@ final class LibraryOverviewServiceTest extends TestCase
             $this->assertSame($payload, json_decode((string) file_get_contents($cachePath), true, flags: JSON_THROW_ON_ERROR));
         } finally {
             @unlink($cachePath);
+            @unlink($cachePath . '.retry');
         }
     }
 
@@ -298,6 +364,7 @@ final class FakeLibraryOverviewClient implements LibraryOverviewClient
 {
     public int $itemCalls = 0;
     public int $countCalls = 0;
+    public int $folderCalls = 0;
 
     /**
      * @param array<int, array<string, mixed>> $folders
@@ -313,6 +380,8 @@ final class FakeLibraryOverviewClient implements LibraryOverviewClient
 
     public function mediaFolders(): array
     {
+        ++$this->folderCalls;
+
         return $this->folders;
     }
 

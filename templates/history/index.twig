@@ -28,9 +28,9 @@
             <input type="hidden" name="start" value="{{ filters.start }}">
             <input type="hidden" name="end" value="{{ filters.end }}">
         {% endif %}
-        <label class="search-control">
-            <span aria-hidden="true">Search</span>
-            <input type="search" name="search" value="{{ filters.search }}" placeholder="Search title or user">
+        <label class="search-control" for="history-search">
+            <span>Search</span>
+            <input id="history-search" type="search" name="search" value="{{ filters.search }}" placeholder="Title or user">
         </label>
         <select name="user" aria-label="User">
             <option value="" {{ filters.user == '' ? 'selected' : '' }}>All users</option>
@@ -105,6 +105,6 @@
 {% block page_scripts %}
     <script src="/assets/js/history-filters.js?v=20260910-statistics-drilldowns"></script>
     {% if summary.total > 0 %}
-        <script src="/assets/js/history-export.js?v=20260910-statistics-drilldowns"></script>
+        <script src="/assets/js/history-export.js?v={{ asset_revision }}"></script>
     {% endif %}
 {% endblock %}

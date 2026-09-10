@@ -96,6 +96,22 @@ final class SystemStatusServiceTest extends TestCase
         }
     }
 
+    public function testQueuedRetriesDoNotHideAnActiveDeliveryAttempt(): void
+    {
+        putenv('DISCORD_WEBHOOK_URL=https://private.invalid/secret');
+        $rows = ['playback_notifications' => ['status' => 'running', 'last_started_at' => 990]];
+        $service = new StatusService(
+            static fn (): array => $rows,
+            static fn (): array => ['pending_retries' => 2, 'in_flight' => 1, 'stalled' => 0],
+        );
+
+        $component = $service->snapshot(1000)['components'][3];
+        self::assertSame('checking', $component['state']);
+        self::assertSame('A delivery attempt is running. 2 retries are queued.', $component['message']);
+        self::assertSame(2, $component['pending_retries']);
+        self::assertSame(1, $component['in_flight']);
+    }
+
     public function testLastDeliveryFailureSurvivesAnIdleWorkerCheck(): void
     {
         putenv('DISCORD_WEBHOOK_URL=https://private.invalid/secret');

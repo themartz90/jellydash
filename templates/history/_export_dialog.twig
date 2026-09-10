@@ -13,7 +13,7 @@
         <h2 id="history-export-title">Choose what to export</h2>
         <p id="history-export-summary" class="release-dialog-summary">Pick the plays you want. The CSV includes every match, not only the page currently on screen.</p>
 
-        <form class="history-export-form" action="/api/history-export.php" method="get" data-history-export-form>
+        <form class="history-export-form" action="/api/history-export.php" method="get" target="history-export-download-frame" data-history-export-form>
             {% if filters.is_exact %}
                 <input type="hidden" name="start" value="{{ filters.start }}">
                 <input type="hidden" name="end" value="{{ filters.end }}">
@@ -82,5 +82,6 @@
                 <button class="release-dialog-dismiss" type="button" data-history-export-close>Cancel</button>
             </div>
         </form>
+        <iframe name="history-export-download-frame" title="History export download" data-history-export-frame hidden></iframe>
     </section>
 </dialog>

@@ -1,4 +1,4 @@
-FROM php:8.3.6-apache-bookworm
+FROM php:8.3.32-apache-bookworm@sha256:ff23b916a51fb99b2a2afddb8649d1b96e15337f6b15fb0ce5179a950c00aae2
 
 ARG APP_ENV=production
 
@@ -18,11 +18,11 @@ RUN apt-get update \
         mbstring \
         mysqli \
         gmp \
-    && php -r "exit(extension_loaded('sqlite3') ? 0 : 1);" \
+    && php -r "exit(extension_loaded('curl') && extension_loaded('mbstring') && extension_loaded('mysqli') && extension_loaded('gmp') && extension_loaded('sqlite3') && extension_loaded('openssl') ? 0 : 1);" \
     && a2enmod rewrite headers \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+COPY --from=composer:2.10.3@sha256:d8f6343d3fae98107426bc49163ccad46ef85aabd4a27d80a74401fab4aba332 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /var/www/html
 
@@ -39,4 +39,6 @@ RUN chmod +x /usr/local/bin/jellydash-entrypoint \
     && chown -R www-data:www-data cache var/cache var/data var/log var/sessions public/uploads
 
 ENTRYPOINT ["jellydash-entrypoint"]
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+    CMD curl --fail --silent --show-error --max-time 2 http://127.0.0.1/healthz.php || exit 1
 CMD ["apache2-foreground"]

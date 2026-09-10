@@ -31,7 +31,7 @@ final class HistoryTemplateTest extends TestCase
         $this->assertStringContainsString('data-history-export-open', $template);
         $this->assertStringContainsString('history/_export_dialog.twig', $template);
         $this->assertStringContainsString('summary.total > 0', $template);
-        $this->assertStringContainsString('history-export.js?v=20260910-statistics-drilldowns', $template);
+        $this->assertStringContainsString('history-export.js?v={{ asset_revision }}', $template);
         $this->assertStringContainsString('history-filters.js?v=20260910-statistics-drilldowns', $template);
         $this->assertStringNotContainsString('data-import-history-banner', $template);
         $this->assertStringNotContainsString('history-import.js', $template);
@@ -72,6 +72,8 @@ final class HistoryTemplateTest extends TestCase
         $this->assertStringContainsString('data-history-export-count', $dialog);
         $this->assertStringContainsString('data-history-export-all', $dialog);
         $this->assertStringContainsString('data-history-export-download disabled', $dialog);
+        $this->assertStringContainsString('target="history-export-download-frame"', $dialog);
+        $this->assertStringContainsString('data-history-export-frame hidden', $dialog);
         $this->assertStringContainsString('CSV format v2', $dialog);
 
         $this->assertStringContainsString("values.set('preview', '1')", $script);
@@ -85,6 +87,8 @@ final class HistoryTemplateTest extends TestCase
         $this->assertStringContainsString("values.get('range') !== 'custom'", $script);
         $this->assertStringContainsString("event.formData.get('range') !== 'custom'", $filterScript);
         $this->assertStringContainsString('window.setTimeout(closeDialog, 0)', $script);
+        $this->assertStringContainsString('Download requested. Your browser will save the CSV when it is ready.', $script);
+        $this->assertStringContainsString("downloadFrame.addEventListener('load'", $script);
 
         $this->assertStringContainsString('.history-export-dialog', $stylesheet);
         $this->assertStringContainsString('.history-export-period-options', $stylesheet);
@@ -180,6 +184,25 @@ final class HistoryTemplateTest extends TestCase
             '/\.history-item-meta small\s*\{[^}]*flex:\s*0 1 auto;/s',
             $stylesheet,
         );
+    }
+
+    public function testUnnamedHistoryRowsUseTheAnonymousDisplayLabel(): void
+    {
+        $controller = new \Mk\Framework\Pages\HistoryController(new \Mk\Framework\View());
+        $method = new ReflectionMethod($controller, 'rowView');
+        $avatars = new \Mk\Framework\Jellyfin\JellyfinUserAvatars();
+
+        foreach ([null, ''] as $userName) {
+            $row = $method->invoke(
+                $controller,
+                $this->historyRow(['user_name' => $userName]),
+                new DateTimeImmutable('2026-08-22 12:00:00'),
+                $avatars,
+            );
+
+            $this->assertSame('Unknown user', $row['user']);
+            $this->assertSame('UU', $row['initials']);
+        }
     }
 
     /**

@@ -6,7 +6,7 @@ use PHPUnit\Framework\TestCase;
 
 final class HistoryLibraryUpgradeFrontendTest extends TestCase
 {
-    public function testUpgradeDialogIsGlobalAndCannotBeDismissedWhileRunning(): void
+    public function testUpgradeDialogIsGlobalAndCanBeHiddenAndReopenedWhileRunning(): void
     {
         $shell = (string) file_get_contents(TEMPLATES_DIR . '/_shell.twig');
         $dialog = (string) file_get_contents(TEMPLATES_DIR . '/_history_library_upgrade_dialog.twig');
@@ -14,7 +14,7 @@ final class HistoryLibraryUpgradeFrontendTest extends TestCase
 
         $this->assertStringContainsString('_history_library_upgrade_dialog.twig', $shell);
         $this->assertStringContainsString(
-            '/assets/js/history-library-upgrade.js?v=20260822-history-upgrade-finish',
+            '/assets/js/history-library-upgrade.js?v={{ asset_revision }}',
             $shell,
         );
         $this->assertStringContainsString('data-history-library-upgrade', $dialog);
@@ -25,6 +25,9 @@ final class HistoryLibraryUpgradeFrontendTest extends TestCase
         $this->assertStringContainsString('event.preventDefault()', $script);
         $this->assertStringContainsString('data-history-library-upgrade-retry', $dialog);
         $this->assertStringContainsString('data-history-library-upgrade-continue', $dialog);
+        $this->assertStringContainsString('data-history-library-upgrade-reopen', $dialog);
+        $this->assertStringContainsString('hideForNow', $script);
+        $this->assertStringContainsString("reopenButton.addEventListener('click'", $script);
         $this->assertStringContainsString('completeActions.hidden = false', $script);
         $this->assertStringContainsString('closeButton.focus()', $script);
     }

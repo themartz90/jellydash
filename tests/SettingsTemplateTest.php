@@ -27,7 +27,7 @@ final class SettingsTemplateTest extends TestCase
         $this->assertStringContainsString('data-import-alt', $template);
         $this->assertStringContainsString('checks the file before anything is written', $template);
         $this->assertStringContainsString('data-import-plugin-broken-note', $template);
-        $this->assertStringContainsString('history-import.js?v=20260908-stream-completion', $template);
+        $this->assertStringContainsString('history-import.js?v={{ asset_revision }}', $template);
         $this->assertStringContainsString('https://github.com/jellyfin/jellyfin-plugin-playbackreporting/pull/131', $template);
         $this->assertStringContainsString('value="plugin"', $template);
         $this->assertStringNotContainsString('Import file', $template);

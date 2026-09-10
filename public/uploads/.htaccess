@@ -1,13 +1,4 @@
-# Defense in depth: never execute scripts from the uploads directory.
-# (Interim measure. Phase 4 moves this dir outside the web root entirely.)
-<FilesMatch "\.(php|php3|php4|php5|php7|phps|phtml|phar|pl|py|cgi|asp|sh)$">
+# Defense in depth for web servers that honor per-directory access files.
+<FilesMatch "\.(?i:php|php3|php4|php5|php7|phps|phtml|phar|pl|py|cgi|asp|sh)$">
     Require all denied
 </FilesMatch>
-
-# Disable the PHP engine here when running under mod_php.
-<IfModule mod_php.c>
-    php_admin_flag engine off
-</IfModule>
-<IfModule mod_php7.c>
-    php_admin_flag engine off
-</IfModule>

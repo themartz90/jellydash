@@ -5,6 +5,10 @@
     const cpuBar = card ? card.querySelector('[data-server-cpu-bar]') : null;
     const ram = card ? card.querySelector('[data-server-ram]') : null;
     const ramBar = card ? card.querySelector('[data-server-ram-bar]') : null;
+    let refreshInFlight = false;
+    let activeController = null;
+    let requestSequence = 0;
+    let latestAppliedSequence = 0;
 
     if (!card) {
         return;
@@ -36,20 +40,51 @@
     }
 
     async function refresh() {
+        if (refreshInFlight || document.hidden) {
+            return;
+        }
+        refreshInFlight = true;
+        const sequence = ++requestSequence;
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        activeController = controller;
+        const timer = window.setTimeout ? window.setTimeout(() => controller?.abort(), 8000) : null;
+
+        try {
         const response = await fetch('/api/server-stats.php', {
             headers: { Accept: 'application/json' },
             cache: 'no-store',
+            signal: controller?.signal,
         });
 
         if (!response.ok) {
             throw new Error('Server stats request failed with HTTP ' + response.status);
         }
 
-        apply(await response.json());
+        const payload = await response.json();
+        if (sequence >= latestAppliedSequence) {
+            latestAppliedSequence = sequence;
+            apply(payload);
+        }
+        } finally {
+            if (timer !== null && window.clearTimeout) {
+                window.clearTimeout(timer);
+            }
+            if (activeController === controller) {
+                activeController = null;
+            }
+            refreshInFlight = false;
+        }
     }
 
     refresh().catch(() => apply({ available: false, status: 'Unavailable' }));
     window.setInterval(() => {
         refresh().catch(() => apply({ available: false, status: 'Unavailable' }));
     }, 10000);
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            refresh().catch(() => apply({ available: false, status: 'Unavailable' }));
+        }
+    });
+    window.addEventListener('pagehide', () => activeController?.abort());
+    window.addEventListener('pageshow', () => refresh().catch(() => apply({ available: false, status: 'Unavailable' })));
 }());

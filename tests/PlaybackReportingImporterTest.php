@@ -320,6 +320,62 @@ final class PlaybackReportingImporterTest extends TestCase
             ->fetchSingle());
     }
 
+    public function testFailedLaterBatchKeepsCommittedBatchAndCanBeReplayedSafely(): void
+    {
+        $database = Container::db();
+        $dibi = $database->getDibi();
+        $path = tempnam(sys_get_temp_dir(), 'prtsv');
+        $this->assertNotFalse($path);
+        $itemHex = bin2hex(random_bytes(16));
+        $itemId = substr($itemHex, 0, 8) . '-' . substr($itemHex, 8, 4) . '-' . substr($itemHex, 12, 4)
+            . '-' . substr($itemHex, 16, 4) . '-' . substr($itemHex, 20);
+        $lines = [];
+        for ($i = 0; $i < PlaybackReportingClient::CHUNK_SIZE + 1; ++$i) {
+            $started = (new DateTimeImmutable('2024-07-01 00:00:00'))->modify('+' . $i . ' seconds')
+                ->format('Y-m-d H:i:s') . '.0000000';
+            $lines[] = $started . "\t0e394f8a9bc64abeba29f63cdc7a12a0\t{$itemHex}\tMovie\tDune\tDirectPlay\tWeb\tChrome\t60";
+        }
+        file_put_contents($path, implode("\n", $lines) . "\n");
+
+        $writes = 0;
+        $repository = new PlayHistoryRepository($database, null, static function () use (&$writes): void {
+            ++$writes;
+            if ($writes === PlaybackReportingClient::CHUNK_SIZE + 1) {
+                throw new RuntimeException('Injected later-batch failure.');
+            }
+        });
+        $processed = [];
+
+        try {
+            try {
+                (new PlaybackReportingImporter(null, $repository, new JellyfinClient('', '', false)))
+                    ->importFile($path, false, 'tsv', static function (array $payload) use (&$processed): void {
+                        if (($payload['phase'] ?? '') === 'importing') {
+                            $processed[] = (int) $payload['processed'];
+                        }
+                    });
+                self::fail('The second batch should fail.');
+            } catch (RuntimeException $error) {
+                self::assertSame('Injected later-batch failure.', $error->getMessage());
+            }
+
+            self::assertSame(PlaybackReportingClient::CHUNK_SIZE, (int) $dibi->select('COUNT(*)')
+                ->from('play_history')->where('item_id = %s', $itemId)->fetchSingle());
+            self::assertSame(PlaybackReportingClient::CHUNK_SIZE, max($processed));
+
+            $replayed = (new PlaybackReportingImporter(
+                null,
+                new PlayHistoryRepository($database),
+                new JellyfinClient('', '', false),
+            ))->importFile($path, false, 'tsv');
+            self::assertSame(1, $replayed['inserted']);
+            self::assertSame(PlaybackReportingClient::CHUNK_SIZE, $replayed['skipped']);
+        } finally {
+            $dibi->delete('play_history')->where('item_id = %s', $itemId)->execute();
+            @unlink($path);
+        }
+    }
+
     /**
      * @return list<array<string, mixed>>
      */

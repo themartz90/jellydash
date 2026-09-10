@@ -133,10 +133,18 @@
     }
 
     async function loadRecentlyAdded() {
-        const response = await fetch('/api/recently-added.php', {
-            headers: { Accept: 'application/json' },
-            cache: 'no-store',
-        });
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        const timer = window.setTimeout(() => controller?.abort(), 8000);
+        let response;
+        try {
+            response = await fetch('/api/recently-added.php', {
+                headers: { Accept: 'application/json' },
+                cache: 'no-store',
+                signal: controller?.signal,
+            });
+        } finally {
+            window.clearTimeout(timer);
+        }
         if (!response.ok) {
             return;
         }

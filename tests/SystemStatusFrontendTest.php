@@ -17,7 +17,7 @@ final class SystemStatusFrontendTest extends TestCase
         $this->assertStringContainsString('type="button" data-system-status-copy disabled', $settings);
         $this->assertStringContainsString('aria-label="System status, checking"', $sidebar);
         $shell = (string) file_get_contents(TEMPLATES_DIR . '/_shell.twig');
-        $this->assertStringContainsString('system-status.js?v=20260908-health-2', $shell);
+        $this->assertStringContainsString('system-status.js?v={{ asset_revision }}', $shell);
         $this->assertStringNotContainsString('system-status.js', $settings);
     }
 

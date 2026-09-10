@@ -115,17 +115,17 @@ final class RouterTest extends TestCase
         $this->assertStringContainsString('Selected users never trigger playback alerts.', $output);
         $this->assertStringContainsString('<legend>Monitoring</legend>', $output);
         $this->assertStringContainsString('name="monitoring_ignore_extra"', $output);
-        $this->assertStringContainsString('/assets/js/server-stats.js?v=20260809-settings', $output);
-        $this->assertStringContainsString('/assets/js/nav-count.js?v=20260908-stale-state', $output);
+        $this->assertStringContainsString('/assets/js/server-stats.js?v=20260910-audit-remediation-2', $output);
+        $this->assertStringContainsString('/assets/js/nav-count.js?v=20260910-audit-remediation-2', $output);
         $this->assertStringContainsString('data-update-status', $output);
-        $this->assertStringContainsString('/assets/js/update-status.js?v=20260810-update', $output);
+        $this->assertStringContainsString('/assets/js/update-status.js?v=20260910-audit-remediation-2', $output);
         $this->assertStringContainsString('data-release-changes', $output);
         $this->assertStringContainsString('data-release-dialog', $output);
         $this->assertStringContainsString('data-import-history-dialog', $output);
         $this->assertStringContainsString('id="import-history"', $output);
-        $this->assertStringContainsString('/assets/js/history-library-upgrade.js?v=20260822-history-upgrade-finish', $output);
+        $this->assertStringContainsString('/assets/js/history-library-upgrade.js?v=20260910-audit-remediation-2', $output);
         $this->assertStringContainsString('/assets/js/release-highlights.js?v=20260822-history-upgrade', $output);
-        $this->assertStringContainsString('/assets/js/history-import.js?v=20260908-stream-completion', $output);
+        $this->assertStringContainsString('/assets/js/history-import.js?v=20260910-audit-remediation-2', $output);
         $this->assertSame(200, http_response_code());
     }
 

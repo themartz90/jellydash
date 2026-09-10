@@ -192,6 +192,37 @@ final class HistoryCsvExporterTest extends TestCase
         $this->assertSame(2, $count);
     }
 
+    public function testPreviewAndExportKeepExactUserAndLibraryCase(): void
+    {
+        $this->insertPlay('phpunit-csv-exact-upper', '2026-09-10 12:03:00', 'Exact match', 'Maya', library: 'Movies');
+        $this->insertPlay('phpunit-csv-exact-user', '2026-09-10 12:02:00', 'Wrong user case', 'maya', library: 'Movies');
+        $this->insertPlay('phpunit-csv-exact-library', '2026-09-10 12:01:00', 'Wrong library case', 'Maya', library: 'movies');
+        $filters = new HistoryFilters(user: 'Maya', library: 'Movies', range: 'all');
+
+        $this->assertSame(1, $this->repository->historyTotal($filters));
+
+        $stream = fopen('php://temp', 'w+b');
+        $this->assertIsResource($stream);
+        try {
+            $count = (new HistoryCsvExporter($this->repository))->write($filters, $stream);
+            rewind($stream);
+            fread($stream, 3);
+            $header = fgetcsv($stream, null, ',', '"', '');
+            $values = fgetcsv($stream, null, ',', '"', '');
+        } finally {
+            fclose($stream);
+        }
+
+        $this->assertSame(1, $count);
+        $this->assertIsArray($header);
+        $this->assertIsArray($values);
+        $row = array_combine($header, $values);
+        $this->assertIsArray($row);
+        $this->assertSame('Exact match', $row['item_name']);
+        $this->assertSame('Maya', $row['user_name']);
+        $this->assertSame('Movies', $row['library']);
+    }
+
     public function testEndpointIsAuthenticatedAndDownloadsAFilteredCsv(): void
     {
         $endpoint = (string) file_get_contents(ROOT_DIR . '/public/api/history-export.php');
@@ -215,6 +246,7 @@ final class HistoryCsvExporterTest extends TestCase
         string $userName = 'PHPUnit CSV Export',
         string $client = 'Jellyfin Web',
         string $method = 'DirectPlay',
+        string $library = 'Movies',
     ): void {
         $this->dibi->insert('play_history', [
             'session_key' => $sessionKey,
@@ -223,7 +255,7 @@ final class HistoryCsvExporterTest extends TestCase
             'item_id' => $sessionKey . '-item',
             'item_type' => 'Movie',
             'item_name' => $itemName,
-            'library' => 'Movies',
+            'library' => $library,
             'library_resolved_at' => $startedAt,
             'play_method' => $method,
             'play_method_detail' => 'Direct Play',

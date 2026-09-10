@@ -3,7 +3,7 @@
 {% block dashboard_header %}
     <div class="header-copy">
         <h1>Now Playing</h1>
-        <p><span class="live-dot {{ streams|length > 0 ? 'is-live' : 'is-idle' }}" data-live-dot></span><span data-live-label>{{ is_loading|default(false) ? 'Loading sessions...' : (streams|length > 0 ? streams|length ~ ' ' ~ (streams|length == 1 ? 'stream' : 'streams') ~ ' - ' ~ stats.active_users ~ ' ' ~ (stats.active_users == 1 ? 'user' : 'users') : 'No active sessions') }}</span></p>
+        <p><span class="live-dot {{ streams|length > 0 ? 'is-live' : 'is-idle' }}" data-live-dot></span><span data-live-label>{{ is_loading|default(false) ? 'Loading sessions...' : (streams|length > 0 ? streams|length ~ ' ' ~ (streams|length == 1 ? 'stream' : 'streams') ~ ' - ' ~ stats.active_users ~ ' ' ~ (stats.active_users == 1 ? 'user' : 'users') : 'No active sessions') }}</span><span class="now-playing-collection-status" data-collection-status role="status" aria-live="polite" hidden></span></p>
     </div>
     <dl class="now-playing-telemetry" data-now-playing-telemetry aria-label="Playback telemetry">
         <div class="now-playing-metric">
@@ -74,8 +74,8 @@
 {% endblock %}
 
 {% block page_scripts %}
-    <script src="/assets/js/now-playing.js?v=20260908-stale-state"></script>
+    <script src="/assets/js/now-playing.js?v={{ asset_revision }}"></script>
     {% if show_recently_added %}
-        <script src="/assets/js/recently-added.js?v=20260821-jellyfin-links"></script>
+        <script src="/assets/js/recently-added.js?v={{ asset_revision }}"></script>
     {% endif %}
 {% endblock %}

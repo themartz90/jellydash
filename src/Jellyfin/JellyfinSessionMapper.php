@@ -99,7 +99,12 @@ final class JellyfinSessionMapper
             ? (float) $playState['PlaybackRate']
             : 1.0;
         $itemId = (string) ($item['Id'] ?? '');
-        $streamId = (string) ($session['Id'] ?? $itemId);
+        $sessionId = trim((string) ($session['Id'] ?? ''));
+        $streamId = $sessionId !== '' ? $sessionId : 'stream-' . substr(hash('sha256', implode("\0", [
+            (string) ($session['DeviceId'] ?? $session['DeviceName'] ?? ''),
+            (string) ($session['UserId'] ?? ''),
+            $itemId,
+        ])), 0, 20);
         $video = $this->videoStream($item);
         $audio = $this->audioStream($item);
         $transcoding = $session['TranscodingInfo'] ?? [];
@@ -155,7 +160,8 @@ final class JellyfinSessionMapper
             'playbackRate' => $playbackRate,
             'statusLabel' => $isPaused ? 'Paused' : 'Now Playing',
             'progressPct' => $this->progressPct($positionTicks, $runtimeTicks),
-            'timeLabel' => $this->formatTicks($positionTicks) . ' / ' . $this->formatTicks($runtimeTicks),
+            'timeLabel' => $this->formatTicks($positionTicks) . ' / '
+                . ($runtimeTicks > 0 ? $this->formatTicks($runtimeTicks) : 'Unknown'),
             'remaining' => $this->remainingLabel($positionTicks, $runtimeTicks),
             'avatarBg' => $this->pick(self::AVATAR_GRADIENTS, (string) ($session['UserId'] ?? $user)),
             'backdrop' => $this->backdrop($item, $type),
@@ -624,6 +630,10 @@ final class JellyfinSessionMapper
 
     private function remainingLabel(int $positionTicks, int $runtimeTicks): string
     {
+        if ($runtimeTicks <= 0) {
+            return 'Remaining time unknown';
+        }
+
         $remainingSeconds = max(0, (int) floor(($runtimeTicks - $positionTicks) / 10000000));
         $minutes = (int) ceil($remainingSeconds / 60);
 

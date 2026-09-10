@@ -38,10 +38,10 @@ jobs:
       APP_DEBUG: "true"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: "8.3"
           extensions: mysqli, sqlite3, mbstring, intl
@@ -70,10 +70,10 @@ jobs:
       APP_DEBUG: "true"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: "8.3"
           extensions: sqlite3, mbstring, intl
@@ -91,19 +91,27 @@ jobs:
     needs: [test-mariadb, test-sqlite]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Validate SQLite Compose file
         run: |
           cp .env.example .env
+          docker compose -f docker-compose.yml config -q
           docker compose -f docker-compose.sqlite.yml config -q
 
       - name: Build image
         run: docker build --tag jellydash:ci .
 
-      - name: Check database extensions
+      - name: Check PHP runtime
         run: |
-          docker run --rm --entrypoint php jellydash:ci -r "exit(extension_loaded('mysqli') && extension_loaded('sqlite3') ? 0 : 1);"
+          docker run --rm --entrypoint php jellydash:ci -r "exit(PHP_VERSION_ID === 80332 && extension_loaded('curl') && extension_loaded('mbstring') && extension_loaded('mysqli') && extension_loaded('gmp') && extension_loaded('sqlite3') && extension_loaded('openssl') ? 0 : 1);"
+
+      - name: Check Apache configuration
+        run: docker run --rm --entrypoint apache2ctl jellydash:ci -t
+
+      - name: Check public image contents
+        run: |
+          docker run --rm --entrypoint sh jellydash:ci -c 'test -f /var/www/html/public/healthz.php && test -f /var/www/html/modules/.gitkeep && test ! -e /var/www/html/internal && test ! -e /var/www/html/tests'
 
       - name: Check Docker timezone compatibility
         run: |
@@ -140,6 +148,18 @@ jobs:
             docker logs jellydash-sqlite-ci
             exit 1
           fi
+
+          for attempt in {1..20}; do
+            if [ "$(docker inspect --format '{{.State.Health.Status}}' jellydash-sqlite-ci)" = "healthy" ]; then
+              break
+            fi
+            sleep 1
+          done
+          test "$(docker inspect --format '{{.State.Health.Status}}' jellydash-sqlite-ci)" = "healthy"
+
+          docker exec --user www-data jellydash-sqlite-ci php -r 'file_put_contents("/var/www/html/public/uploads/images/health-check.png", base64_decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")); file_put_contents("/var/www/html/public/uploads/blocked.php", "<?php http_response_code(299);");'
+          curl --fail --silent --output /dev/null http://127.0.0.1:18080/uploads/images/health-check.png
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18080/uploads/blocked.php)" = "403"
 
           docker exec jellydash-sqlite-ci test -f /var/www/html/var/data/jellydash.sqlite
           test "$(docker exec jellydash-sqlite-ci stat -c '%U:%G' /var/www/html/var/data/jellydash.sqlite)" = "www-data:www-data"

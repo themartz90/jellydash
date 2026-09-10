@@ -72,4 +72,46 @@ final class DatabasePlatform
             implode(', ', $escapedColumns),
         ));
     }
+
+    /**
+     * Add an ordinary index to an existing installation on either backend.
+     * The recheck keeps concurrent first requests from turning a harmless
+     * duplicate-index race into a failed schema initialization.
+     *
+     * @param list<string> $columns
+     */
+    public function createIndexIfMissing(string $name, string $table, array $columns): void
+    {
+        if ($this->indexExists($table, $name)) {
+            return;
+        }
+
+        $driver = $this->connection->getDriver();
+        $escapedColumns = array_map($driver->escapeIdentifier(...), $columns);
+
+        try {
+            $this->connection->query(sprintf(
+                'CREATE INDEX %s ON %s (%s)',
+                $driver->escapeIdentifier($name),
+                $driver->escapeIdentifier($table),
+                implode(', ', $escapedColumns),
+            ));
+        } catch (\Dibi\Exception $e) {
+            if (!$this->indexExists($table, $name)) {
+                throw $e;
+            }
+        }
+    }
+
+    /** @phpstan-impure */
+    private function indexExists(string $table, string $name): bool
+    {
+        foreach ($this->connection->getDatabaseInfo()->getTable($table)->getIndexes() as $index) {
+            if (strcasecmp($index->getName(), $name) === 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

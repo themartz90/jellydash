@@ -6,17 +6,20 @@
             <h1>Settings</h1>
             <p>Preferences stored in the database; infrastructure stays in <code>.env</code></p>
         </div>
-        <button type="submit" class="settings-save-btn settings-header-save" form="settings-form">Save settings</button>
+        {% if can_manage_global %}
+            <button type="submit" class="settings-save-btn settings-header-save" form="settings-form">Save settings</button>
+        {% endif %}
     </div>
 {% endblock %}
 
 {% block dashboard_content %}
     <div class="settings-page">
-        {% if saved %}
+        {% if saved and can_manage_global %}
             <div class="settings-saved" role="status">Settings saved.</div>
         {% endif %}
 
         <div class="settings-layout">
+            {% if can_manage_global %}
             <form class="settings-form" id="settings-form" action="?req=settings" method="post" data-settings-form>
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
@@ -142,6 +145,16 @@
         </section>
 
             </form>
+            {% else %}
+                <section class="settings-card">
+                    <header class="settings-card-head">
+                        <span class="settings-card-copy">
+                            <strong>Read-only settings</strong>
+                            <span>An owner or administrator manages global dashboard settings and imports.</span>
+                        </span>
+                    </header>
+                </section>
+            {% endif %}
 
             <section class="settings-card system-status-card" id="system-status" data-system-status aria-labelledby="system-status-title">
                 <header class="settings-card-head system-status-head">
@@ -167,6 +180,37 @@
                 </div>
             </section>
 
+            {% if can_manage_push %}
+                <section class="settings-card" id="notification-devices" aria-labelledby="notification-devices-title">
+                    <header class="settings-card-head">
+                        <span class="settings-card-copy">
+                            <strong id="notification-devices-title">Notification devices</strong>
+                            <span>{{ can_manage_all_push ? 'Registered browsers for this Jellydash installation.' : 'Browsers registered to your account.' }}</span>
+                        </span>
+                    </header>
+                    {% for device in push_devices %}
+                        <div class="system-status-row">
+                            <span class="system-status-state">{{ device.state == 'needs_reenrollment' ? 'Re-enroll' : device.state|capitalize }}</span>
+                            <span>
+                                <strong>{{ device.current ? 'Current browser' : device.label }}</strong>
+                                <small>{% if device.owner %}{{ device.owner }} · {% endif %}Added {{ device.created_at }}{% if device.last_success_at %} · Last delivery {{ device.last_success_at }}{% endif %}</small>
+                            </span>
+                            <form action="?req=push-revoke" method="post">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <input type="hidden" name="device_id" value="{{ device.id }}">
+                                <button class="settings-secondary-btn" type="submit">Remove</button>
+                            </form>
+                        </div>
+                    {% else %}
+                        <p class="settings-note">No notification devices are registered here yet.</p>
+                    {% endfor %}
+                    {% if can_manage_all_push and push_devices|filter(device => device.state == 'needs_reenrollment') is not empty %}
+                        <p class="settings-note">Devices marked Re-enroll were registered before account ownership was available. They stay paused while login is enabled until the same browser enrolls again.</p>
+                    {% endif %}
+                </section>
+            {% endif %}
+
+            {% if can_manage_global %}
             <section class="settings-card settings-import" id="import-history">
         <header class="settings-card-head">
             <span class="settings-card-mark" aria-hidden="true">
@@ -229,17 +273,22 @@
         <small class="settings-note" data-import-plugin-broken-note hidden>Playback Reporting v17 crashes on Jellyfin 10.11.9+. Catalog v18 is still unpublished (<a href="https://github.com/jellyfin/jellyfin-plugin-playbackreporting/pull/131" target="_blank" rel="noopener noreferrer">PR #131</a>). Drop a TSV backup instead.</small>
         <small class="settings-note" data-import-plugin-ok-note>Re-importing skips plays already in Jellydash. Imported plays never trigger notifications. Uploads must be 20 MB or smaller.</small>
             </section>
+            {% endif %}
         </div>
 
+        {% if can_manage_global %}
         <div class="settings-dirty-bar" data-settings-dirty-bar hidden>
             <span aria-live="polite"><i aria-hidden="true"></i>Unsaved changes</span>
             <button type="submit" class="settings-save-btn" form="settings-form">Save changes</button>
         </div>
+        {% endif %}
     </div>
 {% endblock %}
 
 {% block page_scripts %}
-    {% include "_import_history_dialog.twig" %}
-    <script src="/assets/js/settings-dirty.js?v=20260818"></script>
-    <script src="/assets/js/history-import.js?v=20260908-stream-completion"></script>
+    {% if can_manage_global %}
+        {% include "_import_history_dialog.twig" %}
+        <script src="/assets/js/settings-dirty.js?v=20260818"></script>
+        <script src="/assets/js/history-import.js?v={{ asset_revision }}"></script>
+    {% endif %}
 {% endblock %}

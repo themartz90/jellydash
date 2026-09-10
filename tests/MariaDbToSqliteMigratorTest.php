@@ -80,6 +80,10 @@ final class MariaDbToSqliteMigratorTest extends TestCase
         $sqlite = $destination->getDibi();
         $this->assertSame(101, (int) $sqlite->select('id')->from('users')->fetchSingle());
         $this->assertSame('migration-value', (string) $sqlite->select('setting_value')->from('app_settings')->fetchSingle());
+        $this->assertStringStartsWith(
+            '2026-08-11 11:55:00',
+            (string) $sqlite->select('window_started_at')->from('login_attempts')->fetchSingle(),
+        );
         $history = $sqlite->select('id, notified, library, library_resolved_at, watch_duration_sec, started_at_epoch, updated_at_epoch, ended_at_epoch, library_resolved_at_epoch, notification_attempts, notification_claim_token, notification_claimed_at_epoch, notification_next_attempt_at_epoch')->from('play_history')->fetch();
         $this->assertNotFalse($history);
         $this->assertSame(104, (int) $history['id']);
@@ -125,6 +129,11 @@ final class MariaDbToSqliteMigratorTest extends TestCase
         $this->assertSame(str_repeat('e', 64), (string) $remember['previous_validator_hash']);
         $this->assertSame(str_repeat('f', 32), (string) $remember['rotation_nonce']);
         $this->assertSame(1786442410, (int) $remember['rotation_valid_until']);
+        $this->assertSame(
+            str_repeat('9', 64),
+            (string) $sqlite->select('device_capability_hash')->from('push_subscriptions')->fetchSingle(),
+        );
+        $this->assertSame(101, (int) $sqlite->select('user_id')->from('push_subscriptions')->fetchSingle());
         $this->assertSame(102, $destination->addAuthUser('after-migration', 'password-123', 'After Migration', 2));
         $sqlite->disconnect();
 
@@ -163,6 +172,33 @@ final class MariaDbToSqliteMigratorTest extends TestCase
         $this->assertSame(501, (int) $destination->getDibi()
             ->select('COUNT(*)')->from('app_settings')->fetchSingle());
         $destination->getDibi()->disconnect();
+    }
+
+    public function testRejectsAnUnknownSourceColumnInsteadOfDroppingItsData(): void
+    {
+        DatabaseSchemaInitializer::initialize($this->source);
+        $this->sourceConnection->query('ALTER TABLE `app_settings` ADD COLUMN `future_private_value` varchar(64) DEFAULT NULL');
+        $this->sourceConnection->insert('app_settings', [
+            'setting_key' => 'future-column-fixture',
+            'setting_value' => 'known value',
+            'future_private_value' => 'must not be discarded',
+            'updated_at' => '2026-09-10 12:00:00',
+        ])->execute();
+
+        try {
+            (new MariaDbToSqliteMigrator($this->source))->migrate($this->destinationPath);
+            $this->fail('An unknown source column must stop the migration.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('future_private_value', $e->getMessage());
+            $this->assertStringContainsString('no data is discarded', $e->getMessage());
+        }
+
+        $this->assertFileDoesNotExist($this->destinationPath);
+        $this->assertSame(
+            'must not be discarded',
+            (string) $this->sourceConnection->select('future_private_value')
+                ->from('app_settings')->where('setting_key = %s', 'future-column-fixture')->fetchSingle(),
+        );
     }
 
     public function testOlderHistoryWithoutNotificationColumnIsMigratedSafely(): void
@@ -289,6 +325,7 @@ final class MariaDbToSqliteMigratorTest extends TestCase
             'identifier' => 'migration-user|127.0.0.1',
             'attempts' => 3,
             'locked_until' => null,
+            'window_started_at' => '2026-08-11 11:55:00',
             'updated_at' => '2026-08-11 12:00:00',
         ])->execute();
         $this->sourceConnection->insert('auth_remember_tokens', [
@@ -343,6 +380,8 @@ final class MariaDbToSqliteMigratorTest extends TestCase
             'endpoint_hash' => hash('sha256', 'https://push.example.test/migration'),
             'p256dh' => 'migration-key',
             'auth' => 'migration-auth',
+            'device_capability_hash' => str_repeat('9', 64),
+            'user_id' => 101,
             'failure_count' => 0,
             'created_at' => '2026-08-11 12:00:00',
         ])->execute();

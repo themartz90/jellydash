@@ -97,6 +97,20 @@ final class PlaybackNotifier
     }
 
     /**
+     * @param array{endpoint: string, p256dh: string, auth: string} $subscription
+     * @return array{configured: bool, sent: int, failed: int, ineligible: int}
+     */
+    public function sendCurrentDeviceTest(array $subscription): array
+    {
+        return ($this->dispatcher ?? new NotificationDispatcher())->testCurrentWebPush($subscription, [
+            'title' => '🔔 Jellydash notifications are on',
+            'body' => "You'll get an alert when someone starts playing.",
+            'tag' => 'jellydash-test',
+            'url' => '/now-playing',
+        ]);
+    }
+
+    /**
      * @return array<int, string>
      */
     private function ignoredUsers(): array

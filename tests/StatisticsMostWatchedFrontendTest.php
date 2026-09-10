@@ -48,7 +48,7 @@ final class StatisticsMostWatchedFrontendTest extends TestCase
         $this->assertIsString($shell);
         $this->assertIsString($stylesheet);
         $this->assertStringContainsString('/assets/js/statistics-most-watched.js?v=20260901-disclosure', $template);
-        $this->assertStringContainsString('/assets/css/dashboard.css?v=20260910-statistics-hint-2', $shell);
+        $this->assertStringContainsString('/assets/css/dashboard.css?v={{ asset_revision }}', $shell);
         $this->assertStringContainsString('@media (hover: hover) and (pointer: fine)', $stylesheet);
         $this->assertStringContainsString('transition: transform .16s ease;', $stylesheet);
         $this->assertStringContainsString('.most-watched-disclosure[open] .most-watched-chevron svg', $stylesheet);

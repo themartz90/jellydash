@@ -7,10 +7,10 @@ use Mk\Framework\Config;
 use Mk\Framework\Container;
 use Mk\Framework\Database;
 use Mk\Framework\DatabasePlatform;
+use Mk\Framework\Health\WorkerStatusRepository;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
 use Mk\Framework\Jellyseerr\SeerrRequestRepository;
 use Mk\Framework\Push\PushSubscriptionRepository;
-use Mk\Framework\Health\WorkerStatusRepository;
 use Mk\Framework\View;
 use PHPUnit\Framework\TestCase;
 
@@ -169,12 +169,24 @@ final class SchemaCompatibilityTest extends TestCase
         foreach (['previous_validator_hash', 'rotation_nonce', 'rotation_valid_until'] as $column) {
             $this->dibi->query('ALTER TABLE `auth_remember_tokens` DROP COLUMN %n', $column);
         }
+        $this->dibi->query('ALTER TABLE `login_attempts` DROP COLUMN `window_started_at`');
+        $this->dibi->query('DROP INDEX `idx_login_attempts_updated` ON `login_attempts`');
+        $this->dibi->query('DROP INDEX `idx_push_subscription_user` ON `push_subscriptions`');
 
         $this->resetSchemaState();
         $this->initializeAllSchemas();
 
         $this->assertSame('schema-user', (string) $this->dibi->select('username')->from('users')->fetchSingle());
         $this->assertSame(2, (int) $this->dibi->select('attempts')->from('login_attempts')->fetchSingle());
+        $this->assertNull($this->dibi->select('window_started_at')->from('login_attempts')->fetchSingle());
+        $this->assertArrayHasKey(
+            'idx_login_attempts_updated',
+            $this->dibi->getDatabaseInfo()->getTable('login_attempts')->getIndexes(),
+        );
+        $this->assertArrayHasKey(
+            'idx_push_subscription_user',
+            $this->dibi->getDatabaseInfo()->getTable('push_subscriptions')->getIndexes(),
+        );
         $this->assertSame(1, (int) $this->dibi->select('COUNT(*)')->from('auth_remember_tokens')->fetchSingle());
         $remember = $this->dibi->select('previous_validator_hash, rotation_nonce, rotation_valid_until')
             ->from('auth_remember_tokens')->fetch();

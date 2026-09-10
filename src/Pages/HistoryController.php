@@ -7,6 +7,7 @@ namespace Mk\Framework\Pages;
 use Mk\Framework\Controller;
 use Mk\Framework\Jellyfin\HistoryFilters;
 use Mk\Framework\Jellyfin\JellyfinUserAvatars;
+use Mk\Framework\Jellyfin\PlaybackStatisticsService;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
 use Mk\Framework\Main;
 
@@ -192,7 +193,10 @@ final class HistoryController extends Controller
         $completion = $runtimeSec > 0 ? min(100, (int) round(($watchedSec / $runtimeSec) * 100)) : 0;
         $seriesName = (string) ($row['series_name'] ?? '');
         $itemName = (string) ($row['item_name'] ?? 'Unknown title');
-        $user = (string) ($row['user_name'] ?? 'Unknown user');
+        $user = (string) ($row['user_name'] ?? '');
+        if (trim($user) === '') {
+            $user = 'Unknown user';
+        }
         $userId = (string) ($row['user_id'] ?? '');
         $library = trim((string) ($row['library'] ?? ''));
 
@@ -251,23 +255,16 @@ final class HistoryController extends Controller
             'unique_users' => $aggregate['unique_users'],
             'watch_time' => $this->durationLabel($aggregate['watch_sec']),
             'watch_time_estimated' => $aggregate['estimated_plays'] > 0,
-            'transcoded_pct' => ($totalFiltered > 0
-                ? (int) round(($aggregate['transcodes'] / $totalFiltered) * 100)
-                : 0) . '%',
+            'transcoded_pct' => PlaybackStatisticsService::standalonePercentage(
+                $aggregate['transcodes'],
+                $totalFiltered,
+            ) . '%',
         ];
     }
 
     private function durationLabel(int $seconds): string
     {
-        $minutes = (int) floor($seconds / 60);
-        if ($minutes <= 0) {
-            return '0m';
-        }
-
-        $hours = intdiv($minutes, 60);
-        $remainingMinutes = $minutes % 60;
-
-        return $hours > 0 ? $hours . 'h ' . $remainingMinutes . 'm' : $remainingMinutes . 'm';
+        return PlaybackStatisticsService::formatDuration($seconds);
     }
 
     private function initials(string $name): string

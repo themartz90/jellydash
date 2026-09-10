@@ -7,6 +7,52 @@ use PHPUnit\Framework\TestCase;
 
 final class JellyfinClientTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        foreach (['libraryLocations', 'libraryNames'] as $propertyName) {
+            $property = new ReflectionProperty(JellyfinClient::class, $propertyName);
+            $property->setValue(null, null);
+        }
+    }
+
+    public function testFailedLibraryLocationRequestCanBeRetried(): void
+    {
+        $calls = 0;
+        $client = new JellyfinClient('http://jellyfin.test', 'token', true, static function () use (&$calls): array {
+            ++$calls;
+            if ($calls === 1) {
+                throw new RuntimeException('Temporary Jellyfin failure');
+            }
+
+            return [['Name' => 'Movies', 'Locations' => ['/media/movies']]];
+        });
+
+        try {
+            $client->libraryLocations();
+            self::fail('The first request should fail.');
+        } catch (RuntimeException $error) {
+            self::assertSame('Temporary Jellyfin failure', $error->getMessage());
+        }
+
+        self::assertSame(['movies' => ['/media/movies']], $client->libraryLocations());
+        self::assertSame(['Movies'], $client->libraryNames());
+        self::assertSame(2, $calls);
+    }
+
+    public function testSuccessfulEmptyLibraryLocationResponseIsCached(): void
+    {
+        $calls = 0;
+        $client = new JellyfinClient('http://jellyfin.test', 'token', true, static function () use (&$calls): array {
+            ++$calls;
+
+            return [];
+        });
+
+        self::assertSame([], $client->libraryLocations());
+        self::assertSame([], $client->libraryLocations());
+        self::assertSame(1, $calls);
+    }
+
     public function testLibraryNameForPathPicksTheLongestMatchingFolder(): void
     {
         $client = new JellyfinClient('http://jellyfin.test', 'token');

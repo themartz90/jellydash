@@ -6,7 +6,7 @@
         <p>At-a-glance stats for selected media libraries</p>
     </div>
     <div class="header-actions">
-        <span class="library-status-chip" data-libraries-status>
+        <span class="library-status-chip" data-libraries-status role="status" aria-live="polite">
             <i></i>
             {{ refreshedLabel }}
         </span>
@@ -35,5 +35,5 @@
 {% endblock %}
 
 {% block page_scripts %}
-    <script src="/assets/js/libraries.js?v=20260908-viewing-time"></script>
+    <script src="/assets/js/libraries.js?v={{ asset_revision }}"></script>
 {% endblock %}

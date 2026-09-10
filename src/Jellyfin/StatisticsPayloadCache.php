@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Mk\Framework\Jellyfin;
 
+use Mk\Framework\Cache\AtomicJsonFile;
+
 /**
  * Small per-range cache for completed Statistics page payloads.
  *
@@ -125,23 +127,7 @@ final class StatisticsPayloadCache
      */
     private function read(string $range): ?array
     {
-        $path = $this->cacheFile($range);
-        if (!is_file($path)) {
-            return null;
-        }
-
-        try {
-            $encoded = @file_get_contents($path);
-            if (!is_string($encoded)) {
-                return null;
-            }
-
-            $payload = json_decode($encoded, true, flags: JSON_THROW_ON_ERROR);
-        } catch (\Throwable) {
-            return null;
-        }
-
-        return is_array($payload) ? $payload : null;
+        return (new AtomicJsonFile($this->cacheFile($range)))->read();
     }
 
     /**
@@ -154,11 +140,7 @@ final class StatisticsPayloadCache
         }
 
         try {
-            $encoded = json_encode($payload, JSON_THROW_ON_ERROR);
-            $path = $this->cacheFile($range);
-            if (@file_put_contents($path, $encoded, LOCK_EX) !== false) {
-                @chmod($path, 0666);
-            }
+            (new AtomicJsonFile($this->cacheFile($range)))->write($payload);
         } catch (\Throwable) {
             // The calculation is still useful if the optional cache cannot be written.
         }

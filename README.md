@@ -245,7 +245,11 @@ The no-third-party option: notifications go straight to your browser or the inst
 docker compose exec app php bin/console.php push:vapid
 ```
 
-Paste the two keys into `.env`, restart, then tap the bell in the app and allow notifications. You get a test notification right away so you know it works.
+Paste the two keys into `.env`, restart, then tap the bell in the app and allow notifications. You get a test notification right away so you know it works. Jellydash accepts browser subscriptions from the push services used by Firefox, Chromium browsers, Safari and Edge. Other endpoint hosts are rejected.
+
+The Web Push client does not pin DNS answers. The outbound boundary therefore relies on the fixed provider hostname list, HTTPS certificate verification and disabled redirects. Custom push endpoint hosts are not supported.
+
+One installation stores up to 100 browser notification devices by default, with up to 10 per signed-in account. Set `PUSH_MAX_SUBSCRIPTIONS` or `PUSH_MAX_SUBSCRIPTIONS_PER_ACCOUNT` if you need different limits. Existing devices can refresh their subscription when a limit is full.
 
 ## Optional login
 
@@ -258,6 +262,10 @@ AUTH_ADMIN_PASSWORD=pick-a-strong-one
 ```
 
 The password needs at least 8 characters. The admin user is created automatically on the next start. More users can be added with `docker compose exec app php bin/console.php user:add`.
+
+Owners and administrators manage global Settings, imports, History repair and server-wide notification tests. Regular users can read the dashboard and manage their own browser notification devices. Guests have read-only access. Notification devices registered before account ownership was added stay paused while login is enabled until the same browser enrolls again. They continue working when login is disabled.
+
+If an installation has no owner or administrator, use `docker compose exec app php bin/console.php user:role <username> 1` to promote an existing account explicitly, or add a new owner with `user:add` and role `1`. Use `push:devices` to review safe device metadata and `push:revoke <device-id>` to remove a legacy device. These commands do not print push endpoints or keys.
 
 On the login page, **Keep me signed in** lets that browser restore your login for up to 90 days. The remembered login is renewed when you return and removed when you sign out or change your password.
 

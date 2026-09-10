@@ -62,7 +62,10 @@ Every key except `name` is optional.
 - **The API handler** is a plain PHP file. When it runs, the standard bootstrap
   has already happened: env loaded, session handled, and the optional-auth
   guard applied (401 before your code when auth is on and the caller has no
-  session). Echo your own response and set your own headers.
+  session). Echo your own response and set your own headers. The shared guard
+  proves authentication only. A handler that changes global state must also
+  require `Authorization::CAPABILITY_MANAGE_GLOBAL`; account-owned mutations
+  must enforce their own ownership boundary.
 - **Assets** are streamed by `/api/module-asset.php?m=<name>&f=<file>` with an
   extension allowlist (js, css, svg, png, jpg, webp, woff2). Build URLs with
   `Mk\Framework\Modules::assetUrl()` or hardcode the pattern.

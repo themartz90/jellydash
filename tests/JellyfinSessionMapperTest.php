@@ -87,6 +87,76 @@ final class JellyfinSessionMapperTest extends TestCase
         $this->assertStringContainsString('/api/image.php?item=item-2&type=Backdrop', $stream['backdrop']);
     }
 
+    public function testFallbackStreamIdentityDistinguishesDevicesPlayingTheSameItem(): void
+    {
+        $first = $this->movieSession();
+        $second = $this->movieSession();
+        unset($first['Id'], $second['Id']);
+        $second['DeviceName'] = 'Bedroom TV';
+        $second['UserId'] = 'user-3';
+
+        $streams = (new JellyfinSessionMapper())->map([$first, $second])['streams'];
+
+        $this->assertStringStartsWith('stream-', $streams[0]['id']);
+        $this->assertNotSame($streams[0]['id'], $streams[1]['id']);
+    }
+
+    public function testMissingRuntimeUsesUnknownEndpointAndRemainingTime(): void
+    {
+        $session = $this->movieSession();
+        unset($session['NowPlayingItem']['RunTimeTicks']);
+
+        $stream = (new JellyfinSessionMapper())->map([$session])['streams'][0];
+
+        $this->assertSame('25:00 / Unknown', $stream['timeLabel']);
+        $this->assertSame('Remaining time unknown', $stream['remaining']);
+        $this->assertSame('0%', $stream['progressPct']);
+    }
+
+    public function testKnownZeroRemainingTimeStillDisplaysZeroMinutes(): void
+    {
+        $session = $this->movieSession();
+        $session['PlayState']['PositionTicks'] = $session['NowPlayingItem']['RunTimeTicks'];
+
+        $stream = (new JellyfinSessionMapper())->map([$session])['streams'][0];
+
+        $this->assertSame('1:56:00 / 1:56:00', $stream['timeLabel']);
+        $this->assertSame('0 min left', $stream['remaining']);
+        $this->assertSame('100%', $stream['progressPct']);
+    }
+
+    public function testPausedMissingRuntimeKeepsPausedStateWithUnknownRemainingTime(): void
+    {
+        $session = $this->movieSession();
+        unset($session['NowPlayingItem']['RunTimeTicks']);
+        $session['PlayState']['IsPaused'] = true;
+
+        $stream = (new JellyfinSessionMapper())->map([$session])['streams'][0];
+
+        $this->assertTrue($stream['isPaused']);
+        $this->assertSame('Paused', $stream['statusLabel']);
+        $this->assertSame('Remaining time unknown', $stream['remaining']);
+    }
+
+    public function testLiveTvKeepsItsProgramTimeOverrides(): void
+    {
+        $session = $this->movieSession();
+        $session['NowPlayingItem']['Type'] = 'TvChannel';
+        unset($session['NowPlayingItem']['RunTimeTicks']);
+        $session['NowPlayingItem']['CurrentProgram'] = [
+            'Name' => 'Live programme',
+            'StartDate' => gmdate('c', time() - 60),
+            'EndDate' => gmdate('c', time() + 60),
+        ];
+
+        $stream = (new JellyfinSessionMapper())->map([$session])['streams'][0];
+
+        $this->assertTrue($stream['isLive']);
+        $this->assertNotSame('25:00 / Unknown', $stream['timeLabel']);
+        $this->assertMatchesRegularExpression('/^\d{2}:\d{2} - \d{2}:\d{2}$/', $stream['timeLabel']);
+        $this->assertNotSame('Remaining time unknown', $stream['remaining']);
+    }
+
     /**
      * @return array<string, mixed>
      */

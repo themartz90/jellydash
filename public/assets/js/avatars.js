@@ -9,7 +9,13 @@
     }
 
     function bind(root) {
-        const images = (root || document).querySelectorAll('[data-avatar-img]');
+        const images = [];
+        if (root && root.matches && root.matches('[data-avatar-img]')) {
+            images.push(root);
+        }
+        (root || document).querySelectorAll('[data-avatar-img]').forEach(function (img) {
+            images.push(img);
+        });
         images.forEach(function (img) {
             if (img.dataset.avatarBound === '1') {
                 return;
@@ -36,8 +42,14 @@
     bind();
 
     if (typeof MutationObserver === 'function' && document.body) {
-        new MutationObserver(function () {
-            bind();
+        new MutationObserver(function (records) {
+            records.forEach(function (record) {
+                record.addedNodes.forEach(function (node) {
+                    if (node.nodeType === 1) {
+                        bind(node);
+                    }
+                });
+            });
         }).observe(document.body, { childList: true, subtree: true });
     }
 })();

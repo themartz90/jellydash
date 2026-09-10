@@ -94,11 +94,16 @@ final class PlaybackStatisticsService
         $watchTimeEstimated = $this->hasEstimatedViewingTime($rows);
         $plays = count($rows);
         $previousPlays = count($previousRows);
-        $transcodeRate = $directness['transcode_pct'];
+        $transcodeRate = self::standalonePercentage($directness['transcode_count'], $plays);
         $previousDirectness = $this->directness($previousRows);
-        $previousTranscodeRate = count($previousRows) > 0 ? $previousDirectness['transcode_pct'] : null;
-        $trending = $this->trending($rows, $range, $periodStart, $periodEnd);
-        $mostWatched = $this->mostWatched($repository, $range, $rows);
+        $previousTranscodeRate = count($previousRows) > 0
+            ? self::standalonePercentage($previousDirectness['transcode_count'], count($previousRows))
+            : null;
+        $allTimeTitleGroups = $range === 'all'
+            ? $this->groupTitles($this->titleRowsWithoutExcludedLibraries($rows))
+            : null;
+        $trending = $this->trending($rows, $range, $periodStart, $periodEnd, $allTimeTitleGroups);
+        $mostWatched = $this->mostWatched($repository, $range, $rows, $allTimeTitleGroups);
 
         return [
             'range' => $range,
@@ -160,6 +165,7 @@ final class PlaybackStatisticsService
      * their series poster.
      *
      * @param array<int, \Dibi\Row> $rows
+     * @param array<string, array<string, mixed>>|null $preparedGroups
      * @return array<int, array<string, mixed>>
      */
     private function trending(
@@ -167,10 +173,10 @@ final class PlaybackStatisticsService
         string $range,
         ?\DateTimeImmutable $periodStart,
         ?\DateTimeImmutable $periodEnd,
-    ): array
-    {
+        ?array $preparedGroups = null,
+    ): array {
         $items = $this->titleCards(
-            $this->groupTitles($this->titleRowsWithoutExcludedLibraries($rows)),
+            $preparedGroups ?? $this->groupTitles($this->titleRowsWithoutExcludedLibraries($rows)),
             $range,
             $periodStart,
             $periodEnd,
@@ -188,13 +194,22 @@ final class PlaybackStatisticsService
      * computed over all recorded history regardless of the selected range.
      *
      * @param array<int, \Dibi\Row> $rangeRows rows already fetched for the page's range
+     * @param array<string, array<string, mixed>>|null $preparedAllTimeGroups
      * @return array{series: array<int, array<string, mixed>>, movies: array<int, array<string, mixed>>}
      */
-    private function mostWatched(PlayHistoryRepository $repository, string $range, array $rangeRows): array
-    {
+    private function mostWatched(
+        PlayHistoryRepository $repository,
+        string $range,
+        array $rangeRows,
+        ?array $preparedAllTimeGroups = null,
+    ): array {
         // The 'all' range already fetched the full table; don't fetch it twice.
-        $rows = $range === 'all' ? $rangeRows : $repository->statisticsRowsForPeriod(null, null);
-        $groups = $this->groupTitles($this->titleRowsWithoutExcludedLibraries($rows));
+        if ($preparedAllTimeGroups !== null) {
+            $groups = $preparedAllTimeGroups;
+        } else {
+            $rows = $range === 'all' ? $rangeRows : $repository->statisticsRowsForPeriod(null, null);
+            $groups = $this->groupTitles($this->titleRowsWithoutExcludedLibraries($rows));
+        }
 
         $series = $this->titleCards(
             array_filter($groups, static fn (array $g): bool => (bool) $g['isEpisode']),
@@ -306,8 +321,7 @@ final class PlaybackStatisticsService
         string $range,
         ?\DateTimeImmutable $periodStart = null,
         ?\DateTimeImmutable $periodEnd = null,
-    ): array
-    {
+    ): array {
         $items = [];
 
         foreach ($groups as $group) {
@@ -381,7 +395,7 @@ final class PlaybackStatisticsService
                 || trim((string) ($row['library_resolved_at'] ?? '')) === '') {
                 $itemId = trim((string) ($row['item_id'] ?? ''));
                 if ($itemId !== '') {
-                    $unresolvedIds[mb_strtolower($itemId)] = $itemId;
+                    $unresolvedIds[$this->normalizedItemId($itemId)] = $itemId;
                 }
             }
         }
@@ -390,7 +404,12 @@ final class PlaybackStatisticsService
         $lookupFailed = false;
         if ($unresolvedIds !== []) {
             try {
-                $meta = $loadMeta(array_values($unresolvedIds));
+                foreach ($loadMeta(array_values($unresolvedIds)) as $itemId => $itemMeta) {
+                    $normalized = $this->normalizedItemId((string) $itemId);
+                    if ($normalized !== '') {
+                        $meta[$normalized] = $itemMeta;
+                    }
+                }
             } catch (\Throwable) {
                 $lookupFailed = true;
             }
@@ -411,7 +430,7 @@ final class PlaybackStatisticsService
                 $kept[] = $row;
                 continue;
             }
-            $itemId = mb_strtolower(trim((string) ($row['item_id'] ?? '')));
+            $itemId = $this->normalizedItemId((string) ($row['item_id'] ?? ''));
             if ($itemId === '') {
                 $kept[] = $row;
                 continue;
@@ -424,6 +443,11 @@ final class PlaybackStatisticsService
         }
 
         return $kept;
+    }
+
+    private function normalizedItemId(string $itemId): string
+    {
+        return strtolower(str_replace('-', '', trim($itemId)));
     }
 
     /**
@@ -621,9 +645,9 @@ final class PlaybackStatisticsService
 
         foreach ($rows as $row) {
             $name = (string) ($row['user_name'] ?? '');
-            $key = $name !== '' ? $name : 'Unknown user';
+            $key = $name !== '' ? 'named:' . $name : 'anonymous:';
             $users[$key] ??= [
-                'user' => $key,
+                'user' => $name !== '' ? $name : 'Unknown user',
                 'user_id' => trim((string) ($row['user_id'] ?? '')),
                 'sec' => 0,
                 'plays' => 0,
@@ -645,14 +669,15 @@ final class PlaybackStatisticsService
         ));
         $index = 0;
 
-        return array_values(array_map(function (array $user) use ($max, $sharePercentages, &$index): array {
+        $result = [];
+        foreach ($users as $groupKey => $user) {
             $color = self::COLORS[$index % count(self::COLORS)];
             $index++;
             $seconds = (int) $user['sec'];
             $avgMinutes = (int) round(($seconds / max(1, (int) $user['plays'])) / 60);
             $avatarBg = 'linear-gradient(135deg,' . $color . ',#3b9eff)';
 
-            return [
+            $result[] = [
                 'user' => $user['user'],
                 'initials' => $this->initials((string) $user['user']),
                 'avatarBg' => $avatarBg,
@@ -662,10 +687,12 @@ final class PlaybackStatisticsService
                 'plays' => $this->comma((int) $user['plays']),
                 'avg' => $this->duration($avgMinutes * 60),
                 'w' => (int) round(($seconds / $max) * 100) . '%',
-                'share' => ($sharePercentages[(string) $user['user']] ?? 0) . '%',
+                'share' => ($sharePercentages[$groupKey] ?? 0) . '%',
                 'filterable' => (bool) $user['filterable'],
             ];
-        }, $users));
+        }
+
+        return $result;
     }
 
     /**
@@ -705,7 +732,7 @@ final class PlaybackStatisticsService
         foreach ($clients as $clientKey => $client) {
             $color = self::COLORS[$index % count(self::COLORS)];
             $sessions = (int) $client['sessions'];
-            $transcodePct = (int) round(((int) $client['transcodes'] / $sessions) * 100);
+            $transcodePct = self::standalonePercentage((int) $client['transcodes'], $sessions);
             $sharePct = $sessionPercentages[$clientKey] ?? 0;
             $conicSegments[] = ['pct' => $sharePct, 'color' => $color];
 
@@ -1194,7 +1221,7 @@ final class PlaybackStatisticsService
         return $kpi;
     }
 
-    private function duration(int $seconds): string
+    public static function formatDuration(int $seconds): string
     {
         $minutes = (int) floor($seconds / 60);
         if ($minutes <= 0) {
@@ -1205,8 +1232,18 @@ final class PlaybackStatisticsService
         $remainingMinutes = $minutes % 60;
 
         return $hours > 0
-            ? $this->comma($hours) . 'h ' . $remainingMinutes . 'm'
+            ? number_format($hours) . 'h ' . $remainingMinutes . 'm'
             : $remainingMinutes . 'm';
+    }
+
+    public static function standalonePercentage(int $part, int $total): int
+    {
+        return $total > 0 ? (int) round((max(0, $part) / $total) * 100) : 0;
+    }
+
+    private function duration(int $seconds): string
+    {
+        return self::formatDuration($seconds);
     }
 
     private function comma(int $value): string
