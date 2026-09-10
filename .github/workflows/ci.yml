@@ -119,6 +119,7 @@ jobs:
 
       - name: Boot Jellydash with SQLite
         run: |
+          trap 'echo "Docker SQLite smoke test failed at line $LINENO" >&2' ERR
           mkdir -p "$RUNNER_TEMP/jellydash-sqlite"
           docker run --detach --name jellydash-sqlite-ci \
             --publish 18080:80 \
@@ -175,7 +176,21 @@ jobs:
             --data-urlencode "username=ci-owner" \
             --data-urlencode "pwd=wrong-password" \
             'http://127.0.0.1:18080/login?auth=login'
-          docker exec jellydash-sqlite-ci php -r '$db = new SQLite3("/var/www/html/var/data/jellydash.sqlite"); exit((int) $db->querySingle("SELECT COUNT(*) FROM login_attempts") === 1 ? 0 : 1);'
+          docker exec jellydash-sqlite-ci php -r '
+            $db = new SQLite3("/var/www/html/var/data/jellydash.sqlite");
+            $rows = $db->query("SELECT identifier, attempts FROM login_attempts");
+            $scopes = [];
+            while ($row = $rows->fetchArray(SQLITE3_ASSOC)) {
+              if ((int) $row["attempts"] !== 1) {
+                throw new RuntimeException("Expected one failed attempt per throttle counter.");
+              }
+              $scopes[] = explode(":", $row["identifier"], 2)[0];
+            }
+            sort($scopes);
+            if ($scopes !== ["pair", "source"]) {
+              throw new RuntimeException("Expected both pair and source login throttle counters.");
+            }
+          '
           curl --fail --silent --output /dev/null \
             --cookie "$cookie_jar" \
             --cookie-jar "$cookie_jar" \
