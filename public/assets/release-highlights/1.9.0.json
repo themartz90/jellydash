@@ -1,0 +1,20 @@
+{
+  "version": "1.9.0",
+  "auto_show": true,
+  "title": "Statistics drilldowns and playback reliability",
+  "summary": "Open matching History plays directly from Statistics, with the selected period and filters preserved. This release also improves playback tracking, notification setup, signed-in permissions and Docker maintenance.",
+  "highlights": [
+    "Select a title, user, client, playback type or Total Plays in Statistics to open matching History rows with the same period, totals and CSV filters.",
+    "Return to the same Statistics position with the browser Back button on desktop, and filter History by exact client or playback method.",
+    "Keep Now Playing and library summaries useful when Jellyfin metadata or background work is temporarily unavailable.",
+    "Give owners and administrators control of shared settings. Regular users manage their own browser notification devices, while guests remain read-only.",
+    "Re-enroll older browser notifications after signing in so Jellydash can associate the device with the correct account.",
+    "Run the Docker image on PHP 8.3.33 with an application health check and refreshed amd64 and arm64 builds."
+  ],
+  "links": [
+    {
+      "label": "Full release notes",
+      "url": "https://github.com/themartz90/jellydash/releases/tag/v1.9.0"
+    }
+  ]
+}
