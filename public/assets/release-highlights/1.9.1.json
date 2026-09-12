@@ -1,0 +1,18 @@
+{
+  "version": "1.9.1",
+  "auto_show": true,
+  "title": "Theme playback exclusions and exact title links",
+  "summary": "Confirmed background theme songs and videos are now excluded from playback views and totals. Statistics title links now open the exact matching History rows and keep that scope through pagination and CSV export.",
+  "highlights": [
+    "Exclude confirmed theme songs and videos from Now Playing, History, Statistics, library playback summaries, CSV exports and playback notifications.",
+    "Keep existing rows in the database. If metadata is unavailable or uncertain, keep the play visible and retry later instead of guessing from its title. Ordinary music and videos stay included.",
+    "Open exact Trending and Most Watched titles in History without matching unrelated titles, users, clients or devices.",
+    "See and clear the selected title in History. The same title filter applies to totals, pagination, CSV preview and export."
+  ],
+  "links": [
+    {
+      "label": "Full release notes",
+      "url": "https://github.com/themartz90/jellydash/releases/tag/v1.9.1"
+    }
+  ]
+}
