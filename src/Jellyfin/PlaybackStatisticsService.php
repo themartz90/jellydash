@@ -495,10 +495,13 @@ final class PlaybackStatisticsService
 
     private function cacheContextFingerprint(): string
     {
+        $repository = $this->repository ?? new PlayHistoryRepository();
+
         return hash('sha256', json_encode([
             'timezone' => date_default_timezone_get(),
             'excludedLibraries' => $this->excludedLibraries(),
             'excludedUsers' => (new MonitoringExclusions())->fingerprint(),
+            'themeClassificationContext' => $repository->themePlaybackExclusions()->fingerprint(),
         ], JSON_THROW_ON_ERROR));
     }
 

@@ -21,6 +21,7 @@ final class HistoryLibraryBackfillService
 
     private Database $database;
     private \Dibi\Connection $db;
+    private PlayHistoryRepository $history;
     /** @var \Closure(array<int, string>): array<string, array{runtime_sec: int, library: string}> */
     private \Closure $metaLoader;
     private string $lockPath;
@@ -35,7 +36,7 @@ final class HistoryLibraryBackfillService
     ) {
         $this->database = $database ?? Container::db();
         $this->db = $this->database->getDibi();
-        new PlayHistoryRepository($this->database);
+        $this->history = new PlayHistoryRepository($this->database);
         AppSettings::ensureSchema($this->database);
 
         if ($metaLoader !== null) {
@@ -230,7 +231,8 @@ final class HistoryLibraryBackfillService
         $row = $this->db->query(
             "SELECT COUNT(*) AS row_count, COALESCE(MAX(id), 0) AS maximum_id
              FROM play_history
-             WHERE item_id <> '' AND item_type <> 'TvChannel'"
+             WHERE item_id <> '' AND item_type <> 'TvChannel'
+               AND " . $this->history->visibleHistorySql('play_history')
         )->fetch();
         if ($row === false) {
             return [0, 0];
@@ -248,6 +250,7 @@ final class HistoryLibraryBackfillService
             ->where('id <= %i', $highWatermark)
             ->where('item_id <> %s', '')
             ->where('item_type <> %s', 'TvChannel')
+            ->where($this->history->visibleHistorySql('play_history'))
             ->orderBy('id')
             ->limit($limit)
             ->fetchAll();

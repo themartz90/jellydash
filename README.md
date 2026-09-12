@@ -283,6 +283,8 @@ Environment values are comma-separated names, for example `IGNORE_USERS=Admin,Te
 
 Monitoring exclusions preserve existing database rows. Removing an exclusion makes that earlier activity visible again; Jellydash cannot reconstruct activity it skipped while the user was excluded. Username matching is exact and case-insensitive. If you rename an account, update its exclusion. See [Monitoring exclusions](docs/MONITORING_EXCLUSIONS.md) for details.
 
+Confirmed background theme songs and videos are excluded automatically. The history poller also checks older items and hides confirmed theme plays from History, Statistics and CSV exports while preserving the stored rows. Ordinary music stays monitored. See [Background theme media](docs/MONITORING_EXCLUSIONS.md#background-theme-media) for detection rules and limits.
+
 ## Exporting History
 
 Use **Export CSV** on the History page to choose a search, user, library and time period before downloading. Jellydash shows the exact number of matching plays, and the export is never limited to the page you are viewing. Its versioned format keeps the playback fields Jellydash needs for a native round-trip import. See [docs/HISTORY_CSV.md](docs/HISTORY_CSV.md) for the format and compatibility details.

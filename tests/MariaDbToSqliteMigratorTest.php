@@ -105,6 +105,24 @@ final class MariaDbToSqliteMigratorTest extends TestCase
         $this->assertSame(str_repeat('c', 64), (string) $history['notification_claim_token']);
         $this->assertSame(1786442710, (int) $history['notification_claimed_at_epoch']);
         $this->assertSame(1786443000, (int) $history['notification_next_attempt_at_epoch']);
+        $classifications = $sqlite->select('server_key, item_id, item_type, classification, attempts, next_retry_epoch, updated_at_epoch')
+            ->from('theme_item_classifications')->orderBy('server_key, item_id')->fetchAll();
+        $this->assertCount(2, $classifications);
+        $this->assertSame(str_repeat('1', 64), (string) $classifications[0]['server_key']);
+        $this->assertSame('a-theme-item', (string) $classifications[0]['item_id']);
+        $this->assertSame('Audio', (string) $classifications[0]['item_type']);
+        $this->assertSame('theme', (string) $classifications[0]['classification']);
+        $this->assertSame(3, (int) $classifications[0]['attempts']);
+        $this->assertSame(1786443300, (int) $classifications[0]['next_retry_epoch']);
+        $this->assertSame(1786443200, (int) $classifications[0]['updated_at_epoch']);
+        $this->assertSame('z-ordinary-item', (string) $classifications[1]['item_id']);
+        $this->assertSame('ordinary', (string) $classifications[1]['classification']);
+        $this->assertNull($classifications[1]['next_retry_epoch']);
+        $this->assertSame(
+            7,
+            (int) $sqlite->select('revision')->from('theme_classification_state')
+                ->where('server_key = %s', str_repeat('1', 64))->fetchSingle(),
+        );
         $this->assertSame('Migration Movie', (string) $sqlite->select('title')->from('seerr_requests')->fetchSingle());
         $status = $sqlite->select('status, error_code, last_started_at, last_finished_at, last_success_at')
             ->from('system_status')->where('source_id = %s AND component = %s', 'default', 'history')->fetch();
@@ -137,8 +155,12 @@ final class MariaDbToSqliteMigratorTest extends TestCase
         $this->assertSame(102, $destination->addAuthUser('after-migration', 'password-123', 'After Migration', 2));
         $sqlite->disconnect();
 
-        foreach (['users', 'login_attempts', 'auth_remember_tokens', 'app_settings', 'play_history', 'push_subscriptions', 'seerr_requests', 'system_status'] as $table) {
-            $expected = $table === 'system_status' ? 3 : 1;
+        foreach (['users', 'login_attempts', 'auth_remember_tokens', 'app_settings', 'play_history', 'theme_item_classifications', 'theme_classification_state', 'push_subscriptions', 'seerr_requests', 'system_status'] as $table) {
+            $expected = match ($table) {
+                'system_status' => 3,
+                'theme_item_classifications' => 2,
+                default => 1,
+            };
             $this->assertSame($expected, (int) $this->sourceConnection->select('COUNT(*)')->from($table)->fetchSingle());
         }
     }
@@ -235,6 +257,8 @@ final class MariaDbToSqliteMigratorTest extends TestCase
         $counts = (new MariaDbToSqliteMigrator($this->source))->migrate($this->destinationPath);
         $this->assertSame(0, $counts['users']);
         $this->assertSame(1, $counts['play_history']);
+        $this->assertSame(0, $counts['theme_item_classifications']);
+        $this->assertSame(0, $counts['theme_classification_state']);
 
         $destination = Database::sqlite($this->destinationPath);
         $row = $destination->getDibi()->select('id, notified')->from('play_history')->fetch();
@@ -373,6 +397,32 @@ final class MariaDbToSqliteMigratorTest extends TestCase
             'notification_claim_token' => str_repeat('c', 64),
             'notification_claimed_at_epoch' => 1786442710,
             'notification_next_attempt_at_epoch' => 1786443000,
+        ])->execute();
+        foreach ([
+            [
+                'server_key' => str_repeat('1', 64),
+                'item_id' => 'z-ordinary-item',
+                'item_type' => 'Video',
+                'classification' => 'ordinary',
+                'attempts' => 0,
+                'next_retry_epoch' => null,
+                'updated_at_epoch' => 1786443100,
+            ],
+            [
+                'server_key' => str_repeat('1', 64),
+                'item_id' => 'a-theme-item',
+                'item_type' => 'Audio',
+                'classification' => 'theme',
+                'attempts' => 3,
+                'next_retry_epoch' => 1786443300,
+                'updated_at_epoch' => 1786443200,
+            ],
+        ] as $classification) {
+            $this->sourceConnection->insert('theme_item_classifications', $classification)->execute();
+        }
+        $this->sourceConnection->insert('theme_classification_state', [
+            'server_key' => str_repeat('1', 64),
+            'revision' => 7,
         ])->execute();
         $this->sourceConnection->insert('push_subscriptions', [
             'id' => 105,

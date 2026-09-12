@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mk\Framework\Jellyfin;
 
+use Mk\Framework\Config;
 use Mk\Framework\Container;
 use Mk\Framework\Database;
 use Mk\Framework\DatabasePlatform;
@@ -38,6 +39,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
     private \Dibi\Connection $db;
     private DatabasePlatform $platform;
     private ?MonitoringExclusions $monitoringExclusions;
+    private ThemePlaybackExclusions $themePlaybackExclusions;
     /** @var \WeakMap<\Dibi\Connection, true>|null */
     private static ?\WeakMap $schemaConnections = null;
 
@@ -57,12 +59,27 @@ final class PlayHistoryRepository implements LibraryHistorySource
         ?Database $database = null,
         ?MonitoringExclusions $monitoringExclusions = null,
         private ?\Closure $beforeImportWrite = null,
+        ?ThemePlaybackExclusions $themePlaybackExclusions = null,
     ) {
         $database ??= Container::db();
         $this->db = $database->getDibi();
         $this->platform = $database->getPlatform();
         $this->monitoringExclusions = $monitoringExclusions;
         $this->ensureSchema();
+        $this->themePlaybackExclusions = $themePlaybackExclusions ?? new ThemePlaybackExclusions(
+            $database,
+            ThemePlaybackExclusions::serverKey((string) Config::get('JELLYFIN_URL', '')),
+        );
+    }
+
+    public function themePlaybackExclusions(): ThemePlaybackExclusions
+    {
+        return $this->themePlaybackExclusions;
+    }
+
+    public function visibleHistorySql(string $historyAlias = 'play_history', bool $alsoPending = false): string
+    {
+        return $this->themePlaybackExclusions->visibilitySql($historyAlias, $alsoPending);
     }
 
     /**
@@ -82,6 +99,9 @@ final class PlayHistoryRepository implements LibraryHistorySource
             $itemId = (string) ($stream['itemId'] ?? '');
 
             if ($sessionKey === '' || $itemId === '') {
+                continue;
+            }
+            if ($this->themePlaybackExclusions->classification($itemId) === ThemePlaybackClassifier::THEME) {
                 continue;
             }
 
@@ -299,6 +319,18 @@ final class PlayHistoryRepository implements LibraryHistorySource
             ->where('started_at < %s', $since)
             ->execute();
 
+        // Confirmed theme media can never become a playback alert. Retire any
+        // old unnotified row once its classification becomes known.
+        $this->db->update('play_history', [
+            'notified' => 1,
+            'notification_claim_token' => null,
+            'notification_claimed_at_epoch' => null,
+            'notification_next_attempt_at_epoch' => null,
+        ])
+            ->where('notified = 0')
+            ->where('NOT (' . $this->visibleHistorySql() . ')')
+            ->execute();
+
         $rows = $this->db->select('*')
             ->from('play_history')
             ->where('notified = 0')
@@ -306,6 +338,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
             ->where('notification_attempts < %i', 3)
             ->where('notification_claim_token IS NULL')
             ->where('(notification_next_attempt_at_epoch IS NULL OR notification_next_attempt_at_epoch <= %i)', $nowEpoch)
+            ->where($this->visibleHistorySql())
             ->orderBy('started_at')->asc()
             ->fetchAll();
 
@@ -388,6 +421,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
         $selection = $this->db->select('COALESCE(SUM(COALESCE(watch_duration_sec, watched_sec)), 0)')
             ->from('play_history');
         $this->excludeConfiguredUsers($selection);
+        $this->excludeThemePlayback($selection);
 
         return (int) $selection
             ->where('started_at BETWEEN %s AND %s', $start, $end)
@@ -402,6 +436,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
 
         $selection = $this->db->select('COUNT(*)')->from('play_history');
         $this->excludeConfiguredUsers($selection);
+        $this->excludeThemePlayback($selection);
 
         return (int) $selection
             ->where('started_at BETWEEN %s AND %s', $start, $end)
@@ -558,6 +593,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
     {
         $selection = $this->db->select('COUNT(*)')->from('play_history');
         $this->excludeConfiguredUsers($selection);
+        $this->excludeThemePlayback($selection);
 
         return (int) $selection->fetchSingle();
     }
@@ -583,7 +619,11 @@ final class PlayHistoryRepository implements LibraryHistorySource
     public function itemPlaySummaries(): array
     {
         $excluded = $this->excludedStoredUserNames();
-        $where = $excluded === [] ? '' : ' WHERE ' . $this->exactUserExclusionSql($excluded);
+        $conditions = [$this->visibleHistorySql('play_history')];
+        if ($excluded !== []) {
+            $conditions[] = $this->exactUserExclusionSql($excluded);
+        }
+        $where = ' WHERE ' . implode(' AND ', $conditions);
 
         return $this->db->query(
             'SELECT item_id, library, plays, watch_sec, estimated_plays, started_at, series_name, item_name, season_ep, user_name
@@ -606,6 +646,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
     {
         $selection = $this->db->select(implode(', ', self::STATISTICS_COLUMNS))->from('play_history');
         $this->excludeConfiguredUsers($selection);
+        $this->excludeThemePlayback($selection);
 
         if ($start !== null) {
             $selection->where('started_at >= %s', $start->format('Y-m-d H:i:s'));
@@ -677,6 +718,8 @@ final class PlayHistoryRepository implements LibraryHistorySource
                 $skipped++;
             } elseif ($sessionKey === '' || $itemId === '') {
                 $skipped++;
+            } elseif ($this->themePlaybackExclusions->classification($itemId) === ThemePlaybackClassifier::THEME) {
+                $skipped++;
             } elseif ($this->overlapsLivePlay($row, $livePlays)) {
                 $skipped++;
             } elseif ($dryRun) {
@@ -742,6 +785,8 @@ final class PlayHistoryRepository implements LibraryHistorySource
             if ($this->exclusions()->excludes($this->nullableString($row['user_name'] ?? null))) {
                 $skipped++;
             } elseif ($sessionKey === '' || $itemId === '') {
+                $skipped++;
+            } elseif ($this->themePlaybackExclusions->classification($itemId) === ThemePlaybackClassifier::THEME) {
                 $skipped++;
             } elseif ($dryRun) {
                 $exists = $this->db->select('id')
@@ -988,8 +1033,9 @@ final class PlayHistoryRepository implements LibraryHistorySource
             : 'DISTINCT BINARY user_name AS user_name')
             ->from('play_history')
             ->where('user_name IS NOT NULL')
-            ->orderBy('user_name')
-            ->fetchPairs(null, 'user_name');
+            ->orderBy('user_name');
+        $this->excludeThemePlayback($pairs);
+        $pairs = $pairs->fetchPairs(null, 'user_name');
 
         $users = array_values(array_map('strval', $pairs));
 
@@ -1011,6 +1057,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
             ->where('library <> %s', '')
             ->orderBy('library');
         $this->excludeConfiguredUsers($pairs);
+        $this->excludeThemePlayback($pairs);
         $values = $pairs->fetchPairs(null, 'library');
 
         return array_values(array_map('strval', $values));
@@ -1029,6 +1076,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
             : 'DISTINCT BINARY client AS client')
             ->from('play_history');
         $this->excludeConfiguredUsers($selection);
+        $this->excludeThemePlayback($selection);
 
         $clients = [];
         foreach ($selection->fetchAll() as $row) {
@@ -1221,6 +1269,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
     {
         $selection = $this->db->select($columns)->from('play_history');
         $this->excludeConfiguredUsers($selection);
+        $this->excludeThemePlayback($selection);
 
         if ($filters->hasExactPeriod() && $filters->start !== null && $filters->end !== null) {
             $selection->where('started_at >= %s', $filters->start->format('Y-m-d H:i:s'));
@@ -1330,6 +1379,11 @@ final class PlayHistoryRepository implements LibraryHistorySource
                 ? '(user_name IS NULL OR user_name COLLATE BINARY <> %s)'
                 : '(user_name IS NULL OR BINARY user_name <> %s)', $name);
         }
+    }
+
+    private function excludeThemePlayback(\Dibi\Fluent $selection, bool $alsoPending = false): void
+    {
+        $selection->where($this->visibleHistorySql('play_history', $alsoPending));
     }
 
     /** @param list<string> $names */

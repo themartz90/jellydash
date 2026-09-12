@@ -229,6 +229,7 @@ final class LibraryOverviewService
             'cached' => false,
             'partial' => !$data['complete'],
             'monitoring_context' => ($this->exclusions ?? new MonitoringExclusions())->fingerprint(),
+            'theme_classification_context' => $this->themeClassificationContext(),
         ];
     }
 
@@ -282,6 +283,7 @@ final class LibraryOverviewService
             $this->failureCache()->write([
                 'retry_after' => $this->now() + $this->failureBackoff,
                 'monitoring_context' => ($this->exclusions ?? new MonitoringExclusions())->fingerprint(),
+                'theme_classification_context' => $this->themeClassificationContext(),
                 'message' => $message,
                 'payload' => $payload,
             ]);
@@ -300,8 +302,17 @@ final class LibraryOverviewService
 
         $context = (string) ($failure['monitoring_context'] ?? '');
         $expected = ($this->exclusions ?? new MonitoringExclusions())->fingerprint();
+        $themeContext = $this->themeClassificationContext();
 
-        return $context !== '' && hash_equals($expected, $context) ? $failure : null;
+        return $context !== ''
+            && hash_equals($expected, $context)
+            && $themeContext !== null
+            && ($themeContext === '' || (
+                is_string($failure['theme_classification_context'] ?? null)
+                && hash_equals($themeContext, $failure['theme_classification_context'])
+            ))
+                ? $failure
+                : null;
     }
 
     private function clearFailure(): void
@@ -367,8 +378,32 @@ final class LibraryOverviewService
         // Old cache files predate monitoring exclusions and represent an empty
         // rule set. Never reuse their viewing summaries with active exclusions.
         $context = $cached['monitoring_context'] ?? (new MonitoringExclusions([]))->fingerprint();
+        $themeContext = $this->themeClassificationContext();
 
-        return $context === $policy->fingerprint() ? $cached : null;
+        return $context === $policy->fingerprint()
+            && $themeContext !== null
+            && ($themeContext === '' || (
+                is_string($cached['theme_classification_context'] ?? null)
+                && hash_equals($themeContext, $cached['theme_classification_context'])
+            ))
+                ? $cached
+                : null;
+    }
+
+    private function themeClassificationContext(): ?string
+    {
+        try {
+            if ($this->history instanceof PlayHistoryRepository) {
+                return $this->history->themePlaybackExclusions()->fingerprint();
+            }
+            if ($this->history === null) {
+                return (new PlayHistoryRepository())->themePlaybackExclusions()->fingerprint();
+            }
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return '';
     }
 
     /**

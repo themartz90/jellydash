@@ -24,7 +24,17 @@ final class NowPlayingService
     {
         $client = $this->client ?? new JellyfinClient();
         $mapper = $this->mapper ?? new JellyfinSessionMapper($client->baseUrl());
-        $mapped = $mapper->map(($this->exclusions ?? new MonitoringExclusions())->filterSessions($client->sessions()));
+        $sessions = ($this->exclusions ?? new MonitoringExclusions())->filterSessions($client->sessions());
+        $history = null;
+        try {
+            $history = $this->history ?? new PlayHistoryRepository();
+            $sessions = $history->themePlaybackExclusions()->filterSessions($sessions, $client);
+        } catch (\Throwable $e) {
+            // Theme metadata and its local cache are optional to live playback.
+            // If either is unavailable, unknown sessions remain visible.
+            Log::logException($e);
+        }
+        $mapped = $mapper->map($sessions);
         /** @var array<int, array<string, mixed>> $streams */
         $streams = $mapped['streams'];
         $cycle = [
@@ -38,7 +48,7 @@ final class NowPlayingService
         ];
 
         try {
-            $history = $this->history ?? new PlayHistoryRepository();
+            $history ??= $this->history ?? new PlayHistoryRepository();
             $cycle = $this->historyCycle(
                 $streams,
                 fn (array $activeStreams): array => $this->resolveLibraries($activeStreams, $client, $history),
@@ -78,13 +88,16 @@ final class NowPlayingService
     {
         $client = $this->client ?? new JellyfinClient();
         $mapper = $this->mapper ?? new JellyfinSessionMapper($client->baseUrl());
-        /** @var array<int, array<string, mixed>> $streams */
-        $streams = $mapper->map(($this->exclusions ?? new MonitoringExclusions())->filterSessions($client->sessions()))['streams'];
-
         $history = $this->history ?? new PlayHistoryRepository();
+        $sessions = ($this->exclusions ?? new MonitoringExclusions())->filterSessions($client->sessions());
+        $sessions = $history->themePlaybackExclusions()->filterSessions($sessions, $client);
+        /** @var array<int, array<string, mixed>> $streams */
+        $streams = $mapper->map($sessions)['streams'];
+
         $streams = $this->resolveLibraries($streams, $client, $history);
 
         $history->logActiveStreams($streams);
+        $history->themePlaybackExclusions()->classifyHistoryBatch($client);
 
         return count($streams);
     }

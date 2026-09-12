@@ -268,6 +268,69 @@ final class JellyfinClient implements LibraryOverviewClient
     }
 
     /**
+     * Minimal item metadata used to distinguish theme media from ordinary
+     * Audio and Video items. Paths are returned only to the in-process
+     * classifier and are never persisted.
+     *
+     * @param array<int, string> $ids
+     * @return array<string, array{Type: string, ExtraType: string, Path: string}>
+     */
+    public function itemPlaybackMeta(array $ids): array
+    {
+        $unique = [];
+        foreach ($ids as $id) {
+            $normalized = self::normalizedItemId((string) $id);
+            if ($normalized !== '') {
+                $unique[$normalized] = trim((string) $id);
+            }
+        }
+
+        $meta = [];
+        foreach (array_chunk(array_values($unique), 100) as $chunk) {
+            $payload = $this->getJson('/Items?' . http_build_query(
+                [
+                    'Ids' => implode(',', $chunk),
+                    'Fields' => 'Path,MediaSources',
+                    'Limit' => count($chunk),
+                ],
+                '',
+                '&',
+                PHP_QUERY_RFC3986
+            ), 15);
+            $items = is_array($payload) && is_array($payload['Items'] ?? null)
+                ? array_values(array_filter($payload['Items'], 'is_array'))
+                : [];
+
+            foreach ($items as $item) {
+                $id = self::normalizedItemId((string) ($item['Id'] ?? ''));
+                if ($id === '') {
+                    continue;
+                }
+                $path = trim((string) ($item['Path'] ?? ''));
+                if ($path === '' && is_array($item['MediaSources'] ?? null)) {
+                    $sourcePaths = [];
+                    foreach ($item['MediaSources'] as $source) {
+                        if (is_array($source) && trim((string) ($source['Path'] ?? '')) !== '') {
+                            $sourcePath = trim((string) $source['Path']);
+                            $sourcePaths[$sourcePath] = $sourcePath;
+                        }
+                    }
+                    // Multiple source paths are ambiguous. Keep the item
+                    // pending instead of classifying it from an arbitrary one.
+                    $path = count($sourcePaths) === 1 ? (string) reset($sourcePaths) : '';
+                }
+                $meta[$id] = [
+                    'Type' => trim((string) ($item['Type'] ?? '')),
+                    'ExtraType' => trim((string) ($item['ExtraType'] ?? '')),
+                    'Path' => $path,
+                ];
+            }
+        }
+
+        return $meta;
+    }
+
+    /**
      * Original-case library name whose folder contains $path. Longest prefix
      * wins when libraries nest. Pass $locations / $names to avoid a Jellyfin
      * round-trip (keys of $locations are lowercased library names).
@@ -319,9 +382,9 @@ final class JellyfinClient implements LibraryOverviewClient
     /**
      * Jellyfin sometimes returns Ids with dashes and sometimes without.
      */
-    private function normalizedItemId(string $id): string
+    private static function normalizedItemId(string $id): string
     {
-        return strtolower(str_replace('-', '', trim($id)));
+        return ThemePlaybackExclusions::canonicalItemId($id);
     }
 
     /**

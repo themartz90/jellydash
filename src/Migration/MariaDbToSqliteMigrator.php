@@ -18,6 +18,8 @@ final class MariaDbToSqliteMigrator
         'auth_remember_tokens',
         'app_settings',
         'play_history',
+        'theme_item_classifications',
+        'theme_classification_state',
         'push_subscriptions',
         'seerr_requests',
         'system_status',
@@ -37,6 +39,8 @@ final class MariaDbToSqliteMigrator
         'auth_remember_tokens' => ['id', 'user_id', 'selector', 'validator_hash', 'expires_at', 'created_at', 'last_used_at'],
         'app_settings' => ['setting_key', 'setting_value', 'updated_at'],
         'play_history' => ['id', 'session_key', 'item_id', 'item_type', 'play_method', 'watched_sec', 'runtime_sec', 'started_at', 'updated_at', 'is_finished'],
+        'theme_item_classifications' => ['server_key', 'item_id', 'item_type', 'classification', 'attempts', 'next_retry_epoch', 'updated_at_epoch'],
+        'theme_classification_state' => ['server_key', 'revision'],
         'push_subscriptions' => ['id', 'endpoint', 'endpoint_hash', 'p256dh', 'auth', 'failure_count', 'created_at'],
         'seerr_requests' => ['id', 'request_id', 'media_type', 'tmdb_id', 'title', 'request_status', 'media_status', 'is_4k', 'requested_at', 'notified', 'created_at'],
         'system_status' => ['source_id', 'component', 'status'],
@@ -150,9 +154,12 @@ final class MariaDbToSqliteMigrator
             throw new \RuntimeException("No compatible columns found for {$table}.");
         }
 
-        $orderBy = $table === 'system_status'
-            ? ['source_id', 'component']
-            : [in_array('id', $columns, true) ? 'id' : $columns[0]];
+        $orderBy = match ($table) {
+            'system_status' => ['source_id', 'component'],
+            'theme_item_classifications' => ['server_key', 'item_id'],
+            'theme_classification_state' => ['server_key'],
+            default => [in_array('id', $columns, true) ? 'id' : $columns[0]],
+        };
         $expectedSourceCount = (int) $this->source->getDibi()
             ->select('COUNT(*)')->from($table)->fetchSingle();
         [$sourceCount, $sourceDigest] = $this->copyRows($table, $columns, $orderBy, $destination);

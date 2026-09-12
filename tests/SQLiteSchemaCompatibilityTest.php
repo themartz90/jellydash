@@ -8,6 +8,7 @@ use Mk\Framework\Container;
 use Mk\Framework\Database;
 use Mk\Framework\Health\WorkerStatusRepository;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
+use Mk\Framework\Jellyfin\ThemePlaybackExclusions;
 use Mk\Framework\Jellyseerr\SeerrRequestRepository;
 use Mk\Framework\Push\PushSubscriptionRepository;
 use PHPUnit\Framework\TestCase;
@@ -54,6 +55,8 @@ final class SQLiteSchemaCompatibilityTest extends TestCase
             'push_subscriptions',
             'seerr_requests',
             'system_status',
+            'theme_classification_state',
+            'theme_item_classifications',
             'users',
         ], $this->tableNames());
 
@@ -64,6 +67,7 @@ final class SQLiteSchemaCompatibilityTest extends TestCase
         ], $this->namedIndexes('play_history'));
         $this->assertSame(['idx_requested_at'], $this->namedIndexes('seerr_requests'));
         $this->assertSame(['idx_auth_remember_user'], $this->namedIndexes('auth_remember_tokens'));
+        $this->assertSame(['idx_theme_retry'], $this->namedIndexes('theme_item_classifications'));
     }
 
     public function testEnvironmentConnectionUsesSQLiteSafetySettings(): void
@@ -221,6 +225,7 @@ final class SQLiteSchemaCompatibilityTest extends TestCase
         $this->database->ensureAuthSchema();
         AppSettings::set('schema_test', 'ok');
         new PlayHistoryRepository($this->database);
+        new ThemePlaybackExclusions($this->database);
         new PushSubscriptionRepository($this->database);
         new SeerrRequestRepository($this->database);
         WorkerStatusRepository::ensureSchema($this->database);
