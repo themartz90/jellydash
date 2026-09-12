@@ -1308,6 +1308,10 @@ final class PlayHistoryRepository implements LibraryHistorySource
             $this->applyMethodFilter($selection, $filters->method);
         }
 
+        if ($filters->hasMediaScope()) {
+            $this->applyMediaFilter($selection, $filters);
+        }
+
         if ($filters->search !== '') {
             $like = '%' . $filters->search . '%';
             $selection->where(
@@ -1321,6 +1325,32 @@ final class PlayHistoryRepository implements LibraryHistorySource
         }
 
         return $selection;
+    }
+
+    private function applyMediaFilter(\Dibi\Fluent $selection, HistoryFilters $filters): void
+    {
+        if ($filters->mediaType === 'item') {
+            $selection->where($this->platform->isSqlite()
+                ? 'item_id COLLATE BINARY = %s'
+                : 'BINARY item_id = %s', $filters->mediaId);
+            $selection->where($this->platform->isSqlite()
+                ? 'item_type COLLATE BINARY = %s'
+                : 'BINARY item_type = %s', $filters->mediaItemType);
+
+            return;
+        }
+
+        $selection->where($this->platform->isSqlite()
+            ? 'item_type COLLATE BINARY = %s'
+            : 'BINARY item_type = %s', 'Episode');
+        $selection->where($this->platform->isSqlite()
+            ? 'series_name COLLATE BINARY = %s'
+            : 'BINARY series_name = %s', $filters->mediaTitle);
+        $selection->where($this->platform->isSqlite()
+            ? 'library COLLATE BINARY = %s'
+            : 'BINARY library = %s', $filters->mediaLibrary);
+        $selection->where('library_resolved_at IS NOT NULL');
+        $selection->where('library_resolved_at <> %s', '');
     }
 
     private function applyMethodFilter(\Dibi\Fluent $selection, string $method): void

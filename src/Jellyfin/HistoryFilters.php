@@ -17,6 +17,11 @@ final readonly class HistoryFilters
         public int $offset = 0,
         public ?\DateTimeImmutable $start = null,
         public ?\DateTimeImmutable $end = null,
+        public string $mediaType = '',
+        public string $mediaId = '',
+        public string $mediaItemType = '',
+        public string $mediaTitle = '',
+        public string $mediaLibrary = '',
     ) {
     }
 
@@ -48,6 +53,29 @@ final readonly class HistoryFilters
             }
         }
 
+        $mediaType = trim(self::queryString($query, 'media_type'));
+        $mediaId = trim(self::queryString($query, 'media_id'));
+        $mediaItemType = trim(self::queryString($query, 'media_item_type'));
+        $mediaTitle = trim(self::queryString($query, 'media_title'));
+        $mediaLibrary = trim(self::queryString($query, 'media_library'));
+        if ($mediaType === 'item'
+            && $mediaId !== ''
+            && $mediaItemType !== ''
+            && $mediaItemType !== 'Episode'
+            && $mediaTitle !== ''
+        ) {
+            $mediaLibrary = '';
+        } elseif ($mediaType === 'series' && $mediaTitle !== '' && $mediaLibrary !== '') {
+            $mediaId = '';
+            $mediaItemType = '';
+        } else {
+            $mediaType = '';
+            $mediaId = '';
+            $mediaItemType = '';
+            $mediaTitle = '';
+            $mediaLibrary = '';
+        }
+
         return new self(
             search: trim(self::queryString($query, 'search')),
             user: trim(self::queryString($query, 'user')),
@@ -57,7 +85,27 @@ final readonly class HistoryFilters
             range: $range,
             start: $start,
             end: $end,
+            mediaType: $mediaType,
+            mediaId: $mediaId,
+            mediaItemType: $mediaItemType,
+            mediaTitle: $mediaTitle,
+            mediaLibrary: $mediaLibrary,
         );
+    }
+
+    public function hasMediaScope(): bool
+    {
+        return ($this->mediaType === 'item'
+                && $this->mediaId !== ''
+                && $this->mediaItemType !== ''
+                && $this->mediaItemType !== 'Episode'
+                && $this->mediaTitle !== ''
+                && $this->mediaLibrary === '')
+            || ($this->mediaType === 'series'
+                && $this->mediaId === ''
+                && $this->mediaItemType === ''
+                && $this->mediaTitle !== ''
+                && $this->mediaLibrary !== '');
     }
 
     public function hasExactPeriod(): bool
@@ -80,27 +128,37 @@ final readonly class HistoryFilters
     /** @return array<string, string> */
     public function queryParameters(): array
     {
+        $media = $this->hasMediaScope() ? [
+            'media_type' => $this->mediaType,
+            'media_id' => $this->mediaId,
+            'media_item_type' => $this->mediaItemType,
+            'media_title' => $this->mediaTitle,
+            'media_library' => $this->mediaLibrary,
+        ] : [];
+
         if ($this->hasExactPeriod()) {
-            return array_filter([
+            return array_filter(array_merge([
                 'search' => $this->search,
                 'user' => $this->user,
                 'library' => $this->library,
                 'client' => $this->client,
                 'method' => $this->method,
+            ], $media, [
                 'range' => 'custom',
                 'start' => $this->start?->format('Y-m-d') ?? '',
                 'end' => $this->end?->format('Y-m-d') ?? '',
-            ], static fn (string $value): bool => $value !== '');
+            ]), static fn (string $value): bool => $value !== '');
         }
 
-        return array_filter([
+        return array_filter(array_merge([
             'search' => $this->search,
             'user' => $this->user,
             'library' => $this->library,
             'client' => $this->client,
             'method' => $this->method,
+        ], $media, [
             'range' => $this->range !== '30' ? $this->range : '',
-        ], static fn (string $value): bool => $value !== '');
+        ]), static fn (string $value): bool => $value !== '');
     }
 
     /**

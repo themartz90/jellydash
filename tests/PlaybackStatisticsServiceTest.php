@@ -96,11 +96,11 @@ final class PlaybackStatisticsServiceTest extends TestCase
         );
         $this->assertSame($stats['topUsers'][0]['href'], $stats['usersTable'][0]['href']);
         $this->assertSame(
-            '/history?search=Tosh.0%20%26%20Friends&range=custom&start=2026-03-02&end=2026-04-01',
+            '/history?media_type=item&media_id=drilldown-title&media_item_type=Movie&media_title=Tosh.0%20%26%20Friends&range=custom&start=2026-03-02&end=2026-04-01',
             $stats['trending'][0]['href'],
         );
         $this->assertSame(
-            '/history?search=Tosh.0%20%26%20Friends&range=all',
+            '/history?media_type=item&media_id=drilldown-title&media_item_type=Movie&media_title=Tosh.0%20%26%20Friends&range=all',
             $stats['mostWatched']['movies'][0]['href'],
         );
 
@@ -108,7 +108,7 @@ final class PlaybackStatisticsServiceTest extends TestCase
         $this->assertSame('/history?range=all', $all['kpis'][1]['href']);
         $this->assertSame('/history?user=Maya%20%26%20Co&range=all', $all['usersTable'][0]['href']);
         $this->assertSame(
-            '/history?search=Tosh.0%20%26%20Friends&range=all',
+            '/history?media_type=item&media_id=drilldown-title&media_item_type=Movie&media_title=Tosh.0%20%26%20Friends&range=all',
             $all['trending'][0]['href'],
         );
     }
@@ -506,6 +506,13 @@ final class PlaybackStatisticsServiceTest extends TestCase
         $this->assertIsArray($groups);
         $this->assertCount(2, $groups);
         $this->assertEqualsCanonicalizing(['crash-1996', 'crash-2004'], array_column($groups, 'itemId'));
+
+        $cards = (new ReflectionMethod($service, 'titleCards'))->invoke($service, $groups, 'all');
+        $this->assertIsArray($cards);
+        $this->assertEqualsCanonicalizing([
+            '/history?media_type=item&media_id=crash-1996&media_item_type=Movie&media_title=Crash&range=all',
+            '/history?media_type=item&media_id=crash-2004&media_item_type=Movie&media_title=Crash&range=all',
+        ], array_column($cards, 'href'));
     }
 
     public function testSameNamedSeriesInConfirmedLibrariesStayDistinct(): void
@@ -519,6 +526,30 @@ final class PlaybackStatisticsServiceTest extends TestCase
 
         $this->assertIsArray($groups);
         $this->assertCount(2, $groups);
+
+        $cards = (new ReflectionMethod($service, 'titleCards'))->invoke($service, $groups, 'all');
+        $this->assertIsArray($cards);
+        $this->assertEqualsCanonicalizing([
+            '/history?media_type=series&media_title=Shared%20Show&media_library=TV&range=all',
+            '/history?media_type=series&media_title=Shared%20Show&media_library=Kids%20TV&range=all',
+        ], array_column($cards, 'href'));
+    }
+
+    public function testUnresolvedSeriesAndItemsWithoutIdsDoNotOfferBroadHistoryLinks(): void
+    {
+        $service = new PlaybackStatisticsService();
+        $groups = (new ReflectionMethod($service, 'groupTitles'))->invoke($service, [
+            $this->titleRow('2026-08-20 10:00:00', 'episode-a', 'TV', '', 'Episode', 'Shared Show', 'Episode 1'),
+            $this->titleRow('2026-08-21 10:00:00', '', 'Movies', '2026-08-21 10:00:00', 'Movie', '', 'Crash'),
+        ]);
+        $this->assertIsArray($groups);
+
+        $cards = (new ReflectionMethod($service, 'titleCards'))->invoke($service, $groups, 'all');
+        $this->assertIsArray($cards);
+        $this->assertCount(2, $cards);
+        foreach ($cards as $card) {
+            $this->assertArrayNotHasKey('href', $card);
+        }
     }
 
     public function testExclusionsRemoveRowsBeforeSameTitleGroupsAreBuilt(): void

@@ -22,11 +22,24 @@
             </span>
         </div>
         <p data-history-summary>{% if summary.shown > 0 %}Showing {{ summary.from }}-{{ summary.to }} of {{ summary.filtered_total }} plays{% else %}Showing 0 of {{ summary.filtered_total }} plays{% endif %}</p>
+        {% if filters.has_media %}
+            <div class="history-media-scope">
+                <span>{{ filters.media_type == 'series' ? 'Series' : 'Title' }}: <strong>{{ filters.media_title }}</strong>{% if filters.media_library != '' %}<small>{{ filters.media_library }}</small>{% endif %}</span>
+                <a href="{{ filters.media_clear_url }}" aria-label="Remove exact title filter">Clear</a>
+            </div>
+        {% endif %}
     </div>
     <form class="filter-bar" method="get" action="/history" data-history-filter-form>
         {% if filters.is_exact %}
             <input type="hidden" name="start" value="{{ filters.start }}">
             <input type="hidden" name="end" value="{{ filters.end }}">
+        {% endif %}
+        {% if filters.has_media %}
+            <input type="hidden" name="media_type" value="{{ filters.media_type }}">
+            <input type="hidden" name="media_id" value="{{ filters.media_id }}">
+            <input type="hidden" name="media_item_type" value="{{ filters.media_item_type }}">
+            <input type="hidden" name="media_title" value="{{ filters.media_title }}">
+            <input type="hidden" name="media_library" value="{{ filters.media_library }}">
         {% endif %}
         <label class="search-control" for="history-search">
             <span>Search</span>

@@ -1640,6 +1640,55 @@ svg.icon-filled {
     gap: 5px;
 }
 
+.history-media-scope,
+.history-export-scope {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    width: fit-content;
+    max-width: 100%;
+    margin-top: 8px;
+    padding: 5px 8px;
+    color: rgba(255, 255, 255, .72);
+    font-size: 11px;
+    border: 1px solid rgba(124, 92, 255, .3);
+    border-radius: 8px;
+    background: rgba(124, 92, 255, .09);
+}
+
+.history-media-scope span,
+.history-export-scope {
+    min-width: 0;
+}
+
+.history-media-scope strong,
+.history-export-scope strong {
+    color: var(--color-text);
+}
+
+.history-media-scope small,
+.history-export-scope small {
+    margin-left: 6px;
+    color: rgba(255, 255, 255, .48);
+}
+
+.history-media-scope a {
+    flex: 0 0 auto;
+    color: var(--color-purple-soft);
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.history-media-scope a:hover,
+.history-media-scope a:focus-visible {
+    color: #fff;
+    text-decoration: underline;
+}
+
+.history-export-scope {
+    margin: 0;
+}
+
 .history-action-link {
     display: inline-flex;
     align-items: center;
@@ -4156,7 +4205,7 @@ a.history-pager-btn:hover {
     transition: transform .18s ease, box-shadow .18s ease;
 }
 
-.trending-card:hover .trending-poster {
+a.trending-card:hover .trending-poster {
     transform: translateY(-3px);
     box-shadow: 0 22px 40px -22px rgba(0, 0, 0, .95);
 }

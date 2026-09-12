@@ -18,6 +18,14 @@
                 <input type="hidden" name="start" value="{{ filters.start }}">
                 <input type="hidden" name="end" value="{{ filters.end }}">
             {% endif %}
+            {% if filters.has_media %}
+                <input type="hidden" name="media_type" value="{{ filters.media_type }}" data-history-media-field>
+                <input type="hidden" name="media_id" value="{{ filters.media_id }}" data-history-media-field>
+                <input type="hidden" name="media_item_type" value="{{ filters.media_item_type }}" data-history-media-field>
+                <input type="hidden" name="media_title" value="{{ filters.media_title }}" data-history-media-field>
+                <input type="hidden" name="media_library" value="{{ filters.media_library }}" data-history-media-field>
+                <p class="history-export-scope" data-history-export-media-scope>{{ filters.media_type == 'series' ? 'Series' : 'Title' }}: <strong>{{ filters.media_title }}</strong>{% if filters.media_library != '' %}<small>{{ filters.media_library }}</small>{% endif %}</p>
+            {% endif %}
             <label class="history-export-field">
                 <span>Search</span>
                 <input type="search" name="search" value="{{ filters.search }}" placeholder="Title, user, client or device" autocomplete="off">

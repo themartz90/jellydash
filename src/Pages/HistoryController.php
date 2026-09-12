@@ -31,6 +31,11 @@ final class HistoryController extends Controller
             offset: ($page - 1) * $filters->limit,
             start: $filters->start,
             end: $filters->end,
+            mediaType: $filters->mediaType,
+            mediaId: $filters->mediaId,
+            mediaItemType: $filters->mediaItemType,
+            mediaTitle: $filters->mediaTitle,
+            mediaLibrary: $filters->mediaLibrary,
         );
         $rows = $repository->historyRows($filters);
         $pages = max(1, (int) ceil($totalFiltered / max(1, $filters->limit)));
@@ -57,6 +62,13 @@ final class HistoryController extends Controller
                 'period_label' => $this->periodLabel($filters),
                 'start' => $filters->start?->format('Y-m-d') ?? '',
                 'end' => $filters->end?->format('Y-m-d') ?? '',
+                'has_media' => $filters->hasMediaScope(),
+                'media_type' => $filters->mediaType,
+                'media_id' => $filters->mediaId,
+                'media_item_type' => $filters->mediaItemType,
+                'media_title' => $filters->mediaTitle,
+                'media_library' => $filters->mediaLibrary,
+                'media_clear_url' => $this->mediaClearUrl($filters),
             ],
         ]);
     }
@@ -98,6 +110,20 @@ final class HistoryController extends Controller
         if ($page > 1) {
             $query['p'] = (string) $page;
         }
+
+        return '/history' . ($query === [] ? '' : '?' . http_build_query($query));
+    }
+
+    private function mediaClearUrl(HistoryFilters $filters): string
+    {
+        $query = $filters->queryParameters();
+        unset(
+            $query['media_type'],
+            $query['media_id'],
+            $query['media_item_type'],
+            $query['media_title'],
+            $query['media_library'],
+        );
 
         return '/history' . ($query === [] ? '' : '?' . http_build_query($query));
     }

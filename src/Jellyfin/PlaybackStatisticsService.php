@@ -264,11 +264,11 @@ final class PlaybackStatisticsService
             $resolvedAt = trim((string) ($row['library_resolved_at'] ?? ''));
             $libraryConfirmed = $library !== '' && $resolvedAt !== '';
             if ($isEpisode) {
-                $libraryKey = $libraryConfirmed ? mb_strtolower($library) . ':' : '';
-                $key = 'series:' . $libraryKey . mb_strtolower($series);
+                $libraryKey = $libraryConfirmed ? $library . ':' : '';
+                $key = 'series:' . $libraryKey . $series;
             } else {
-                $identity = $itemId !== '' ? mb_strtolower($itemId) : 'title:' . mb_strtolower($title);
-                $key = 'item:' . mb_strtolower($type) . ':' . $identity;
+                $identity = $itemId !== '' ? $itemId : 'title:' . $title;
+                $key = 'item:' . $type . ':' . $identity;
             }
 
             if (!isset($groups[$key])) {
@@ -330,7 +330,7 @@ final class PlaybackStatisticsService
             $userCount = count($groupUsers);
             $plays = (int) $group['plays'];
 
-            $items[] = [
+            $item = [
                 'title' => (string) $group['title'],
                 'itemId' => (string) $group['itemId'],
                 'plays' => $plays,
@@ -339,15 +339,32 @@ final class PlaybackStatisticsService
                 'meta' => $plays . ($plays === 1 ? ' play' : ' plays')
                     . ' · ' . $userCount . ($userCount === 1 ? ' viewer' : ' viewers'),
                 'poster' => $this->poster((string) $group['itemId'], (bool) $group['isEpisode']),
-                'href' => $this->historyUrl(
-                    $range,
-                    $periodStart,
-                    $periodEnd,
-                    search: (string) $group['title'],
-                ),
                 '_library' => (string) $group['library'],
                 '_libraryConfirmed' => (bool) $group['libraryConfirmed'],
             ];
+
+            if ((bool) $group['isEpisode'] && (bool) $group['libraryConfirmed']) {
+                $item['href'] = $this->historyUrl(
+                    $range,
+                    $periodStart,
+                    $periodEnd,
+                    mediaType: 'series',
+                    mediaTitle: (string) $group['title'],
+                    mediaLibrary: (string) $group['library'],
+                );
+            } elseif (!(bool) $group['isEpisode'] && trim((string) $group['itemId']) !== '') {
+                $item['href'] = $this->historyUrl(
+                    $range,
+                    $periodStart,
+                    $periodEnd,
+                    mediaType: 'item',
+                    mediaId: (string) $group['itemId'],
+                    mediaItemType: (string) $group['type'],
+                    mediaTitle: (string) $group['title'],
+                );
+            }
+
+            $items[] = $item;
         }
 
         return $items;
@@ -542,6 +559,11 @@ final class PlaybackStatisticsService
         ?string $search = null,
         ?string $client = null,
         ?string $method = null,
+        ?string $mediaType = null,
+        ?string $mediaId = null,
+        ?string $mediaItemType = null,
+        ?string $mediaTitle = null,
+        ?string $mediaLibrary = null,
     ): string {
         $query = [];
 
@@ -559,6 +581,26 @@ final class PlaybackStatisticsService
 
         if ($method !== null) {
             $query['method'] = $method;
+        }
+
+        if ($mediaType !== null) {
+            $query['media_type'] = $mediaType;
+        }
+
+        if ($mediaId !== null) {
+            $query['media_id'] = $mediaId;
+        }
+
+        if ($mediaItemType !== null) {
+            $query['media_item_type'] = $mediaItemType;
+        }
+
+        if ($mediaTitle !== null) {
+            $query['media_title'] = $mediaTitle;
+        }
+
+        if ($mediaLibrary !== null) {
+            $query['media_library'] = $mediaLibrary;
         }
 
         if ($range === 'all') {

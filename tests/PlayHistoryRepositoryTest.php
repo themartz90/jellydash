@@ -432,6 +432,59 @@ final class PlayHistoryRepositoryTest extends TestCase
         $this->assertContains('movies', $this->repository->libraries());
     }
 
+    public function testExactMediaScopesAreSharedByRowsTotalsAggregatesAndExport(): void
+    {
+        foreach ([
+            ['movie-a', 'movie-a', 'Movie', 'Crash', null, 'Movies', '2026-09-10 10:00:00'],
+            ['movie-b', 'movie-b', 'Movie', 'Crash', null, 'Movies', '2026-09-10 10:01:00'],
+            ['movie-id-audio', 'movie-a', 'Audio', 'Audio with reused ID', null, 'Music', '2026-09-10 10:01:30'],
+            ['series-tv', 'episode-tv', 'Episode', 'Episode 1', 'Shared Show', 'TV', '2026-09-10 10:02:00'],
+            ['series-kids', 'episode-kids', 'Episode', 'Episode 2', 'Shared Show', 'Kids TV', '2026-09-10 10:03:00'],
+            ['series-unresolved', 'episode-unresolved', 'Episode', 'Episode 3', 'Shared Show', 'Kids TV', null],
+        ] as [$suffix, $itemId, $type, $itemName, $seriesName, $library, $resolvedAt]) {
+            $this->insertPlay([
+                'session_key' => 'phpunit-media-scope-' . $suffix,
+                'item_id' => $itemId,
+                'item_type' => $type,
+                'item_name' => $itemName,
+                'series_name' => $seriesName,
+                'library' => $library,
+                'library_resolved_at' => $resolvedAt,
+                'watched_sec' => 60,
+                'started_at' => '2026-09-10 12:00:00',
+            ]);
+        }
+
+        $movie = new HistoryFilters(
+            range: 'all',
+            mediaType: 'item',
+            mediaId: 'movie-a',
+            mediaItemType: 'Movie',
+            mediaTitle: 'Crash',
+        );
+        $this->assertSame(['phpunit-media-scope-movie-a'], array_map(
+            static fn (\Dibi\Row $row): string => (string) $row['session_key'],
+            $this->repository->historyRows($movie),
+        ));
+        $this->assertSame(1, $this->repository->historyTotal($movie));
+        $this->assertSame(1, $this->repository->historyAggregate($movie)['plays']);
+        $this->assertCount(1, iterator_to_array($this->repository->historyExportRows($movie)));
+
+        $series = new HistoryFilters(
+            range: 'all',
+            mediaType: 'series',
+            mediaTitle: 'Shared Show',
+            mediaLibrary: 'Kids TV',
+        );
+        $this->assertSame(['phpunit-media-scope-series-kids'], array_map(
+            static fn (\Dibi\Row $row): string => (string) $row['session_key'],
+            $this->repository->historyRows($series),
+        ));
+        $this->assertSame(1, $this->repository->historyTotal($series));
+        $this->assertSame(1, $this->repository->historyAggregate($series)['plays']);
+        $this->assertCount(1, iterator_to_array($this->repository->historyExportRows($series)));
+    }
+
     public function testUniqueUserAggregateSeparatesAnonymousNamedUnknownAndCaseVariants(): void
     {
         foreach ([

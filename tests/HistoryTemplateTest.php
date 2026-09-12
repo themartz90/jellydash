@@ -41,6 +41,11 @@ final class HistoryTemplateTest extends TestCase
         $this->assertStringNotContainsString('option value="Movies"', $template);
         $this->assertStringContainsString('Watch time', $template);
         $this->assertStringNotContainsString('Watch time shown', $template);
+        $this->assertStringContainsString('class="history-media-scope"', $template);
+        $this->assertStringContainsString('aria-label="Remove exact title filter"', $template);
+        foreach (['media_type', 'media_id', 'media_item_type', 'media_title', 'media_library'] as $name) {
+            $this->assertStringContainsString('name="' . $name . '"', $template);
+        }
 
         $empty = file_get_contents(TEMPLATES_DIR . '/history/_empty.twig');
         $this->assertIsString($empty);
@@ -75,6 +80,11 @@ final class HistoryTemplateTest extends TestCase
         $this->assertStringContainsString('target="history-export-download-frame"', $dialog);
         $this->assertStringContainsString('data-history-export-frame hidden', $dialog);
         $this->assertStringContainsString('CSV format v2', $dialog);
+        foreach (['media_type', 'media_id', 'media_item_type', 'media_title', 'media_library'] as $name) {
+            $this->assertStringContainsString('name="' . $name . '"', $dialog);
+        }
+        $this->assertStringContainsString('data-history-media-field', $dialog);
+        $this->assertStringContainsString('data-history-export-media-scope', $dialog);
 
         $this->assertStringContainsString("values.set('preview', '1')", $script);
         $this->assertStringContainsString("fetch('/api/history-export.php?'", $script);
@@ -84,6 +94,8 @@ final class HistoryTemplateTest extends TestCase
         $this->assertStringContainsString("form.elements.range.value = 'all'", $script);
         $this->assertStringContainsString("form.elements.client.value = ''", $script);
         $this->assertStringContainsString("form.elements.method.value = ''", $script);
+        $this->assertStringContainsString("form.querySelectorAll('[data-history-media-field]')", $script);
+        $this->assertStringContainsString('mediaScope.hidden = true', $script);
         $this->assertStringContainsString("values.get('range') !== 'custom'", $script);
         $this->assertStringContainsString("event.formData.get('range') !== 'custom'", $filterScript);
         $this->assertStringContainsString('window.setTimeout(closeDialog, 0)', $script);
@@ -120,12 +132,15 @@ final class HistoryTemplateTest extends TestCase
                 range: 'custom',
                 start: new DateTimeImmutable('2026-03-02'),
                 end: new DateTimeImmutable('2026-04-01'),
+                mediaType: 'series',
+                mediaTitle: 'Shared Show',
+                mediaLibrary: 'Kids TV',
             ),
             2,
         );
 
         $this->assertSame(
-            '/history?user=Martin&client=Jellyfin+Web&method=direct-stream&range=custom&start=2026-03-02&end=2026-04-01&p=2',
+            '/history?user=Martin&client=Jellyfin+Web&method=direct-stream&media_type=series&media_title=Shared+Show&media_library=Kids+TV&range=custom&start=2026-03-02&end=2026-04-01&p=2',
             $url,
         );
     }

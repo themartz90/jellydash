@@ -13,7 +13,7 @@ use Twig\Loader\FilesystemLoader;
  */
 class View
 {
-    public const ASSET_REVISION = '20260910-audit-remediation-2';
+    public const ASSET_REVISION = '20260912-statistics-title-drilldowns';
 
     private Environment $twig;
 

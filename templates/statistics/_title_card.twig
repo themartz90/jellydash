@@ -1,7 +1,11 @@
 {# Poster card shared by the Trending and Most Watched strips.
-   Expects: item (title/poster/href/meta/multi/users), rank (1-based),
+   Expects: item (title/poster/meta/multi/users, optional href), rank (1-based),
    optional defer_poster for cards hidden until disclosure. #}
+{% if item.href is defined %}
 <a class="trending-card{{ item.multi ? ' is-hot' : '' }}" href="{{ item.href }}">
+{% else %}
+<article class="trending-card is-static{{ item.multi ? ' is-hot' : '' }}">
+{% endif %}
     <div class="trending-poster"{% if defer_poster|default(false) %} data-deferred-poster="{{ item.poster }}"{% else %} style="background-image: {{ item.poster }}"{% endif %}>
         <span class="trending-rank">{{ rank }}</span>
         {% if item.multi %}
@@ -15,4 +19,4 @@
     </div>
     <strong class="trending-title">{{ item.title }}</strong>
     <span class="trending-meta">{{ item.meta }}</span>
-</a>
+{% if item.href is defined %}</a>{% else %}</article>{% endif %}

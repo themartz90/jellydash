@@ -10,6 +10,7 @@
     var allButton = dialog && dialog.querySelector('[data-history-export-all]');
     var closeButtons = dialog && dialog.querySelectorAll('[data-history-export-close]');
     var downloadFrame = dialog && dialog.querySelector('[data-history-export-frame]');
+    var mediaScope = dialog && dialog.querySelector('[data-history-export-media-scope]');
     var timer = null;
     var requestController = null;
     var downloadRequested = false;
@@ -129,6 +130,12 @@
         }
     });
     allButton.addEventListener('click', function () {
+        form.querySelectorAll('[data-history-media-field]').forEach(function (field) {
+            field.value = '';
+        });
+        if (mediaScope) {
+            mediaScope.hidden = true;
+        }
         form.elements.search.value = '';
         form.elements.user.value = '';
         form.elements.library.value = '';

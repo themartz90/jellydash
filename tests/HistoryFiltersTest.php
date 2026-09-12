@@ -120,4 +120,105 @@ final class HistoryFiltersTest extends TestCase
         $this->assertSame('', HistoryFilters::fromQuery(['client' => ['Web']])->client);
         $this->assertSame(' web ', HistoryFilters::fromQuery(['client' => ' web '])->client);
     }
+
+    public function testCompleteItemAndSeriesScopesAreTypedAndPreserved(): void
+    {
+        $item = HistoryFilters::fromQuery([
+            'media_type' => 'item',
+            'media_id' => 'crash-1996',
+            'media_item_type' => 'Movie',
+            'media_title' => 'Crash',
+            'media_library' => 'Ignored for items',
+            'range' => 'all',
+        ]);
+        $this->assertTrue($item->hasMediaScope());
+        $this->assertSame('item', $item->mediaType);
+        $this->assertSame('', $item->mediaLibrary);
+        $this->assertSame([
+            'media_type' => 'item',
+            'media_id' => 'crash-1996',
+            'media_item_type' => 'Movie',
+            'media_title' => 'Crash',
+            'range' => 'all',
+        ], $item->queryParameters());
+
+        $series = HistoryFilters::fromQuery([
+            'media_type' => 'series',
+            'media_id' => 'ignored-for-series',
+            'media_item_type' => 'Movie',
+            'media_title' => 'Shared Show',
+            'media_library' => 'Kids TV',
+        ]);
+        $this->assertTrue($series->hasMediaScope());
+        $this->assertSame('', $series->mediaId);
+        $this->assertSame('', $series->mediaItemType);
+        $this->assertSame([
+            'media_type' => 'series',
+            'media_title' => 'Shared Show',
+            'media_library' => 'Kids TV',
+        ], $series->queryParameters());
+    }
+
+    /** @param array<string, mixed> $query */
+    #[DataProvider('invalidMediaScopeProvider')]
+    public function testPartialOrUnsupportedMediaScopeIsDiscarded(array $query): void
+    {
+        $filters = HistoryFilters::fromQuery($query + ['search' => 'Crash', 'range' => 'all']);
+
+        $this->assertFalse($filters->hasMediaScope());
+        $this->assertSame('', $filters->mediaType);
+        $this->assertSame('', $filters->mediaId);
+        $this->assertSame('', $filters->mediaItemType);
+        $this->assertSame('', $filters->mediaTitle);
+        $this->assertSame('', $filters->mediaLibrary);
+        $this->assertSame(['search' => 'Crash', 'range' => 'all'], $filters->queryParameters());
+    }
+
+    public function testManuallyConstructedPartialMediaScopeIsNotSerialized(): void
+    {
+        $filters = new HistoryFilters(
+            range: 'all',
+            mediaType: 'series',
+            mediaTitle: 'Shared Show',
+        );
+
+        $this->assertFalse($filters->hasMediaScope());
+        $this->assertSame(['range' => 'all'], $filters->queryParameters());
+    }
+
+    /** @return iterable<string, array{array<string, mixed>}> */
+    public static function invalidMediaScopeProvider(): iterable
+    {
+        yield 'item without id' => [[
+            'media_type' => 'item',
+            'media_item_type' => 'Movie',
+            'media_title' => 'Crash',
+        ]];
+        yield 'item without type' => [[
+            'media_type' => 'item',
+            'media_id' => 'crash-1996',
+            'media_title' => 'Crash',
+        ]];
+        yield 'item without display title' => [[
+            'media_type' => 'item',
+            'media_id' => 'crash-1996',
+            'media_item_type' => 'Movie',
+        ]];
+        yield 'series without confirmed library' => [[
+            'media_type' => 'series',
+            'media_title' => 'Shared Show',
+        ]];
+        yield 'unsupported type' => [[
+            'media_type' => 'movie',
+            'media_id' => 'crash-1996',
+            'media_item_type' => 'Movie',
+            'media_title' => 'Crash',
+        ]];
+        yield 'array input' => [[
+            'media_type' => 'item',
+            'media_id' => ['crash-1996'],
+            'media_item_type' => 'Movie',
+            'media_title' => 'Crash',
+        ]];
+    }
 }
