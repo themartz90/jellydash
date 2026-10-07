@@ -78,6 +78,8 @@ The project is still young and under active development.
 
 - **Libraries.** An overview of all your libraries with item counts and type breakdowns. New libraries are picked up automatically.
 
+- **Server Activity.** A dedicated page for Jellyfin maintenance tasks, recent task results and activity events, with date, type, severity and user/system filters. With Jellydash login enabled, it is available to owners and admins. See [Server Activity](docs/SERVER_ACTIVITY.md) for access and activity log limits.
+
 - **System status.** Check background collection, library refreshes, optional request sync, and notification retries from Settings. Copy a diagnostic summary without service URLs, credentials, or viewing details. See [System status](docs/SYSTEM_STATUS.md) for what the checks mean.
 
 - **Monitoring exclusions.** Hide selected Jellyfin users from Now Playing, History, Statistics, and history exports, and stop collecting new activity for them. Existing rows are kept. See [Monitoring exclusions](docs/MONITORING_EXCLUSIONS.md) before enabling this setting.

@@ -67,6 +67,7 @@ class View
         }
         $this->twig->addGlobal('downloads_configured', $downloadsConfigured);
         $this->twig->addGlobal('downloads_can_manage', Downloads\DownloadAccess::canManage());
+        $this->twig->addGlobal('server_activity_allowed', (new Authorization())->can(Authorization::CAPABILITY_MANAGE_GLOBAL));
 
         // App version (VERSION file at the repo root), shown in the sidebar.
         $this->twig->addGlobal('app_version', self::version());

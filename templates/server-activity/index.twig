@@ -1,0 +1,75 @@
+{% extends "_shell.twig" %}
+
+{% block page_styles %}
+    <link rel="stylesheet" href="/assets/css/server-activity.css?v=20261007-activity">
+{% endblock %}
+
+{% block dashboard_header %}
+    <div class="header-copy">
+        <h1>Server Activity</h1>
+        <p>Maintenance tasks and recent events from Jellyfin</p>
+    </div>
+    {% if can_view_activity %}
+    <div class="header-actions">
+        <span class="activity-refresh-label" data-activity-updated role="status">Loading server details...</span>
+        <button class="activity-button" type="button" data-activity-refresh>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12 -1l2 3M4 15l2 3a7 7 0 0 0 12 -1"></path></svg>
+            Refresh
+        </button>
+    </div>
+    {% endif %}
+{% endblock %}
+
+{% block dashboard_content %}
+{% if can_view_activity %}
+<div class="activity-page" data-server-activity-root>
+    <noscript><p class="activity-notice">Enable JavaScript to load Server Activity.</p></noscript>
+    <section class="activity-identity" aria-label="Jellyfin server" data-activity-server aria-busy="true">
+        <div class="activity-server-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="7" rx="2"></rect><rect x="3" y="14" width="18" height="7" rx="2"></rect><path d="M7 6.5h.01M7 17.5h.01M15 6.5h3M15 17.5h3"></path></svg></div>
+        <div class="activity-server-copy"><span class="activity-eyebrow">Jellyfin server</span><h2 data-activity-server-name>Loading server...</h2><p data-activity-server-meta>Server details will appear here.</p></div>
+        <div class="activity-server-actions">
+            <span class="activity-state" data-activity-server-state>Checking</span>
+            <a class="stats-devices-manage" data-activity-open-jellyfin target="_blank" rel="noopener noreferrer" aria-label="Open Jellyfin" title="Open Jellyfin" hidden>
+                <span>Open Jellyfin</span>
+                <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true">
+                    <path d="M12 6h-6a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-6"></path>
+                    <path d="M11 13l9 -9"></path>
+                    <path d="M15 4h5v5"></path>
+                </svg>
+            </a>
+        </div>
+        <p class="activity-section-message" data-activity-server-message hidden></p>
+    </section>
+
+    <section class="activity-panel activity-tasks" aria-labelledby="activity-tasks-title">
+        <header class="activity-section-head"><div><h2 id="activity-tasks-title">Scheduled tasks</h2><p>Current work and the latest result of each task</p></div><span class="activity-count" data-activity-task-count>Checking</span></header>
+        <p class="activity-notice" data-activity-tasks-message hidden></p>
+        <div data-activity-running aria-busy="true"><p class="activity-empty">Loading scheduled tasks...</p></div>
+        <div class="activity-recent-tasks" data-activity-recent-tasks hidden><h3>Recent results</h3><div data-activity-task-results></div><p class="activity-footnote">Successful results stay here for an hour; other results for 24 hours.</p></div>
+    </section>
+
+    <section class="activity-panel activity-timeline" aria-labelledby="activity-events-title">
+        <header class="activity-section-head"><div><h2 id="activity-events-title">Recent activity</h2><p data-activity-event-summary>Loading events from the last 24 hours...</p></div><span class="activity-count" data-activity-event-count>Checking</span></header>
+        <form class="activity-filters" data-activity-filters>
+            <label>Period<select name="range" data-activity-range><option value="day">Last 24 hours</option><option value="week">Last 7 days</option><option value="month">Last 30 days</option><option value="all">All available</option><option value="custom">Custom dates</option></select></label>
+            <label>Event type<select name="type" data-activity-type><option value="">All types</option></select></label>
+            <label>Severity<select name="severity"><option value="">All levels</option><option value="Information">Information</option><option value="Warning">Warning</option><option value="Error">Error</option><option value="Critical">Critical</option><option value="Debug">Debug</option><option value="Trace">Trace</option><option value="None">None</option></select></label>
+            <label>Source<select name="actor"><option value="">All events</option><option value="user">User events</option><option value="system">System events</option></select></label>
+            <div class="activity-date-range" data-activity-custom-dates hidden><label>From<input name="start" type="date"></label><label>Through<input name="end" type="date"></label></div>
+            <div class="activity-filter-actions"><button class="activity-button" type="submit">Apply filters</button><button class="activity-button is-subtle" type="reset">Clear</button></div>
+        </form>
+        <p class="activity-notice" data-activity-events-message hidden role="status"></p>
+        <p class="activity-coverage" data-activity-coverage hidden></p>
+        <div class="activity-events" data-activity-events aria-busy="true"><p class="activity-empty">Loading recent activity...</p></div>
+        <nav class="activity-pagination" aria-label="Activity pages" data-activity-pagination hidden><button class="activity-button is-subtle" type="button" data-activity-prev>Newer</button><span data-activity-page-label></span><button class="activity-button is-subtle" type="button" data-activity-next>Older</button></nav>
+        <p class="activity-footnote">Activity is read from Jellyfin. Full event details and task controls are available there.</p>
+    </section>
+</div>
+{% else %}
+    <section class="activity-panel"><p class="activity-empty">Server Activity is available to owners and admins.</p></section>
+{% endif %}
+{% endblock %}
+
+{% block page_scripts %}
+{% if can_view_activity %}<script src="/assets/js/server-activity.js?v=20261007-activity"></script>{% endif %}
+{% endblock %}

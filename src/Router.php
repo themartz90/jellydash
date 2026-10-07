@@ -12,6 +12,7 @@ use Mk\Framework\Pages\LibrariesController;
 use Mk\Framework\Pages\LoginController;
 use Mk\Framework\Pages\MonthlyRecapController;
 use Mk\Framework\Pages\NowPlayingController;
+use Mk\Framework\Pages\ServerActivityController;
 use Mk\Framework\Pages\SettingsController;
 use Mk\Framework\Pages\StatisticsController;
 
@@ -29,6 +30,7 @@ final class Router
         'downloads' => DownloadsController::class,
         'jellyseerr' => JellyseerrController::class,
         'libraries' => LibrariesController::class,
+        'server-activity' => ServerActivityController::class,
         'history' => HistoryController::class,
         'statistics' => StatisticsController::class,
         'statistics/recap' => MonthlyRecapController::class,

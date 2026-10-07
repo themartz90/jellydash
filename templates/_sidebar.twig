@@ -80,6 +80,12 @@
             </span>
             <span>Libraries</span>
         </a>
+        {% if server_activity_allowed %}
+        <a class="nav-item {{ active_page == 'server-activity' ? 'is-active' : '' }}" href="/server-activity">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M3 12h4l3 -7l4 14l3 -7h4"></path></svg></span>
+            <span>Server Activity</span>
+        </a>
+        {% endif %}
     </nav>
 
     <div class="sidebar-spacer"></div>
