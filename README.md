@@ -24,6 +24,7 @@ Jellydash is a monitoring dashboard for [Jellyfin](https://jellyfin.org). If you
 - Which shows and movies are the most popular on my server?
 - Did someone just request something new in Jellyseerr?
 - What is downloading, and did the latest downloads finish?
+- What maintenance tasks are running on Jellyfin?
 
 It's supposed to be lightweight, without too much bloat and (hopefully) nice looking!
 
@@ -72,7 +73,7 @@ The project is still young and under active development.
 
 - **History.** Jellydash records play history in the background, even when nobody has the dashboard open. Search it, filter by user or library, export the matching plays to CSV, and enjoy the poster art. Existing Jellyfin or Emby Playback Reporting backups can be imported from Settings.
 
-- **Statistics.** Watch time trends, top users, device activity, clients, codecs and transcode reasons. There is a Trending strip for what is hot right now, and all-time Most Watched charts for both shows and movies.
+- **Statistics.** Watch time trends, top users, device activity, clients, codecs and transcode reasons. Open linked watch-time totals, chart bars, source video codecs and transcoding reasons in History to see matching plays. There is a Trending strip for what is hot right now, and all-time Most Watched charts for both shows and movies.
 
 - **Monthly recap.** Open Monthly recap from Statistics to look back at a completed month, with watch time, movie and series rankings, daily activity and a viewer filter. Viewing time inferred from older history is labelled as an estimate.
 

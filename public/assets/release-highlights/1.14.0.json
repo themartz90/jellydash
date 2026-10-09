@@ -1,0 +1,22 @@
+{
+  "version": "1.14.0",
+  "auto_show": true,
+  "title": "Server Activity and more Statistics links",
+  "summary": "Check Jellyfin's tasks and recent activity, and open more Statistics figures in History.",
+  "highlights": [
+    "Server Activity shows server details, running maintenance tasks and recent results, with filters for date, event type, severity and user or system events.",
+    "Server Activity is read-only and shows up to 1,000 loaded events. With Jellydash login enabled, it is available to owners and admins.",
+    "Open watch-time totals and day, month or year bars in History for the corresponding period.",
+    "Source video codec and transcoding reason links keep their scope through History filters, pagination and CSV export."
+  ],
+  "links": [
+    {
+      "label": "Server Activity guide",
+      "url": "https://github.com/themartz90/jellydash/blob/v1.14.0/docs/SERVER_ACTIVITY.md"
+    },
+    {
+      "label": "Full release notes",
+      "url": "https://github.com/themartz90/jellydash/releases/tag/v1.14.0"
+    }
+  ]
+}
