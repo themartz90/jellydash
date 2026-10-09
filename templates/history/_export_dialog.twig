@@ -14,6 +14,10 @@
         <p id="history-export-summary" class="release-dialog-summary">Pick the plays you want. The CSV includes every match, not only the page currently on screen.</p>
 
         <form class="history-export-form" action="/api/history-export.php" method="get" target="history-export-download-frame" data-history-export-form>
+            {% include 'history/_metadata_fields.twig' %}
+            {% for scope in filters.metadata_scopes %}
+                <p class="history-export-scope" data-history-export-metadata-scope>{{ scope.label }}: <strong>{{ scope.values|join(', ') }}</strong></p>
+            {% endfor %}
             {% if filters.is_exact %}
                 <input type="hidden" name="start" value="{{ filters.start }}">
                 <input type="hidden" name="end" value="{{ filters.end }}">

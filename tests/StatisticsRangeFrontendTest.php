@@ -37,7 +37,8 @@ final class StatisticsRangeFrontendTest extends TestCase
 
         $this->assertIsString($template);
         $this->assertIsString($stylesheet);
-        $this->assertStringContainsString('aria-label="{{ bar.label }}: {{ bar.value }}"', $template);
+        $this->assertStringContainsString('aria-label="{{ bar.periodLabel }}: {{ bar.value }}. View plays in History"', $template);
+        $this->assertStringContainsString('<a href="{{ bar.href }}"', $template);
         $this->assertStringContainsString('{{ stats.codecCoverage }}', $template);
         $this->assertStringContainsString('{{ stats.reasonCoverage }}', $template);
         $this->assertStringContainsString('width: {{ user.share }}', $template);
@@ -77,7 +78,7 @@ final class StatisticsRangeFrontendTest extends TestCase
         $this->assertIsString($template);
         $this->assertIsString($stylesheet);
         $this->assertStringContainsString('class="stats-history-hint"', $template);
-        $this->assertStringContainsString('Select a title, user, client or playback type to view matching plays in History.', $template);
+        $this->assertStringContainsString('Select a linked figure, chart bar or breakdown to view matching plays in History.', $template);
         $this->assertStringContainsString('.stats-history-hint {', $stylesheet);
         $this->assertStringContainsString(".stats-history-hint svg {\n    width: 16px;", $stylesheet);
         $this->assertStringContainsString('stroke: currentColor;', $stylesheet);

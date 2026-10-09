@@ -1,0 +1,5 @@
+{% for scope in filters.metadata_scopes %}
+    {% for value in scope.values %}
+        <input type="hidden" name="{{ scope.key }}[]" value="{{ value }}" data-history-metadata-field>
+    {% endfor %}
+{% endfor %}

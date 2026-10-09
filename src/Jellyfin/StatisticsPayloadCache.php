@@ -14,7 +14,7 @@ use Mk\Framework\Cache\AtomicJsonFile;
  */
 final class StatisticsPayloadCache
 {
-    private const CACHE_SCHEMA_VERSION = 2;
+    private const CACHE_SCHEMA_VERSION = 3;
     private const DEFAULT_TTL = 120;
 
     private string $cacheDirectory;

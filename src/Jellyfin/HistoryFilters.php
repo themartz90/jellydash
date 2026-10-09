@@ -6,6 +6,9 @@ namespace Mk\Framework\Jellyfin;
 
 final readonly class HistoryFilters
 {
+    /** @param list<string> $codecs
+     * @param list<string> $reasons
+     */
     public function __construct(
         public string $search = '',
         public string $user = '',
@@ -22,6 +25,8 @@ final readonly class HistoryFilters
         public string $mediaItemType = '',
         public string $mediaTitle = '',
         public string $mediaLibrary = '',
+        public array $codecs = [],
+        public array $reasons = [],
     ) {
     }
 
@@ -89,6 +94,8 @@ final readonly class HistoryFilters
             mediaItemType: $mediaItemType,
             mediaTitle: $mediaTitle,
             mediaLibrary: $mediaLibrary,
+            codecs: self::queryValues($query, 'codec'),
+            reasons: self::queryValues($query, 'reason'),
         );
     }
 
@@ -123,9 +130,10 @@ final readonly class HistoryFilters
         };
     }
 
-    /** @return array<string, string> */
+    /** @return array<string, string|list<string>> */
     public function queryParameters(): array
     {
+        $metadata = array_filter(['codec' => $this->codecs, 'reason' => $this->reasons], static fn (array $values): bool => $values !== []);
         $media = $this->hasMediaScope() ? [
             'media_type' => $this->mediaType,
             'media_id' => $this->mediaId,
@@ -141,11 +149,11 @@ final readonly class HistoryFilters
                 'library' => $this->library,
                 'client' => $this->client,
                 'method' => $this->method,
-            ], $media, [
+            ], $media, $metadata, [
                 'range' => 'custom',
                 'start' => $this->start?->format('Y-m-d') ?? '',
                 'end' => $this->end?->format('Y-m-d') ?? '',
-            ]), static fn (string $value): bool => $value !== '');
+            ]), static fn (string|array $value): bool => $value !== '');
         }
 
         return array_filter(array_merge([
@@ -154,9 +162,20 @@ final readonly class HistoryFilters
             'library' => $this->library,
             'client' => $this->client,
             'method' => $this->method,
-        ], $media, [
+        ], $media, $metadata, [
             'range' => $this->range !== '30' ? $this->range : '',
-        ]), static fn (string $value): bool => $value !== '');
+        ]), static fn (string|array $value): bool => $value !== '');
+    }
+
+    /** @param array<string, mixed> $query
+     * @return list<string>
+     */
+    private static function queryValues(array $query, string $key): array
+    {
+        $values = $query[$key] ?? [];
+        $values = is_array($values) ? $values : [$values];
+
+        return array_values(array_unique(array_filter($values, static fn (mixed $value): bool => is_string($value) && trim($value) !== '')));
     }
 
     /**

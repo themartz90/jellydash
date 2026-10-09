@@ -130,6 +130,12 @@
         }
     });
     allButton.addEventListener('click', function () {
+        form.querySelectorAll('[data-history-metadata-field]').forEach(function (field) {
+            field.value = '';
+        });
+        form.querySelectorAll('[data-history-export-metadata-scope]').forEach(function (scope) {
+            scope.hidden = true;
+        });
         form.querySelectorAll('[data-history-media-field]').forEach(function (field) {
             field.value = '';
         });

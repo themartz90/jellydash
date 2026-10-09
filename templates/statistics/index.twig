@@ -50,7 +50,7 @@
                 <path d="M3 3v5h5"></path>
                 <path d="M12 7v5l3 2"></path>
             </svg>
-            <span>Select a title, user, client or playback type to view matching plays in History.</span>
+            <span>Select a linked figure, chart bar or breakdown to view matching plays in History.</span>
         </p>
 
         {% if stats.hasTrending %}
@@ -117,7 +117,7 @@
             {% for kpi in stats.kpis %}
                 <article class="stats-kpi{{ kpi.href is defined ? ' has-link' : '' }}">
                     {% if kpi.href is defined %}
-                        <a class="stats-kpi-link" href="{{ kpi.href }}" aria-label="{{ kpi.label == 'Transcode Rate' ? 'View transcoded plays in History' : 'View plays in History' }}">
+                        <a class="stats-kpi-link" href="{{ kpi.href }}" aria-label="{{ kpi.label }}: {{ kpi.value }}. {{ kpi.label == 'Transcode Rate' ? 'View transcoded plays in History' : 'View plays in History' }}">
                     {% endif %}
                     <span class="stats-kpi-label"><i style="background: {{ kpi.color }}"></i>{{ kpi.label }}</span>
                     <strong>{{ kpi.value }}</strong>
@@ -138,19 +138,19 @@
         <section class="stats-general-grid">
             <article class="stats-card stats-watch-card">
                 <div class="stats-card-head">
-                    <div>
+                    <a class="stats-watch-total-link stats-drilldown-link" href="{{ stats.totalWatchHref }}" aria-label="{{ stats.watchTimeEstimated ? 'Estimated Watch Time' : 'Total Watch Time' }}: {{ stats.totalWatch }}. View contributing plays in History">
                         <span class="stats-eyebrow">{{ stats.watchTimeEstimated ? 'Estimated Watch Time' : 'Total Watch Time' }}</span>
                         <strong>{{ stats.totalWatch }}</strong>
                         <small style="color: {{ stats.totalWatchDeltaColor }}">{{ stats.totalWatchDelta }}</small>
-                    </div>
+                    </a>
                     <span class="stats-mono-chip">{{ stats.trendUnit }}</span>
                 </div>
                 <div class="stats-trend-bars" aria-label="Watch time trend" style="--trend-count: {{ stats.trend|length }}">
                     {% for bar in stats.trend %}
-                        <span role="img" tabindex="0" aria-label="{{ bar.label }}: {{ bar.value }}" title="{{ bar.label }}: {{ bar.value }}">
+                        <a href="{{ bar.href }}" aria-label="{{ bar.periodLabel }}: {{ bar.value }}. View plays in History" title="{{ bar.periodLabel }}: {{ bar.value }}" data-trend-detail="{{ bar.periodLabel }}: {{ bar.value }}">
                             <i style="height: {{ bar.h }}" title="{{ bar.value }}"></i>
                             <b aria-hidden="true">{{ bar.label }}</b>
-                        </span>
+                        </a>
                     {% endfor %}
                 </div>
                 <p class="stats-trend-detail" aria-live="polite"></p>
@@ -213,10 +213,10 @@
                 {% if stats.hasCodecData %}
                     <div class="stats-bars">
                         {% for item in stats.codecs %}
-                            <div class="stats-bar-row">
+                            <a class="stats-bar-row stats-drilldown-link" href="{{ item.href }}" aria-label="Source video codec {{ item.name }}: {{ item.pct }}. View matching plays in History">
                                 <p><span>{{ item.name }}</span><b>{{ item.pct }}</b></p>
                                 <span class="stats-track"><i style="width: {{ item.w }}; background: {{ item.color }}"></i></span>
-                            </div>
+                            </a>
                         {% endfor %}
                     </div>
                 {% else %}
@@ -232,10 +232,10 @@
                 {% if stats.hasReasonData %}
                     <div class="stats-bars">
                         {% for item in stats.reasons %}
-                            <div class="stats-bar-row">
+                            <a class="stats-bar-row stats-drilldown-link" href="{{ item.href }}" aria-label="Transcoding reason {{ item.name }}: {{ item.pct }} of logged reasons. View matching plays in History">
                                 <p><span>{{ item.name }}</span><b>{{ item.pct }}</b></p>
                                 <span class="stats-track"><i style="width: {{ item.w }}; background: {{ item.color }}"></i></span>
-                            </div>
+                            </a>
                         {% endfor %}
                     </div>
                 {% else %}

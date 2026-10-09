@@ -1693,6 +1693,17 @@ svg.icon-filled {
     border: 1px solid rgba(124, 92, 255, .3);
     border-radius: 8px;
     background: rgba(124, 92, 255, .09);
+    overflow-wrap: anywhere;
+}
+
+.history-metadata-scopes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.history-export-scope[hidden] {
+    display: none;
 }
 
 .history-media-scope span,
@@ -4802,7 +4813,7 @@ a.trending-card:hover .trending-poster {
     margin-bottom: 28px;
 }
 
-.stats-trend-bars > span {
+.stats-trend-bars > a {
     position: relative;
     display: flex;
     flex: 1;
@@ -4813,6 +4824,7 @@ a.trending-card:hover .trending-poster {
     min-width: 0;
     height: 100%;
     cursor: pointer;
+    text-decoration: none;
 }
 
 .stats-trend-bars i {
@@ -4834,11 +4846,11 @@ a.trending-card:hover .trending-poster {
     font-weight: 600;
 }
 
-.stats-trend-bars > span:first-child b { left: 0; transform: none; }
-.stats-trend-bars > span:last-child b { left: auto; right: 0; transform: none; }
+.stats-trend-bars > a:first-child b { left: 0; transform: none; }
+.stats-trend-bars > a:last-child b { left: auto; right: 0; transform: none; }
 .stats-trend-bars b[hidden] { display: none; }
-.stats-trend-bars > span:focus-visible { outline: 2px solid var(--color-purple-soft); outline-offset: 2px; }
-.stats-trend-bars > span:is(:hover, :focus) i { background: var(--color-purple-soft); }
+.stats-trend-bars > a:focus-visible { outline: 2px solid var(--color-purple-soft); outline-offset: 2px; }
+.stats-trend-bars > a:is(:hover, :focus) i { background: var(--color-purple-soft); }
 .stats-trend-detail { min-height: 16px; margin: 0; font-size: 11px; color: var(--color-muted); }
 
 .stats-list-head,

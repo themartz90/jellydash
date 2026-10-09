@@ -1357,6 +1357,16 @@ final class PlayHistoryRepository implements LibraryHistorySource
             $this->applyMethodFilter($selection, $filters->method);
         }
 
+        if ($filters->codecs !== []) {
+            $selection->where($this->platform->isSqlite()
+                ? 'source_video_codec COLLATE BINARY IN %in'
+                : 'BINARY source_video_codec IN %in', $filters->codecs);
+        }
+
+        if ($filters->reasons !== []) {
+            $this->applyReasonFilter($selection, $filters->reasons);
+        }
+
         if ($filters->hasMediaScope()) {
             $this->applyMediaFilter($selection, $filters);
         }
@@ -1374,6 +1384,30 @@ final class PlayHistoryRepository implements LibraryHistorySource
         }
 
         return $selection;
+    }
+
+    /** @param list<string> $reasons */
+    private function applyReasonFilter(\Dibi\Fluent $selection, array $reasons): void
+    {
+        $document = "CASE WHEN JSON_VALID(transcode_reasons) THEN transcode_reasons ELSE '[]' END";
+        if ($this->platform->isSqlite()) {
+            $selection->where('JSON_TYPE(' . $document . ') = %s', 'array');
+            $selection->where('EXISTS (SELECT 1 FROM JSON_EACH(' . $document . ") AS reason WHERE reason.type = 'text' AND reason.value COLLATE BINARY IN %in)", $reasons);
+
+            return;
+        }
+
+        $selection->where('JSON_TYPE(' . $document . ') = %s', 'ARRAY');
+        $matches = [];
+        $parameters = [];
+        foreach ($reasons as $reason) {
+            // Search returns JSON paths. Only "$[n]" identifies a top-level
+            // string; nested arrays and objects must not become reason tokens.
+            $matches[] = 'JSON_SEARCH(CONVERT(' . $document . " USING utf8mb4) COLLATE utf8mb4_bin, 'all', CONVERT(%s USING utf8mb4) COLLATE utf8mb4_bin, '!') REGEXP %s";
+            $parameters[] = str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $reason);
+            $parameters[] = '"\\$\\[[0-9]+\\]"';
+        }
+        $selection->where('(' . implode(' OR ', $matches) . ')', ...$parameters);
     }
 
     private function applyMediaFilter(\Dibi\Fluent $selection, HistoryFilters $filters): void

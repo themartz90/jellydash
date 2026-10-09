@@ -386,12 +386,14 @@ final class PlaybackStatisticsServiceTest extends TestCase
     {
         $service = new PlaybackStatisticsService();
         $trendBars = new ReflectionMethod($service, 'trendBars');
-        $bars = $trendBars->invoke($service, [
+        $bars = $trendBars->invoke($service, array_map(static fn (array $bucket): array => $bucket + [
+            'periodLabel' => 'Oct 8, 2026', 'start' => '2026-10-08', 'end' => '2026-10-09',
+        ], [
             'empty' => ['label' => 'Empty', 'sec' => 0],
             'tiny' => ['label' => 'Tiny', 'sec' => 42],
             'small' => ['label' => 'Small', 'sec' => 60],
             'largest' => ['label' => 'Largest', 'sec' => 600],
-        ]);
+        ]));
 
         $this->assertIsArray($bars);
         $this->assertSame('0%', $bars[0]['h']);

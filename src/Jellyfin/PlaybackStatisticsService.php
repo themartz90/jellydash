@@ -87,8 +87,16 @@ final class PlaybackStatisticsService
         }
         $codecCounts = $this->counts($rows, 'source_video_codec');
         $reasonCounts = $this->reasonCounts($rows);
-        $codecs = $this->bars($codecCounts, 'Other codecs');
-        $reasons = $this->bars($reasonCounts, 'Other reasons');
+        $codecs = $this->bars($codecCounts, 'Other codecs', $this->codecMembers($rows));
+        foreach ($codecs as &$codec) {
+            $codec['href'] = $this->historyUrl($range, $periodStart, $periodEnd, codecs: $codec['members']);
+        }
+        unset($codec);
+        $reasons = $this->bars($reasonCounts, 'Other reasons', $this->reasonMembers($rows));
+        foreach ($reasons as &$reason) {
+            $reason['href'] = $this->historyUrl($range, $periodStart, $periodEnd, reasons: $reason['members']);
+        }
+        unset($reason);
         $watchSeconds = $this->sumViewingSeconds($rows);
         $previousWatchSeconds = $this->sumViewingSeconds($previousRows);
         $watchTimeEstimated = $this->hasEstimatedViewingTime($rows);
@@ -117,7 +125,13 @@ final class PlaybackStatisticsService
             'mostWatched' => $mostWatched,
             'hasMostWatched' => $mostWatched['series'] !== [] || $mostWatched['movies'] !== [],
             'kpis' => [
-                $this->kpi($watchTimeEstimated ? 'Estimated Watch Time' : 'Total Watch Time', '#7c5cff', $this->duration($watchSeconds), $this->delta($watchSeconds, $previousWatchSeconds, $range, 'watch time')),
+                $this->kpi(
+                    $watchTimeEstimated ? 'Estimated Watch Time' : 'Total Watch Time',
+                    '#7c5cff',
+                    $this->duration($watchSeconds),
+                    $this->delta($watchSeconds, $previousWatchSeconds, $range, 'watch time'),
+                    $this->historyUrl($range, $periodStart, $periodEnd),
+                ),
                 $this->kpi(
                     'Total Plays',
                     '#3b9eff',
@@ -135,6 +149,7 @@ final class PlaybackStatisticsService
                 ),
             ],
             'totalWatch' => $this->duration($watchSeconds),
+            'totalWatchHref' => $this->historyUrl($range, $periodStart, $periodEnd),
             'watchTimeEstimated' => $watchTimeEstimated,
             'totalWatchDelta' => $this->delta($watchSeconds, $previousWatchSeconds, $range, 'previous period')['text'],
             'totalWatchDeltaColor' => $this->delta($watchSeconds, $previousWatchSeconds, $range, 'previous period')['color'],
@@ -553,6 +568,9 @@ final class PlaybackStatisticsService
         return $repository->statisticsRowsForPeriod($period['start'], $period['end']);
     }
 
+    /** @param list<string> $codecs
+     * @param list<string> $reasons
+     */
     private function historyUrl(
         string $range,
         ?\DateTimeImmutable $start,
@@ -566,8 +584,16 @@ final class PlaybackStatisticsService
         ?string $mediaItemType = null,
         ?string $mediaTitle = null,
         ?string $mediaLibrary = null,
+        array $codecs = [],
+        array $reasons = [],
     ): string {
         $query = [];
+        if ($codecs !== []) {
+            $query['codec'] = $codecs;
+        }
+        if ($reasons !== []) {
+            $query['reason'] = $reasons;
+        }
 
         if ($search !== null) {
             $query['search'] = $search;
@@ -887,6 +913,23 @@ final class PlaybackStatisticsService
         return $counts;
     }
 
+    /** @param array<int, \Dibi\Row> $rows
+     * @return array<string, list<string>>
+     */
+    private function codecMembers(array $rows): array
+    {
+        $members = [];
+        foreach ($rows as $row) {
+            $raw = (string) ($row['source_video_codec'] ?? '');
+            $name = trim($raw);
+            if ($name !== '') {
+                $members[$name][] = $raw;
+            }
+        }
+
+        return array_map(static fn (array $values): array => array_values(array_unique($values)), $members);
+    }
+
     /**
      * @param array<int, \Dibi\Row> $rows
      * @return array<string, int>
@@ -896,18 +939,8 @@ final class PlaybackStatisticsService
         $counts = [];
 
         foreach ($rows as $row) {
-            $encoded = (string) ($row['transcode_reasons'] ?? '');
-            if ($encoded === '') {
-                continue;
-            }
-
-            $decoded = json_decode($encoded, true);
-            if (!is_array($decoded)) {
-                continue;
-            }
-
-            foreach ($decoded as $reason) {
-                $label = trim((string) $reason);
+            foreach ($this->recordedReasons($row) as $reason) {
+                $label = trim($reason);
                 if ($label !== '') {
                     $counts[$label] = ($counts[$label] ?? 0) + 1;
                 }
@@ -917,6 +950,32 @@ final class PlaybackStatisticsService
         arsort($counts);
 
         return $counts;
+    }
+
+    /** @return list<string> */
+    private function recordedReasons(\Dibi\Row $row): array
+    {
+        $decoded = json_decode((string) ($row['transcode_reasons'] ?? ''));
+        if (!is_array($decoded) || !array_is_list($decoded)) {
+            return [];
+        }
+
+        return array_values(array_filter($decoded, static fn (mixed $value): bool => is_string($value) && trim($value) !== ''));
+    }
+
+    /** @param array<int, \Dibi\Row> $rows
+     * @return array<string, list<string>>
+     */
+    private function reasonMembers(array $rows): array
+    {
+        $members = [];
+        foreach ($rows as $row) {
+            foreach ($this->recordedReasons($row) as $raw) {
+                $members[trim($raw)][] = $raw;
+            }
+        }
+
+        return array_map(static fn (array $values): array => array_values(array_unique($values)), $members);
     }
 
     /**
@@ -931,16 +990,8 @@ final class PlaybackStatisticsService
                 continue;
             }
 
-            $decoded = json_decode((string) ($row['transcode_reasons'] ?? ''), true);
-            if (!is_array($decoded)) {
-                continue;
-            }
-
-            foreach ($decoded as $reason) {
-                if (trim((string) $reason) !== '') {
-                    $sessions++;
-                    break;
-                }
+            if ($this->recordedReasons($row) !== []) {
+                $sessions++;
             }
         }
 
@@ -967,18 +1018,27 @@ final class PlaybackStatisticsService
 
     /**
      * @param array<string, int> $counts
-     * @return array<int, array{name: string, color: string, pct: string, w: string, count: int}>
+     * @param array<string, list<string>> $members
+     * @return array<int, array{name: string, color: string, pct: string, w: string, count: int, members: list<string>}>
      */
-    private function bars(array $counts, string $otherLabel = 'Other'): array
+    private function bars(array $counts, string $otherLabel = 'Other', array $members = []): array
     {
         $total = array_sum($counts);
         if ($total <= 0) {
             return [];
         }
+        foreach ($counts as $name => $count) {
+            $members[$name] ??= [(string) $name];
+        }
 
         if (count($counts) > 7) {
             $visible = array_slice($counts, 0, 6, true);
             $other = array_sum(array_slice($counts, 6, null, true));
+            $otherMembers = isset($visible[$otherLabel]) ? $members[$otherLabel] : [];
+            foreach (array_keys(array_slice($counts, 6, null, true)) as $name) {
+                $otherMembers = array_merge($otherMembers, $members[$name]);
+            }
+            $members[$otherLabel] = array_values(array_unique($otherMembers));
             $visible[$otherLabel] = ($visible[$otherLabel] ?? 0) + $other;
             $counts = $visible;
         }
@@ -995,6 +1055,7 @@ final class PlaybackStatisticsService
                 'pct' => ($percentages[$name] ?? 0) . '%',
                 'w' => (int) round(($count / $max) * 100) . '%',
                 'count' => $count,
+                'members' => $members[$name],
             ];
             $index++;
         }
@@ -1027,8 +1088,14 @@ final class PlaybackStatisticsService
     {
         $buckets = [];
         for ($i = $days - 1; $i >= 0; $i--) {
-            $day = $now->modify('-' . $i . ' days');
-            $buckets[$day->format('Y-m-d')] = ['label' => $days === 7 ? $day->format('D') : $day->format('M j'), 'sec' => 0];
+            $day = $now->setTime(0, 0)->modify('-' . $i . ' days');
+            $buckets[$day->format('Y-m-d')] = [
+                'label' => $days === 7 ? $day->format('D') : $day->format('M j'),
+                'periodLabel' => $day->format('M j, Y'),
+                'start' => $day->format('Y-m-d'),
+                'end' => $day->modify('+1 day')->format('Y-m-d'),
+                'sec' => 0,
+            ];
         }
 
         foreach ($rows as $row) {
@@ -1051,7 +1118,14 @@ final class PlaybackStatisticsService
         $monthAnchor = $now->setTime(0, 0)->modify('first day of this month');
         for ($i = 11; $i >= 0; $i--) {
             $month = $monthAnchor->modify('-' . $i . ' months');
-            $buckets[$month->format('Y-m')] = ['label' => $month->format('M'), 'sec' => 0];
+            $end = min($month->modify('+1 month'), $now->setTime(0, 0)->modify('+1 day'));
+            $buckets[$month->format('Y-m')] = [
+                'label' => $month->format('M'),
+                'periodLabel' => $month->format('F Y'),
+                'start' => $month->format('Y-m-d'),
+                'end' => $end->format('Y-m-d'),
+                'sec' => 0,
+            ];
         }
 
         foreach ($rows as $row) {
@@ -1074,7 +1148,13 @@ final class PlaybackStatisticsService
 
         foreach ($rows as $row) {
             $year = (new \DateTimeImmutable((string) $row['started_at']))->format('Y');
-            $buckets[$year] ??= ['label' => $year, 'sec' => 0];
+            $buckets[$year] ??= [
+                'label' => $year,
+                'periodLabel' => $year,
+                'start' => $year . '-01-01',
+                'end' => (new \DateTimeImmutable($year . '-01-01'))->modify('+1 year')->format('Y-m-d'),
+                'sec' => 0,
+            ];
             $buckets[$year]['sec'] += $this->viewingSeconds($row);
         }
 
@@ -1084,7 +1164,7 @@ final class PlaybackStatisticsService
     }
 
     /**
-     * @param array<string, array{label: string, sec: int}> $buckets
+     * @param array<int|string, array{label: string, periodLabel: string, start: string, end: string, sec: int}> $buckets
      * @return array<int, array<string, string>>
      */
     private function trendBars(array $buckets): array
@@ -1097,6 +1177,8 @@ final class PlaybackStatisticsService
                 ? max(4, (int) round(($bucket['sec'] / $max) * 100)) . '%'
                 : '0%',
             'value' => $this->duration($bucket['sec']),
+            'periodLabel' => $bucket['periodLabel'],
+            'href' => $this->historyUrl('custom', new \DateTimeImmutable($bucket['start']), new \DateTimeImmutable($bucket['end'])),
         ], $buckets));
     }
 

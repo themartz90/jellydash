@@ -17,8 +17,9 @@ document.querySelectorAll('.stats-trend-bars').forEach((chart) => {
     };
     const detail = chart.nextElementSibling;
     bars.forEach((bar) => {
-        const show = () => { detail.textContent = bar.getAttribute('aria-label'); };
+        const show = () => { detail.textContent = bar.getAttribute('data-trend-detail') || bar.getAttribute('aria-label'); };
         bar.addEventListener('focus', show);
+        bar.addEventListener('pointerenter', show);
         bar.addEventListener('click', show);
     });
     new ResizeObserver(fitLabels).observe(chart);
