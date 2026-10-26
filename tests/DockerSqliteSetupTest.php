@@ -54,6 +54,15 @@ final class DockerSqliteSetupTest extends TestCase
         $this->assertStringContainsString("ROOT_DIR . '/var/sessions'", $settings);
     }
 
+    public function testPendingHistorySamplesUseTheExistingPersistentRuntimeVolume(): void
+    {
+        foreach (['docker-compose.yml', 'docker-compose.sqlite.yml'] as $path) {
+            $compose = (string) file_get_contents(ROOT_DIR . '/' . $path);
+            $this->assertStringContainsString('app_runtime_cache:/var/www/html/var/cache', $compose);
+        }
+        $this->assertStringContainsString('HISTORY_SAMPLE_QUEUE_DIR: "${HISTORY_SAMPLE_QUEUE_DIR:-/var/www/html/var/cache/history-samples}"', (string) file_get_contents(ROOT_DIR . '/docker-compose.yml'));
+    }
+
     public function testMainComposeForwardsBothSupportedTimezoneVariables(): void
     {
         $compose = file_get_contents(ROOT_DIR . '/docker-compose.yml');

@@ -51,4 +51,23 @@ final class CsrfTest extends TestCase
         $_SERVER['HTTP_X_CSRF_TOKEN'] = 'wrong-token';
         $this->assertFalse(Csrf::validateHeader());
     }
+
+    public function testFormGuardRejectsMalformedTypesWith419(): void
+    {
+        foreach ([['invalid'], ['nested' => ['invalid']], 123, null, 'invalid'] as $input) {
+            $process = proc_open(
+                [PHP_BINARY, ROOT_DIR . '/tests/fixtures/csrf-guard.php', json_encode($input, JSON_THROW_ON_ERROR)],
+                [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+                $pipes,
+                ROOT_DIR,
+            );
+            $this->assertIsResource($process);
+            $output = stream_get_contents($pipes[1]);
+            $error = stream_get_contents($pipes[2]);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            $this->assertSame(0, proc_close($process), $error);
+            $this->assertSame('Invalid or missing CSRF token.|status=419', $output);
+        }
+    }
 }

@@ -90,6 +90,43 @@ final class SeerrRequestRepository
             ->execute();
     }
 
+    /** @return list<\Dibi\Row> */
+    public function pendingMetadata(int $limit, int $nowEpoch): array
+    {
+        return $this->db->select('*')->from('seerr_requests')
+            ->where("(metadata_pending = 1 OR (metadata_pending IS NULL AND year IS NULL AND poster_path IS NULL AND ((media_type = 'movie' AND title = 'Unknown title') OR (media_type = 'tv' AND title = 'Unknown series'))))")
+            ->where('tmdb_id > 0')
+            ->where('(metadata_retry_at_epoch IS NULL OR metadata_retry_at_epoch <= %i)', $nowEpoch)
+            ->orderBy('COALESCE(metadata_retry_at_epoch, 0)')
+            ->orderBy('request_id')
+            ->limit(max(1, min(5, $limit)))
+            ->fetchAll();
+    }
+
+    /** @param array{title: string, year: ?string, posterPath: ?string}|null $details */
+    public function finishMetadataAttempt(\Dibi\Row $pending, ?array $details, int $nowEpoch): void
+    {
+        $attempts = min(1_000_000, (int) $pending['metadata_attempts'] + 1);
+        $data = $details === null ? [
+            'metadata_pending' => 1,
+            'metadata_attempts' => $attempts,
+            'metadata_retry_at_epoch' => $nowEpoch + min(3600, 60 * (2 ** min(6, $attempts - 1))),
+        ] : [
+            'title' => $details['title'],
+            'year' => $details['year'],
+            'poster_path' => $details['posterPath'],
+            'metadata_pending' => 0,
+            'metadata_attempts' => 0,
+            'metadata_retry_at_epoch' => null,
+        ];
+        $this->db->update('seerr_requests', $data)
+            ->where('request_id = %i', (int) $pending['request_id'])
+            ->where('(metadata_pending IS NULL OR metadata_pending = 1)')
+            ->where('metadata_attempts = %i', (int) $pending['metadata_attempts'])
+            ->where('COALESCE(metadata_retry_at_epoch, 0) = %i', (int) ($pending['metadata_retry_at_epoch'] ?? 0))
+            ->execute();
+    }
+
     /**
      * Apply one completely fetched remote prefix as a transaction, so a failed
      * row cannot establish a newer boundary while leaving older requests out.
@@ -301,6 +338,9 @@ final class SeerrRequestRepository
         $this->platform->createSqliteIndex('idx_requested_at', 'seerr_requests', ['requested_at']);
 
         $this->ensureColumn('requested_at_epoch', '`requested_at_epoch` bigint DEFAULT NULL AFTER `requested_at`', '`requested_at_epoch` INTEGER DEFAULT NULL');
+        $this->ensureColumn('metadata_pending', '`metadata_pending` tinyint DEFAULT NULL', '`metadata_pending` INTEGER DEFAULT NULL');
+        $this->ensureColumn('metadata_attempts', '`metadata_attempts` int NOT NULL DEFAULT 0', '`metadata_attempts` INTEGER NOT NULL DEFAULT 0');
+        $this->ensureColumn('metadata_retry_at_epoch', '`metadata_retry_at_epoch` bigint DEFAULT NULL', '`metadata_retry_at_epoch` INTEGER DEFAULT NULL');
         $this->ensureColumn('notification_attempts', '`notification_attempts` tinyint NOT NULL DEFAULT 0 AFTER `notified`', '`notification_attempts` INTEGER NOT NULL DEFAULT 0');
         $this->ensureColumn('notification_claim_token', '`notification_claim_token` varchar(64) DEFAULT NULL AFTER `notification_attempts`', '`notification_claim_token` TEXT DEFAULT NULL');
         $this->ensureColumn('notification_claimed_at_epoch', '`notification_claimed_at_epoch` bigint DEFAULT NULL AFTER `notification_claim_token`', '`notification_claimed_at_epoch` INTEGER DEFAULT NULL');

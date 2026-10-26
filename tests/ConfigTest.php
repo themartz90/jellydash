@@ -93,6 +93,28 @@ final class ConfigTest extends TestCase
         }
     }
 
+    public function testTlsFlagsRejectInvalidValuesAndKeepExplicitFalse(): void
+    {
+        foreach (['JELLYFIN_VERIFY_SSL', 'JELLYSEER_VERIFY_SSL', 'SAB_VERIFY_SSL'] as $key) {
+            $previous = getenv($key);
+            try {
+                putenv($key . '=false');
+                $this->assertFalse(Config::bool($key, true));
+                putenv($key . '=true');
+                $this->assertTrue(Config::bool($key, true));
+                putenv($key . '=ture');
+                try {
+                    Config::bool($key, true);
+                    $this->fail($key . ' accepted an invalid TLS flag.');
+                } catch (InvalidArgumentException $e) {
+                    $this->assertSame($key . ' must be a valid boolean.', $e->getMessage());
+                }
+            } finally {
+                putenv($previous === false ? $key : $key . '=' . $previous);
+            }
+        }
+    }
+
     public function testEnvDefaultsToProduction(): void
     {
         $this->assertSame('production', Config::env());

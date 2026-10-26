@@ -116,6 +116,38 @@ final class SchemaCompatibilityTest extends TestCase
         $this->assertSame('🪼', (string) $connection->query('SELECT %s AS value', '🪼')->fetchSingle());
     }
 
+    public function testShortHistoryMetadataColumnsUpgradeWithoutLosingRows(): void
+    {
+        $this->initializeAllSchemas();
+        $this->dibi->query('ALTER TABLE play_history MODIFY user_name varchar(128) DEFAULT NULL, MODIFY library varchar(64) DEFAULT NULL, MODIFY client varchar(64) DEFAULT NULL, MODIFY device varchar(64) DEFAULT NULL, MODIFY item_name varchar(255) DEFAULT NULL, MODIFY series_name varchar(255) DEFAULT NULL');
+        $this->dibi->insert('play_history', [
+            'session_key' => 'existing-metadata', 'item_id' => 'existing-item', 'item_type' => 'Movie',
+            'user_name' => 'Existing Viewer', 'library' => 'Existing library', 'play_method' => 'DirectPlay',
+            'started_at' => '2026-09-08 12:00:00', 'updated_at' => '2026-09-08 12:01:00', 'notified' => 1,
+        ])->execute();
+        $before = $this->dibi->select('*')->from('play_history')->fetch()->toArray();
+        $this->dibi->query('ALTER TABLE theme_item_classifications DROP COLUMN observation_version');
+        $this->dibi->insert('theme_item_classifications', [
+            'server_key' => 'legacy-observation', 'item_id' => 'old-theme', 'item_type' => 'Audio',
+            'classification' => 'theme', 'attempts' => 0, 'updated_at_epoch' => 1000,
+        ])->execute();
+        $this->resetSchemaState();
+        $history = new PlayHistoryRepository($this->database);
+        $this->assertSame(0, (int) $this->dibi->select('observation_version')->from('theme_item_classifications')->where('item_id = %s', 'old-theme')->fetchSingle());
+        $this->assertSame('theme', $this->dibi->select('classification')->from('theme_item_classifications')->where('item_id = %s', 'old-theme')->fetchSingle());
+        $this->assertEquals($before, $this->dibi->select('*')->from('play_history')->where('session_key = %s', 'existing-metadata')->fetch()->toArray());
+        $name = str_repeat('Ž', 300);
+        $history->logActiveStreams([[
+            'id' => 'long-metadata', 'itemId' => 'long-item', 'itemType' => 'Movie',
+            'user' => $name, 'library' => $name, 'itemName' => $name, 'seriesName' => $name,
+            'client' => $name, 'device' => $name, 'playMethod' => 'DirectPlay', 'watchedSec' => 30, 'runtimeSec' => 300,
+        ]], new DateTimeImmutable('2026-09-08 13:00:00'));
+        $row = $this->dibi->select('*')->from('play_history')->where('session_key = %s', 'long-metadata')->fetch();
+        foreach (['user_name', 'library', 'item_name', 'series_name', 'client', 'device'] as $field) {
+            $this->assertSame($name, $row[$field]);
+        }
+    }
+
     public function testExistingRowsSurviveSchemaInitialization(): void
     {
         $this->initializeAllSchemas();
@@ -451,6 +483,7 @@ final class SchemaCompatibilityTest extends TestCase
             [AppSettings::class, 'cache', null],
             [AppSettings::class, 'schemaConnections', null],
             [PlayHistoryRepository::class, 'schemaConnections', null],
+            [\Mk\Framework\Jellyfin\ThemePlaybackExclusions::class, 'schemaConnections', null],
             [MovieReplacements::class, 'schemaConnections', null],
             [MovieIdentityRepository::class, 'schemaConnections', null],
             [PushSubscriptionRepository::class, 'schemaConnections', null],

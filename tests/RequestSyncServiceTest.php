@@ -60,6 +60,99 @@ final class RequestSyncServiceTest extends TestCase
         $this->assertSame(40, (int) $this->database->getDibi()->select('COUNT(*)')->from('seerr_requests')->where('notified = 1')->fetchSingle());
     }
 
+    public function testFailedDetailsRecoverAfterBackoffEvenOutsideTheCurrentPage(): void
+    {
+        $logger = \Mk\Framework\Container::logger();
+        \Mk\Framework\Container::set('logger', new \Psr\Log\NullLogger());
+        $now = 1_800_000_000;
+        $client = new FakePagedJellyseerrClient([0 => $this->requests(901, 901)]);
+        $client->failDetails = true;
+        $sync = new RequestSyncService($client, $this->repository, static function () use (&$now): int {
+            return $now;
+        });
+        try {
+            $this->assertSame(1, $sync->sync());
+            $this->assertSame('Unknown title', $this->repository->latest()[0]['title']);
+            $client->pages = [];
+            $client->failDetails = false;
+            $this->assertSame(0, $sync->sync());
+            $this->assertSame(1, $client->detailCalls);
+            $now += 61;
+            $this->assertSame(0, $sync->sync());
+            $row = $this->repository->latest()[0];
+            $this->assertSame('Movie 10901', $row['title']);
+            $this->assertSame('2026', $row['year']);
+            $this->assertSame('/10901.jpg', $row['poster_path']);
+            $this->assertSame(1, (int) $row['notified']);
+            $this->assertSame(2, $client->detailCalls);
+        } finally {
+            \Mk\Framework\Container::set('logger', $logger);
+        }
+    }
+
+    public function testOldPlaceholdersAreRepairedInBoundedBatchesWithoutChangingNotifications(): void
+    {
+        for ($id = 1; $id <= 6; $id++) {
+            $this->insertKnown($id, 2);
+            $this->database->getDibi()->update('seerr_requests', ['title' => 'Unknown title', 'year' => null])
+                ->where('request_id = %i', $id)->execute();
+        }
+        $client = new FakePagedJellyseerrClient([]);
+        $sync = new RequestSyncService($client, $this->repository);
+        $this->assertSame(0, $sync->sync());
+        $this->assertSame(5, $client->detailCalls);
+        $this->assertSame(1, (int) $this->database->getDibi()->select('COUNT(*)')->from('seerr_requests')->where('title = %s', 'Unknown title')->fetchSingle());
+        $this->assertSame(0, $sync->sync());
+        $this->assertSame(6, $client->detailCalls);
+        $this->assertSame(6, (int) $this->database->getDibi()->select('COUNT(*)')->from('seerr_requests')->where('notified = 1')->fetchSingle());
+        $this->assertSame(0, $sync->sync());
+        $this->assertSame(6, $client->detailCalls);
+    }
+
+    public function testMetadataRetriesBackOffAndStaleFailuresCannotUndoRecovery(): void
+    {
+        $logger = \Mk\Framework\Container::logger();
+        \Mk\Framework\Container::set('logger', new \Psr\Log\NullLogger());
+        $now = 1_800_000_000;
+        $client = new FakePagedJellyseerrClient([0 => $this->requests(901, 901)]);
+        $client->failDetails = true;
+        $sync = new RequestSyncService($client, $this->repository, static function () use (&$now): int {
+            return $now;
+        });
+        try {
+            $sync->sync();
+            $this->assertSame($now + 60, (int) $this->repository->latest()[0]['metadata_retry_at_epoch']);
+            $client->pages = [];
+            $now += 61;
+            $sync->sync();
+            $this->assertSame($now + 120, (int) $this->repository->latest()[0]['metadata_retry_at_epoch']);
+            $sync->sync();
+            $this->assertSame(2, $client->detailCalls);
+            $now += 121;
+            $stale = $this->repository->pendingMetadata(5, $now)[0];
+            $client->failDetails = false;
+            $sync->sync();
+            $this->repository->finishMetadataAttempt($stale, null, $now);
+            $row = $this->repository->latest()[0];
+            $this->assertSame('Movie 10901', $row['title']);
+            $this->assertSame(0, (int) $row['metadata_pending']);
+            $this->assertNull($row['metadata_retry_at_epoch']);
+        } finally {
+            \Mk\Framework\Container::set('logger', $logger);
+        }
+    }
+
+    public function testSuccessfulUnknownTitleIsNotMistakenForALegacyPlaceholder(): void
+    {
+        $this->insertKnown(900, 2);
+        $this->database->getDibi()->update('seerr_requests', [
+            'title' => 'Unknown title', 'year' => null, 'poster_path' => null, 'metadata_pending' => 0,
+        ])->where('request_id = 900')->execute();
+        $client = new FakePagedJellyseerrClient([]);
+        (new RequestSyncService($client, $this->repository))->sync();
+        $this->assertSame(0, $client->detailCalls);
+    }
+
     public function testSyncFetchesPastNewestFortyUntilKnownBoundary(): void
     {
         $this->insertKnown(100, 1);
@@ -404,9 +497,11 @@ final class FakePagedJellyseerrClient extends JellyseerrClient
 {
     /** @var array<int, int> */
     public array $requestedSkips = [];
+    public bool $failDetails = false;
+    public int $detailCalls = 0;
 
     /** @param array<int, array<int, array<string, mixed>>> $pages */
-    public function __construct(private array $pages, private ?int $failingSkip = null)
+    public function __construct(public array $pages, private ?int $failingSkip = null)
     {
         parent::__construct('http://jellyseerr.test', 'token');
     }
@@ -423,6 +518,10 @@ final class FakePagedJellyseerrClient extends JellyseerrClient
 
     public function movie(int $tmdbId): array
     {
-        return ['title' => 'Movie ' . $tmdbId, 'releaseDate' => '2026-01-01', 'posterPath' => null];
+        $this->detailCalls++;
+        if ($this->failDetails) {
+            throw new RuntimeException('Synthetic detail lookup failure.');
+        }
+        return ['title' => 'Movie ' . $tmdbId, 'releaseDate' => '2026-01-01', 'posterPath' => '/' . $tmdbId . '.jpg'];
     }
 }

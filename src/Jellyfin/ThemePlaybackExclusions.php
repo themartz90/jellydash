@@ -7,6 +7,7 @@ namespace Mk\Framework\Jellyfin;
 use Mk\Framework\Container;
 use Mk\Framework\Database;
 use Mk\Framework\DatabasePlatform;
+use Mk\Framework\Log;
 
 final class ThemePlaybackExclusions
 {
@@ -15,6 +16,8 @@ final class ThemePlaybackExclusions
     private \Dibi\Connection $db;
     private DatabasePlatform $platform;
     private ThemePlaybackClassifier $classifier;
+    /** @var array<string, array{type: string, epoch: int, version: int}> */
+    private array $observedThemes = [];
     /** @var \WeakMap<\Dibi\Connection, true>|null */
     private static ?\WeakMap $schemaConnections = null;
 
@@ -60,7 +63,26 @@ final class ThemePlaybackExclusions
      */
     public function filterSessions(array $sessions, JellyfinClient $client, ?int $nowEpoch = null): array
     {
+        $this->observedThemes = [];
         $nowEpoch ??= time();
+        if (!$this->platform->isSqlite()) {
+            return $this->filterObservedSessions($sessions, $client, $nowEpoch);
+        }
+        $timeout = (int) $this->db->query('PRAGMA busy_timeout')->fetchSingle();
+        $this->db->query('PRAGMA busy_timeout = 0');
+        try {
+            return $this->filterObservedSessions($sessions, $client, $nowEpoch);
+        } finally {
+            $this->db->query('PRAGMA busy_timeout = %i', $timeout);
+        }
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $sessions
+     * @return array<int, array<string, mixed>>
+     */
+    private function filterObservedSessions(array $sessions, JellyfinClient $client, int $nowEpoch): array
+    {
         $visible = [];
         $unresolved = [];
 
@@ -79,9 +101,15 @@ final class ThemePlaybackExclusions
                     $visible[$index] = $session;
                     continue;
                 }
-                $this->remember($itemId, (string) ($item['Type'] ?? ''), $embedded, $nowEpoch);
+                $baseVersion = (int) ($this->row($itemId)['observation_version'] ?? 0);
+                $this->persistClassification(fn () => $this->remember($itemId, (string) ($item['Type'] ?? ''), $embedded, $nowEpoch), true);
                 if ($embedded !== ThemePlaybackClassifier::THEME) {
+                    $session['_jellydash_theme_classification'] = $embedded;
+                    $session['_jellydash_theme_observed_at_epoch'] = $nowEpoch;
+                    $session['_jellydash_theme_base_version'] = $baseVersion;
                     $visible[$index] = $session;
+                } else {
+                    $this->observedThemes[$itemId] = ['type' => (string) ($item['Type'] ?? ''), 'epoch' => $nowEpoch, 'version' => $baseVersion];
                 }
                 continue;
             }
@@ -108,15 +136,40 @@ final class ThemePlaybackExclusions
         }
 
         if ($unresolved !== []) {
-            $this->resolve($unresolved, $client, $nowEpoch);
+            $observed = [];
+            $this->resolve($unresolved, $client, $nowEpoch, $observed);
             foreach ($unresolved as $index => $candidate) {
-                if ($this->classification($candidate['stored_id']) === ThemePlaybackClassifier::THEME) {
+                $observation = $observed[$candidate['stored_id']] ?? null;
+                $classification = $observation['classification'] ?? $this->classification($candidate['stored_id']);
+                if ($classification === ThemePlaybackClassifier::THEME) {
+                    $this->observedThemes[$candidate['stored_id']] = ['type' => $candidate['item_type'], 'epoch' => $nowEpoch,
+                        'version' => (int) ($observation['version'] ?? 0)];
                     unset($visible[$index]);
+                } elseif ($classification === ThemePlaybackClassifier::ORDINARY) {
+                    if (isset($observed[$candidate['stored_id']])) {
+                        $visible[$index]['_jellydash_theme_classification'] = $classification;
+                        $visible[$index]['_jellydash_theme_observed_at_epoch'] = $nowEpoch;
+                        $visible[$index]['_jellydash_theme_base_version'] = $observation['version'];
+                    }
                 }
             }
         }
 
         return array_values($visible);
+    }
+
+    /** @return list<array<string, mixed>> */
+    public function observedThemeSamples(): array
+    {
+        $samples = [];
+        foreach ($this->observedThemes as $itemId => $observation) {
+            $itemId = (string) $itemId;
+            // Retain only the classification, never a theme's user or progress.
+            $samples[] = ['id' => 'theme:' . hash('sha256', $itemId), 'itemId' => $itemId,
+                'itemType' => $observation['type'], 'themeClassification' => ThemePlaybackClassifier::THEME,
+                'themeClassificationEpoch' => $observation['epoch'], 'themeClassificationVersion' => $observation['version']];
+        }
+        return $samples;
     }
 
     public function classifyHistoryBatch(JellyfinClient $client, int $limit = self::BACKFILL_BATCH_SIZE, ?int $nowEpoch = null): int
@@ -162,8 +215,9 @@ final class ThemePlaybackExclusions
 
     /**
      * @param array<int, array{stored_id: string, canonical_id: string, item_type: string}> $candidates
+     * @param array<string, array{classification: string, version: int}>|null $observed
      */
-    private function resolve(array $candidates, JellyfinClient $client, int $nowEpoch): int
+    private function resolve(array $candidates, JellyfinClient $client, int $nowEpoch, ?array &$observed = null): int
     {
         if ($candidates === []) {
             return 0;
@@ -173,7 +227,7 @@ final class ThemePlaybackExclusions
             $meta = $client->itemPlaybackMeta(array_values(array_unique(array_column($candidates, 'stored_id'))));
         } catch (\Throwable) {
             foreach ($candidates as $candidate) {
-                $this->pending($candidate['stored_id'], $candidate['item_type'], $nowEpoch);
+                $this->persistClassification(fn () => $this->pending($candidate['stored_id'], $candidate['item_type'], $nowEpoch), $observed !== null);
             }
 
             return 0;
@@ -183,7 +237,7 @@ final class ThemePlaybackExclusions
         foreach ($candidates as $candidate) {
             $item = $meta[$candidate['canonical_id']] ?? null;
             if (!is_array($item)) {
-                $this->pending($candidate['stored_id'], $candidate['item_type'], $nowEpoch);
+                $this->persistClassification(fn () => $this->pending($candidate['stored_id'], $candidate['item_type'], $nowEpoch), $observed !== null);
                 continue;
             }
             if (trim($item['Type']) === '') {
@@ -191,17 +245,36 @@ final class ThemePlaybackExclusions
             }
             $classification = $this->classifier->classify($item);
             if ($classification === null) {
-                $this->pending($candidate['stored_id'], $candidate['item_type'], $nowEpoch);
+                $this->persistClassification(fn () => $this->pending($candidate['stored_id'], $candidate['item_type'], $nowEpoch), $observed !== null);
                 continue;
             }
-            $this->remember($candidate['stored_id'], $candidate['item_type'], $classification, $nowEpoch);
+            if ($observed !== null) {
+                $observed[$candidate['stored_id']] = ['classification' => $classification,
+                    'version' => (int) ($this->row($candidate['stored_id'])['observation_version'] ?? 0)];
+            }
+            $this->persistClassification(fn () => $this->remember($candidate['stored_id'], $candidate['item_type'], $classification, $nowEpoch), $observed !== null);
             ++$settled;
         }
 
         return $settled;
     }
 
-    public function remember(string $itemId, string $itemType, string $classification, ?int $nowEpoch = null): void
+    /** @param callable(): void $write */
+    private function persistClassification(callable $write, bool $optional): void
+    {
+        try {
+            $write();
+        } catch (\Throwable $e) {
+            if (!$optional) {
+                throw $e;
+            }
+            // The observed classification still filters this sample when its
+            // optional cache write cannot run during a History restore.
+            Log::logException($e);
+        }
+    }
+
+    public function remember(string $itemId, string $itemType, string $classification, ?int $nowEpoch = null, bool $fromQueue = false, ?int $expectedVersion = null): void
     {
         if (!in_array($classification, [ThemePlaybackClassifier::THEME, ThemePlaybackClassifier::ORDINARY], true)) {
             throw new \InvalidArgumentException('Invalid theme playback classification.');
@@ -211,11 +284,6 @@ final class ThemePlaybackExclusions
             return;
         }
         $nowEpoch ??= time();
-        $existing = $this->row($itemId);
-        $changed = $existing === null || (string) $existing['classification'] !== $classification;
-        if (!$changed) {
-            return;
-        }
         $data = [
             'item_type' => $itemType,
             'classification' => $classification,
@@ -223,10 +291,41 @@ final class ThemePlaybackExclusions
             'next_retry_epoch' => null,
             'updated_at_epoch' => $nowEpoch,
         ];
-        $this->write($itemId, $data, $existing !== null);
-        if ($classification === ThemePlaybackClassifier::THEME || ($existing['classification'] ?? null) === ThemePlaybackClassifier::THEME) {
-            $this->bumpRevision();
+        for ($attempt = 0; $attempt < 3; $attempt++) {
+            $existing = $this->row($itemId);
+            if ($existing !== null && in_array($existing['classification'], [ThemePlaybackClassifier::THEME, ThemePlaybackClassifier::ORDINARY], true)) {
+                $previousEpoch = (int) $existing['updated_at_epoch'];
+                if ($previousEpoch > $nowEpoch || ($previousEpoch === $nowEpoch && $fromQueue
+                    && ($expectedVersion === null || (int) $existing['observation_version'] !== $expectedVersion))) {
+                    return;
+                }
+            }
+            $data['observation_version'] = (int) ($existing['observation_version'] ?? 0) + 1;
+            if ($existing === null) {
+                try {
+                    $this->db->insert('theme_item_classifications', [
+                        'server_key' => $this->effectiveServerKey(), 'item_id' => $itemId, ...$data,
+                    ])->execute();
+                } catch (\Dibi\UniqueConstraintViolationException) {
+                    continue;
+                }
+            } else {
+                $this->db->update('theme_item_classifications', $data)
+                    ->where('server_key = %s AND item_id = %s', $this->effectiveServerKey(), $itemId)
+                    ->where('updated_at_epoch = %i AND classification = %s', (int) $existing['updated_at_epoch'], (string) $existing['classification'])
+                    ->where('observation_version = %i', (int) $existing['observation_version'])
+                    ->execute();
+                if ($this->db->getAffectedRows() === 0) {
+                    continue;
+                }
+            }
+            if (($existing['classification'] ?? null) !== $classification
+                && ($classification === ThemePlaybackClassifier::THEME || ($existing['classification'] ?? null) === ThemePlaybackClassifier::THEME)) {
+                $this->bumpRevision();
+            }
+            return;
         }
+        throw new HistoryWriteBusyException('Theme classification changed while recording playback. Captured samples will be retried.');
     }
 
     public function classification(string $itemId): ?string
@@ -323,35 +422,12 @@ final class ThemePlaybackExclusions
         if ($itemId === '') {
             return null;
         }
-        $row = $this->db->select('classification, attempts, next_retry_epoch')->from('theme_item_classifications')
+        $row = $this->db->select('classification, attempts, next_retry_epoch, updated_at_epoch, observation_version')->from('theme_item_classifications')
             ->where('server_key = %s', $this->effectiveServerKey())
             ->where('item_id = %s', $itemId)
             ->fetch();
 
         return $row ?: null;
-    }
-
-    /** @param array<string, mixed> $data */
-    private function write(string $itemId, array $data, bool $exists): void
-    {
-        if ($exists) {
-            $this->db->update('theme_item_classifications', $data)
-                ->where('server_key = %s', $this->effectiveServerKey())
-                ->where('item_id = %s', $itemId)->execute();
-            return;
-        }
-        try {
-            $this->db->insert('theme_item_classifications', [
-                'server_key' => $this->effectiveServerKey(),
-                'item_id' => $itemId,
-                ...$data,
-            ])->execute();
-        } catch (\Dibi\Exception $error) {
-            if ($this->row($itemId) === null) {
-                throw $error;
-            }
-            $this->write($itemId, $data, true);
-        }
     }
 
     private function bumpRevision(): void
@@ -394,6 +470,7 @@ final class ThemePlaybackExclusions
                 `attempts` tinyint NOT NULL DEFAULT 0,
                 `next_retry_epoch` bigint DEFAULT NULL,
                 `updated_at_epoch` bigint NOT NULL,
+                `observation_version` bigint NOT NULL DEFAULT 0,
                 PRIMARY KEY (`server_key`, `item_id`),
                 KEY `idx_theme_retry` (`server_key`, `classification`, `next_retry_epoch`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin',
@@ -405,10 +482,20 @@ final class ThemePlaybackExclusions
                 `attempts` INTEGER NOT NULL DEFAULT 0,
                 `next_retry_epoch` INTEGER DEFAULT NULL,
                 `updated_at_epoch` INTEGER NOT NULL,
+                `observation_version` INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (`server_key`, `item_id`)
             )',
         );
         $this->platform->createSqliteIndex('idx_theme_retry', 'theme_item_classifications', ['server_key', 'classification', 'next_retry_epoch']);
+        if (!$this->platform->columnExists('theme_item_classifications', 'observation_version')) {
+            try {
+                $this->platform->addColumn('theme_item_classifications', '`observation_version` bigint NOT NULL DEFAULT 0', '`observation_version` INTEGER NOT NULL DEFAULT 0');
+            } catch (\Dibi\Exception $e) {
+                if (!$this->platform->columnExists('theme_item_classifications', 'observation_version')) {
+                    throw $e;
+                }
+            }
+        }
         $this->platform->createTable(
             'CREATE TABLE IF NOT EXISTS `theme_classification_state` (
                 `server_key` char(64) NOT NULL,

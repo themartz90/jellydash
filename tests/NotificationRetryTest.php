@@ -367,7 +367,7 @@ final class NotificationRetryTest extends TestCase
         $this->assertState(0, 1, 1060);
     }
 
-    public function testPlaybackClaimCannotAttachToRestartedRowGeneration(): void
+    public function testPlaybackClaimsRemainBoundToTheirOwnPlayWhenAReplayStarts(): void
     {
         $history = new PlayHistoryRepository($this->database);
         $start = new \DateTimeImmutable('2026-09-08 12:00:00');
@@ -390,20 +390,19 @@ final class NotificationRetryTest extends TestCase
         }
 
         $this->assertTrue($interleaved);
-        $row = $this->database->getDibi()->select('started_at, notification_attempts, notification_claim_token')
-            ->from('play_history')->fetch();
-        $this->assertStringStartsWith('2026-09-08 15:00:00', (string) $row['started_at']);
-        if (DatabasePlatform::isSqliteDriver(DATABASE_DRIVER_DIBI) && $claims !== []) {
-            // SQLite can defer reading the result until after the event. In
-            // that case the selected payload already belongs to the new play.
-            $this->assertCount(1, $claims);
-            $this->assertSame('2026-09-08 15:00:00', (string) $claims[0]['started_at']);
-            $this->assertSame(120, (int) $claims[0]['watched_sec']);
-            $this->assertSame(1, (int) $row['notification_attempts']);
-        } else {
-            $this->assertSame([], $claims);
-            $this->assertSame(0, (int) $row['notification_attempts']);
-            $this->assertNull($row['notification_claim_token']);
+        $rows = $this->database->getDibi()->select('*')->from('play_history')->orderBy('started_at')->fetchAll();
+        $this->assertCount(2, $rows);
+        $this->assertStringStartsWith('2026-09-08 12:00:00', (string) $rows[0]['started_at']);
+        $this->assertSame(3500, (int) $rows[0]['watched_sec']);
+        $this->assertStringStartsWith('2026-09-08 15:00:00', (string) $rows[1]['started_at']);
+        $this->assertSame(120, (int) $rows[1]['watched_sec']);
+        $this->assertNotSame((int) $rows[0]['id'], (int) $rows[1]['id']);
+        $this->assertNotEmpty($claims);
+        foreach ($claims as $claim) {
+            $stored = $this->database->getDibi()->select('*')->from('play_history')->where('id = %i', (int) $claim['id'])->fetch();
+            $this->assertSame((string) $claim['started_at'], (string) $stored['started_at']);
+            $this->assertSame((int) $claim['watched_sec'], (int) $stored['watched_sec']);
+            $this->assertSame($claim['notification_claim_token'], $stored['notification_claim_token']);
         }
     }
 

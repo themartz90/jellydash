@@ -35,6 +35,7 @@ services:
       # Background poller (history recording, cache warming, alerts)
       POLLER_ENABLED: "${POLLER_ENABLED:-true}"
       POLL_INTERVAL: "${POLL_INTERVAL:-30}"
+      HISTORY_SAMPLE_QUEUE_DIR: "${HISTORY_SAMPLE_QUEUE_DIR:-/var/www/html/var/cache/history-samples}"
       # Web Push notifications (optional; generate keys once, see README)
       PUSH_ENABLED: "${PUSH_ENABLED:-true}"
       PUSH_MAX_SUBSCRIPTIONS: "${PUSH_MAX_SUBSCRIPTIONS:-100}"

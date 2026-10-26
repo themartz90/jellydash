@@ -85,6 +85,25 @@ final class SQLiteSchemaCompatibilityTest extends TestCase
         $this->assertSame(['idx_download_completion_recent'], $this->namedIndexes('download_completions'));
     }
 
+    public function testLegacyThemeObservationsGainVersionWithoutLosingClassification(): void
+    {
+        $this->dibi->query('CREATE TABLE theme_item_classifications (
+            server_key TEXT NOT NULL, item_id TEXT NOT NULL, item_type TEXT NOT NULL,
+            classification TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+            next_retry_epoch INTEGER DEFAULT NULL, updated_at_epoch INTEGER NOT NULL,
+            PRIMARY KEY (server_key, item_id))');
+        $this->dibi->insert('theme_item_classifications', [
+            'server_key' => 'legacy-observation', 'item_id' => 'old-theme', 'item_type' => 'Audio',
+            'classification' => 'theme', 'updated_at_epoch' => 1000,
+        ])->execute();
+        $themes = new ThemePlaybackExclusions($this->database, 'legacy-observation');
+        $this->assertSame('theme', $themes->classification('old-theme'));
+        $this->assertSame(0, (int) $this->dibi->select('observation_version')->from('theme_item_classifications')->fetchSingle());
+        $themes->remember('old-theme', 'Audio', 'ordinary', 1100);
+        $this->assertSame('ordinary', $themes->classification('old-theme'));
+        $this->assertSame(1, (int) $this->dibi->select('observation_version')->from('theme_item_classifications')->fetchSingle());
+    }
+
     public function testEnvironmentConnectionUsesSQLiteSafetySettings(): void
     {
         $databasePath = tempnam(sys_get_temp_dir(), 'jellydash_sqlite_');

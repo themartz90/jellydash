@@ -22,8 +22,13 @@ while (!is_file($input['marker'] . '.go')) {
     usleep(10000);
     clearstatcache();
 }
-$history->logActiveStreams([[
+try {
+    $history->logActiveStreams([[
     'id' => 'conflicting-new-play', 'itemId' => 'old', 'itemType' => 'Episode', 'itemName' => 'Episode',
     'library' => 'Movies', 'libraryResolved' => true, 'watchedSec' => 300, 'runtimeSec' => 3600,
-]], new \DateTimeImmutable('2026-10-11 12:05:00'));
+    ]], new \DateTimeImmutable('2026-10-11 12:05:00'));
+} catch (\Mk\Framework\Jellyfin\HistoryWriteBusyException) {
+    file_put_contents($input['marker'] . '.queued', 'queued');
+    exit;
+}
 file_put_contents($input['marker'] . '.done', 'done');

@@ -121,6 +121,7 @@ final class MariaDbToSqliteMigratorTest extends TestCase
         $this->assertSame(3, (int) $classifications[0]['attempts']);
         $this->assertSame(1786443300, (int) $classifications[0]['next_retry_epoch']);
         $this->assertSame(1786443200, (int) $classifications[0]['updated_at_epoch']);
+        $this->assertSame(7, (int) $sqlite->select('observation_version')->from('theme_item_classifications')->where('item_id = %s', 'a-theme-item')->fetchSingle());
         $this->assertSame('z-ordinary-item', (string) $classifications[1]['item_id']);
         $this->assertSame('ordinary', (string) $classifications[1]['classification']);
         $this->assertNull($classifications[1]['next_retry_epoch']);
@@ -144,6 +145,10 @@ final class MariaDbToSqliteMigratorTest extends TestCase
             $this->assertSame($identityRows($this->sourceConnection), $identityRows($sqlite));
         }
         $this->assertSame(1786449600, (int) $sqlite->select('requested_at_epoch')->from('seerr_requests')->fetchSingle());
+        $metadata = $sqlite->select('metadata_pending, metadata_attempts, metadata_retry_at_epoch')->from('seerr_requests')->fetch();
+        $this->assertSame(1, (int) $metadata['metadata_pending']);
+        $this->assertSame(3, (int) $metadata['metadata_attempts']);
+        $this->assertSame(1786450000, (int) $metadata['metadata_retry_at_epoch']);
         $status = $sqlite->select('status, error_code, last_started_at, last_finished_at, last_success_at')
             ->from('system_status')->where('source_id = %s AND component = %s', 'default', 'history')->fetch();
         $this->assertNotFalse($status);
@@ -481,6 +486,7 @@ final class MariaDbToSqliteMigratorTest extends TestCase
                 'item_id' => 'a-theme-item',
                 'item_type' => 'Audio',
                 'classification' => 'theme',
+                'observation_version' => 7,
                 'attempts' => 3,
                 'next_retry_epoch' => 1786443300,
                 'updated_at_epoch' => 1786443200,
@@ -534,6 +540,9 @@ final class MariaDbToSqliteMigratorTest extends TestCase
             'is_4k' => 0,
             'requested_at' => '2026-08-11 12:00:00',
             'requested_at_epoch' => 1786449600,
+            'metadata_pending' => 1,
+            'metadata_attempts' => 3,
+            'metadata_retry_at_epoch' => 1786450000,
             'notified' => 1,
             'created_at' => '2026-08-11 12:00:00',
         ])->execute();

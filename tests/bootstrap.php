@@ -49,6 +49,33 @@ if (!$explicitDatabase) {
     });
 }
 
+$sampleRoot = getenv('JELLYDASH_TEST_SAMPLE_ROOT');
+if ($sampleRoot === false || $sampleRoot === '') {
+    $sampleRoot = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'jellydash-history-samples-' . getmypid() . '-' . bin2hex(random_bytes(8));
+    putenv('JELLYDASH_TEST_SAMPLE_ROOT=' . $sampleRoot);
+    putenv('JELLYDASH_TEST_SAMPLE_OWNER_PID=' . getmypid());
+}
+if (strcasecmp(dirname($sampleRoot), rtrim(sys_get_temp_dir(), '/\\')) !== 0
+    || preg_match('/^jellydash-history-samples-[0-9]+-[a-f0-9]{16}$/D', basename($sampleRoot)) !== 1) {
+    throw new RuntimeException('Unsafe temporary History sample directory.');
+}
+putenv('HISTORY_SAMPLE_QUEUE_DIR=' . $sampleRoot);
+$_ENV['HISTORY_SAMPLE_QUEUE_DIR'] = $_SERVER['HISTORY_SAMPLE_QUEUE_DIR'] = $sampleRoot;
+register_shutdown_function(static function () use ($sampleRoot): void {
+    if ((int) getenv('JELLYDASH_TEST_SAMPLE_OWNER_PID') !== getmypid() || !is_dir($sampleRoot)) {
+        return;
+    }
+    $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($sampleRoot, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
+    foreach ($files as $file) {
+        if ($file->isDir() && !$file->isLink()) {
+            rmdir($file->getPathname());
+        } else {
+            unlink($file->getPathname());
+        }
+    }
+    rmdir($sampleRoot);
+});
+
 Dotenv\Dotenv::createImmutable(ROOT_DIR)->safeLoad();
 
 // A developer's configured services must never receive traffic from tests.

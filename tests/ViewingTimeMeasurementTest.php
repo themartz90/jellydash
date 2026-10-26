@@ -270,6 +270,10 @@ final class ViewingTimeMeasurementTest extends TestCase
         $repository->logActiveStreams([$this->stream(120)], $start->modify('+3 hours'));
         $this->assertSame(0, $this->duration($database));
         $this->assertSame(120, $this->position($database));
+        $this->assertSame(2, (int) $connection->select('COUNT(*)')->from('play_history')->fetchSingle());
+        $completed = $connection->select('watched_sec, watch_duration_sec')->from('play_history')->where('session_key = %s', 'phpunit-viewing-session')->fetch();
+        $this->assertSame(660, (int) $completed['watched_sec']);
+        $this->assertNull($completed['watch_duration_sec']);
     }
 
     public function testAggregatesUseMeasuredDurationAndLegacyFallback(): void
@@ -305,17 +309,19 @@ final class ViewingTimeMeasurementTest extends TestCase
 
     private function duration(Database $database): int
     {
-        return (int) $database->getDibi()->select('watch_duration_sec')->from('play_history')->fetchSingle();
+        return (int) $database->getDibi()->select('watch_duration_sec')->from('play_history')->orderBy('started_at')->desc()->orderBy('id')->desc()->fetchSingle();
     }
 
     private function position(Database $database): int
     {
-        return (int) $database->getDibi()->select('watched_sec')->from('play_history')->fetchSingle();
+        return (int) $database->getDibi()->select('watched_sec')->from('play_history')->orderBy('started_at')->desc()->orderBy('id')->desc()->fetchSingle();
     }
 
     private function cleanup(): void
     {
         if (isset($this->database)) {
+            $this->database->getDibi()->delete('play_history')
+                ->where('session_key LIKE %s AND item_id LIKE %s', 'jd-replay-%', 'phpunit-viewing-%')->execute();
             $this->database->getDibi()->delete('play_history')
                 ->where('session_key LIKE %s', 'phpunit-viewing-%')->execute();
         }

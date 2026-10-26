@@ -20,7 +20,8 @@ if ($barrier !== null) {
     }
 }
 
-$repository->logActiveStreams([[
+try {
+    $repository->logActiveStreams([[
     'id' => 'shared-session',
     'itemId' => 'shared-item',
     'itemType' => 'Movie',
@@ -28,6 +29,10 @@ $repository->logActiveStreams([[
     'playMethod' => 'DirectPlay',
     'watchedSec' => 30,
     'runtimeSec' => 3600,
-]], new DateTimeImmutable('2026-08-11 12:00:00'));
+    ]], new DateTimeImmutable('2026-08-11 12:00:00'));
+} catch (\Mk\Framework\Jellyfin\HistoryWriteBusyException) {
+    echo 'queued';
+    exit;
+}
 
 echo 'ok';

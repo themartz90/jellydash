@@ -87,6 +87,45 @@ final class HistoryCsvImporterTest extends TestCase
         );
     }
 
+    public function testReplayRoundTripAndOlderBackupMergeKeepBothPlays(): void
+    {
+        $start = new DateTimeImmutable('2099-06-19 12:00:00');
+        $stream = [
+            'id' => 'phpunit-native-csv-rewatch', 'itemId' => 'phpunit-native-rewatch-item',
+            'itemType' => 'Movie', 'user' => 'PHPUnit Native CSV', 'playMethod' => 'DirectPlay',
+            'itemName' => str_repeat('Ž', 300), 'library' => str_repeat('Library', 10),
+            'runtimeSec' => 1000,
+        ];
+        foreach ([[0, 0], [30, 30], [60, 960]] as [$seconds, $position]) {
+            $this->repository->logActiveStreams([array_replace($stream, ['watchedSec' => $position])], $start->modify('+' . $seconds . ' seconds'));
+        }
+        $before = $this->temporaryFile();
+        $file = fopen($before, 'w+b');
+        (new HistoryCsvExporter($this->repository))->write(new HistoryFilters(user: 'PHPUnit Native CSV', range: 'all'), $file);
+        fclose($file);
+        foreach ([[90, 0], [120, 30]] as [$seconds, $position]) {
+            $this->repository->logActiveStreams([array_replace($stream, ['watchedSec' => $position])], $start->modify('+' . $seconds . ' seconds'));
+        }
+        $after = $this->temporaryFile();
+        $file = fopen($after, 'w+b');
+        $this->assertSame(2, (new HistoryCsvExporter($this->repository))->write(new HistoryFilters(user: 'PHPUnit Native CSV', range: 'all'), $file));
+        fclose($file);
+        $this->dibi->delete('play_history')->where('item_id = %s', 'phpunit-native-rewatch-item')->execute();
+        $importer = new HistoryCsvImporter(Container::db(), repository: $this->repository);
+        $this->assertSame(1, $importer->importFile($before)['inserted']);
+        $this->assertSame(['parsed' => 2, 'inserted' => 1, 'skipped' => 1], $importer->importFile($after));
+        $this->assertSame(['parsed' => 2, 'inserted' => 0, 'skipped' => 2], $importer->importFile($after));
+        foreach ([[150, 60], [180, 90]] as [$seconds, $position]) {
+            $this->repository->logActiveStreams([array_replace($stream, ['watchedSec' => $position])], $start->modify('+' . $seconds . ' seconds'));
+        }
+        $rows = $this->dibi->select('*')->from('play_history')->where('item_id = %s', 'phpunit-native-rewatch-item')->orderBy('started_at')->fetchAll();
+        $this->assertCount(2, $rows);
+        $this->assertSame([60, 60], array_map(static fn (\Dibi\Row $row): int => (int) $row['watch_duration_sec'], $rows));
+        $this->assertSame([1, 1], array_map(static fn (\Dibi\Row $row): int => (int) $row['notified'], $rows));
+        $this->assertSame(str_repeat('Ž', 300), $rows[0]['item_name']);
+        $this->assertSame(str_repeat('Library', 10), $rows[1]['library']);
+    }
+
     public function testSourceTimezoneIsConvertedToTheReceivingInstallation(): void
     {
         $originalTimezone = date_default_timezone_get();
@@ -485,6 +524,7 @@ final class HistoryCsvImporterTest extends TestCase
 
     private function cleanup(): void
     {
+        $this->dibi->delete('play_history')->where('item_id = %s', 'phpunit-native-rewatch-item')->execute();
         $this->dibi->delete('play_history')
             ->where('(session_key LIKE %s OR session_key = %s)', 'phpunit-native-csv-%', 'playback-reporting:phpunit-native-csv-duplicate')
             ->execute();

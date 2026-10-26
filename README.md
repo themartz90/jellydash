@@ -170,6 +170,11 @@ You do not need to migrate. Existing MariaDB installations continue working exac
 
 Stop Jellydash first so no plays or settings change during the copy. The migration checks every copied value and leaves the original MariaDB data untouched.
 
+Before stopping, let any History restore finish and wait for a successful
+Jellyfin collection check in System status. This lets queued playback samples
+reach the database. The migration copies database rows, not the
+[pending sample files](docs/HISTORY_CSV.md#importing).
+
 First preserve your current MariaDB Compose file for rollback. This will not overwrite an existing backup. Continue only when it prints `MariaDB Compose backup verified`:
 
 ```bash

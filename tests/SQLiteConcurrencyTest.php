@@ -91,12 +91,44 @@ final class SQLiteConcurrencyTest extends TestCase
             $result = $this->finishClaimWorker($worker);
             $this->assertSame('', $result['error']);
             $this->assertSame(0, $result['exitCode'], $result['error'] . $result['output']);
-            $this->assertSame('ok', $result['output']);
+            $this->assertContains($result['output'], ['ok', 'queued']);
         }
 
+        (new \Mk\Framework\Jellyfin\PlayHistoryRepository($this->database))->logActiveStreams([]);
         $connection = $this->database->getDibi();
         $this->assertSame(1, (int) $connection->select('COUNT(*)')->from('play_history')->fetchSingle());
         $this->assertSame(30, (int) $connection->select('watched_sec')->from('play_history')->fetchSingle());
+    }
+
+    public function testConcurrentReplayWritersPreserveCompletedPlayAndCreateOneNewPlay(): void
+    {
+        $connection = $this->database->getDibi();
+        $connection->insert('play_history', [
+            'session_key' => 'shared-session', 'item_id' => 'shared-item', 'item_type' => 'Movie',
+            'play_method' => 'DirectPlay', 'watched_sec' => 3500, 'watch_duration_sec' => 300,
+            'runtime_sec' => 3600, 'is_finished' => 1, 'notified' => 1,
+            'started_at' => '2026-08-11 11:00:00', 'started_at_epoch' => (new DateTimeImmutable('2026-08-11 11:00:00'))->getTimestamp(),
+            'updated_at' => '2026-08-11 11:59:00', 'last_sample_epoch' => (new DateTimeImmutable('2026-08-11 11:59:00'))->getTimestamp(),
+        ])->execute();
+        $workers = [];
+        for ($i = 0; $i < 4; $i++) {
+            $workers[] = $this->startPlaybackWorker();
+        }
+        touch($this->barrierPath);
+        foreach ($workers as $worker) {
+            $result = $this->finishClaimWorker($worker);
+            $this->assertSame(0, $result['exitCode'], $result['error']);
+            $this->assertContains($result['output'], ['ok', 'queued']);
+        }
+        (new \Mk\Framework\Jellyfin\PlayHistoryRepository($this->database))->logActiveStreams([]);
+        $rows = $connection->select('*')->from('play_history')->orderBy('started_at')->fetchAll();
+        $this->assertCount(2, $rows);
+        $this->assertSame('shared-session', $rows[0]['session_key']);
+        $this->assertSame(300, (int) $rows[0]['watch_duration_sec']);
+        $this->assertSame(1, (int) $rows[0]['is_finished']);
+        $this->assertSame(30, (int) $rows[1]['watched_sec']);
+        $this->assertSame(0, (int) $rows[1]['watch_duration_sec']);
+        $this->assertSame(0, (int) $rows[1]['notified']);
     }
 
     /** @return array{process: resource, pipes: array<int, resource>} */

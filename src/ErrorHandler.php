@@ -19,11 +19,7 @@ final class ErrorHandler
 
     public static function handle(\Throwable $e): void
     {
-        Container::logger()->error($e->getMessage(), [
-            'class' => $e::class,
-            'line' => $e->getLine(),
-            'exception' => $e,
-        ]);
+        Log::logException($e);
 
         if (!headers_sent()) {
             http_response_code(500);

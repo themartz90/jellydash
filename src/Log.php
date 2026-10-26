@@ -26,17 +26,17 @@ class Log
 
     public static function logErrorMessage(string $msg, $class): void
     {
-        Container::logger()->error($msg, ['class' => self::className($class)]);
+        self::write('error', $msg, ['class' => self::className($class)]);
     }
 
     public static function logDebugMessage(string $msg, $class): void
     {
-        Container::logger()->debug($msg, ['class' => self::className($class)]);
+        self::write('debug', $msg, ['class' => self::className($class)]);
     }
 
     public static function logInfoMessage(string $msg, $class): void
     {
-        Container::logger()->info($msg, ['class' => self::className($class)]);
+        self::write('info', $msg, ['class' => self::className($class)]);
     }
 
     public static function userIP(): string
@@ -52,11 +52,26 @@ class Log
 
     private static function error(string $msg, \Throwable $e): void
     {
-        Container::logger()->error($msg, [
+        self::write('error', $msg, [
             'class' => $e::class,
             'line' => $e->getLine(),
             'exception' => $e,
         ]);
+    }
+
+    /** @param array<string, mixed> $context */
+    private static function write(string $level, string $message, array $context): void
+    {
+        try {
+            Container::logger()->log($level, $message, $context);
+        } catch (\Throwable) {
+            // Keep private exception details out of an uncontrolled fallback log.
+            try {
+                @error_log('Jellydash could not write the application log.');
+            } catch (\Throwable) {
+                // The original response must survive even if both logs fail.
+            }
+        }
     }
 
     private static function className($class): string

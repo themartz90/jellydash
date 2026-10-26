@@ -77,11 +77,14 @@ final class PlayHistoryRepositoryTest extends TestCase
         // the completed viewing, so this is the existing explicit restart case.
         $this->repository->logActiveStreams([$this->stream(120, 3600)], $start->modify('+3 hours'));
 
-        $row = $this->dibi->select('*')
-            ->from('play_history')
-            ->where('session_key = %s', 'phpunit-session')
-            ->where('item_id = %s', 'phpunit-item')
-            ->fetch();
+        $rows = $this->dibi->select('*')->from('play_history')
+            ->where('item_id = %s', 'phpunit-item')->orderBy('started_at')->desc()->fetchAll();
+        $this->assertCount(2, $rows);
+        [$row, $completed] = $rows;
+        $this->assertSame('phpunit-session', (string) $completed['session_key']);
+        $this->assertSame(3500, (int) $completed['watched_sec']);
+        $this->assertSame(1, (int) $completed['is_finished']);
+        $this->assertSame(str_repeat('a', 64), (string) $completed['notification_claim_token']);
 
         $started = $row['started_at'] instanceof \DateTimeInterface
             ? \DateTimeImmutable::createFromInterface($row['started_at'])
@@ -94,6 +97,83 @@ final class PlayHistoryRepositoryTest extends TestCase
         $this->assertNull($row['notification_claim_token']);
         $this->assertNull($row['notification_claimed_at_epoch']);
         $this->assertNull($row['notification_next_attempt_at_epoch']);
+    }
+
+    public function testRepeatedViewingPreservesMeasuredTimeAndDoesNotDuplicateContinuations(): void
+    {
+        $start = new DateTimeImmutable('2099-06-19 12:00:00');
+        foreach ([[0, 0], [30, 30], [60, 3500], [90, 0], [120, 30], [150, 3500], [180, 0], [210, 30]] as [$seconds, $position]) {
+            $this->repository->logActiveStreams([$this->stream($position, 3600)], $start->modify('+' . $seconds . ' seconds'));
+        }
+        $rows = $this->dibi->select('*')->from('play_history')->where('item_id = %s', 'phpunit-item')
+            ->orderBy('started_at')->fetchAll();
+        $this->assertCount(3, $rows);
+        $this->assertSame([60, 60, 30], array_map(static fn (\Dibi\Row $row): int => (int) $row['watch_duration_sec'], $rows));
+        $this->assertSame([1, 1, 0], array_map(static fn (\Dibi\Row $row): int => (int) $row['is_finished'], $rows));
+        $this->assertCount(3, array_unique(array_map(static fn (\Dibi\Row $row): string => (string) $row['session_key'], $rows)));
+    }
+
+    public function testLongLiveMetadataIsPreservedWithoutSkippingOtherStreams(): void
+    {
+        $stream = $this->stream(120, 3600);
+        foreach (['user' => 128, 'itemName' => 255, 'seriesName' => 255, 'client' => 64, 'device' => 64, 'library' => 64] as $field => $limit) {
+            $stream[$field] = str_repeat('Ž', $limit + 1);
+        }
+        $before = $this->stream(30, 3600);
+        $before['id'] = 'phpunit-before-long';
+        $after = $this->stream(60, 3600);
+        $after['id'] = 'phpunit-after-long';
+        $this->repository->logActiveStreams([$before, $stream, $after], new DateTimeImmutable('2099-06-19 12:00:00'));
+        $this->assertSame(3, (int) $this->dibi->select('COUNT(*)')->from('play_history')->fetchSingle());
+        $row = $this->dibi->select('*')->from('play_history')->where('session_key = %s', 'phpunit-session')->fetch();
+        foreach (['user_name' => 128, 'item_name' => 255, 'series_name' => 255, 'client' => 64, 'device' => 64, 'library' => 64] as $field => $limit) {
+            $this->assertSame(str_repeat('Ž', $limit + 1), $row[$field], $field);
+        }
+        $this->assertSame('phpunit-item', $row['item_id']);
+    }
+
+    public function testLongNamesKeepExactNotificationExclusions(): void
+    {
+        $start = new DateTimeImmutable('2099-06-19 12:00:00');
+        $library = str_repeat('Library', 10);
+        $stream = array_replace($this->stream(120, 3600), ['library' => $library, 'libraryResolved' => true]);
+        $this->repository->logActiveStreams([$stream], $start);
+        $this->assertSame([], $this->repository->claimUnnotifiedPlays([], 600, $start->modify('+1 second'), [$library]));
+        $this->dibi->delete('play_history')->where('session_key = %s', 'phpunit-session')->execute();
+        $user = str_repeat('Viewer', 25);
+        $this->repository->logActiveStreams([array_replace($stream, ['user' => $user])], $start);
+        $this->assertSame([], $this->repository->claimUnnotifiedPlays([$user], 600, $start->modify('+1 second')));
+    }
+
+    public function testSampleAlreadyCoveredByRestoredHistoryDoesNotInventAReplay(): void
+    {
+        $start = new DateTimeImmutable('2099-06-19 12:00:00');
+        $this->insertPlay([
+            'session_key' => 'phpunit-session', 'watched_sec' => 3500, 'watch_duration_sec' => 300,
+            'is_finished' => 1, 'updated_at_epoch' => $start->modify('+60 seconds')->getTimestamp(),
+            'last_sample_epoch' => null,
+        ]);
+        $this->repository->logActiveStreams([$this->stream(120, 3600)], $start->modify('+30 seconds'));
+        $this->assertSame(1, (int) $this->dibi->select('COUNT(*)')->from('play_history')->fetchSingle());
+        $row = $this->dibi->select('watched_sec, watch_duration_sec')->from('play_history')->fetch();
+        $this->assertSame(3500, (int) $row['watched_sec']);
+        $this->assertSame(300, (int) $row['watch_duration_sec']);
+    }
+
+    public function testInvalidStreamIdentityDoesNotDiscardLaterStreams(): void
+    {
+        $logger = Container::logger();
+        Container::set('logger', new \Psr\Log\NullLogger());
+        $bad = $this->stream(120, 3600);
+        $bad['id'] = str_repeat('x', 129);
+        try {
+            $this->repository->logActiveStreams([$bad, $this->stream(60, 3600)], new DateTimeImmutable('2099-06-19 12:00:00'));
+            $this->assertSame(1, (int) $this->dibi->select('COUNT(*)')->from('play_history')->fetchSingle());
+            $this->assertSame('phpunit-session', (string) $this->dibi->select('session_key')->from('play_history')->fetchSingle());
+        } finally {
+            Container::set('logger', $logger);
+            $this->dibi->delete('play_history')->where('session_key = %s', str_repeat('x', 129))->execute();
+        }
     }
 
     public function testUnresolvedLiveUpdateCannotReplaceConfirmedLibrary(): void
@@ -1284,6 +1364,9 @@ final class PlayHistoryRepositoryTest extends TestCase
 
     private function cleanup(): void
     {
+        $this->dibi->delete('play_history')
+            ->where('session_key LIKE %s AND item_id = %s', 'jd-replay-%', 'phpunit-item')
+            ->execute();
         $this->dibi->delete('play_history')
             ->where('session_key LIKE %s', 'phpunit-%')
             ->execute();

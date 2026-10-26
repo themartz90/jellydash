@@ -55,7 +55,7 @@ class Csrf
     public static function check(): void
     {
         $token = $_POST[self::FIELD] ?? null;
-        if (!self::validate($token)) {
+        if (!is_string($token) || !self::validate($token)) {
             http_response_code(419);
             exit('Invalid or missing CSRF token.');
         }

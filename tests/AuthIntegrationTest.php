@@ -117,10 +117,12 @@ final class AuthIntegrationTest extends TestCase
     public function testResetRevokesRememberedRestorationSession(): void
     {
         $tokens = new RememberTokenRepository($this->db);
-        $auth = new Authorization($this->db, $tokens, rememberCookieWriter: static function (): void {});
+        $auth = new Authorization($this->db, $tokens, rememberCookieWriter: static function (): void {
+        });
         $this->assertTrue($auth->userLogin(self::USERNAME, self::PASSWORD, true));
         $_SESSION = [];
-        $restored = new Authorization($this->db, $tokens, rememberCookieWriter: static function (): void {});
+        $restored = new Authorization($this->db, $tokens, rememberCookieWriter: static function (): void {
+        });
         $this->assertTrue($restored->isUserLoggedIn());
         $this->assertTrue($this->db->setUserPassword(self::USERNAME, 'replacement-password-123'));
         $this->assertFalse($restored->isUserLoggedIn());
@@ -227,6 +229,88 @@ final class AuthIntegrationTest extends TestCase
 
         $auth->userLogout();
         $this->assertFalse($auth->isUserLoggedIn());
+    }
+
+    public function testLogoutClearsLocalAuthenticationWhenRememberRevocationFails(): void
+    {
+        $logger = Container::logger();
+        Container::set('logger', new \Psr\Log\NullLogger());
+        $cookieWrites = [];
+        $auth = new Authorization($this->db, rememberCookieWriter: static function (string $value, int $expires) use (&$cookieWrites): void {
+            $cookieWrites[] = $value;
+        });
+        $this->assertTrue($auth->userLogin(self::USERNAME, self::PASSWORD, true));
+        $this->assertArrayHasKey(Authorization::REMEMBER_COOKIE, $_COOKIE);
+        $sqlite = $this->db->getPlatform()->isSqlite();
+        $this->dibi->query($sqlite
+            ? 'CREATE TRIGGER phpunit_logout_failure BEFORE DELETE ON auth_remember_tokens BEGIN SELECT RAISE(ABORT, "synthetic logout failure"); END'
+            : "CREATE TRIGGER phpunit_logout_failure BEFORE DELETE ON auth_remember_tokens FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'synthetic logout failure'");
+        try {
+            $this->assertTrue($auth->userLogout());
+            $this->assertFalse($auth->isUserLoggedIn());
+            $this->assertArrayNotHasKey(Authorization::REMEMBER_COOKIE, $_COOKIE);
+            $this->assertSame('', $cookieWrites[array_key_last($cookieWrites)]);
+            $this->assertSame(1, $this->rememberTokenCount($this->userId));
+        } finally {
+            $this->dibi->query('DROP TRIGGER phpunit_logout_failure');
+            Container::set('logger', $logger);
+        }
+    }
+
+    public function testPushRevocationFailureDoesNotPreventRememberRevocationOrLocalLogout(): void
+    {
+        $logger = Container::logger();
+        Container::set('logger', new \Psr\Log\NullLogger());
+        $repository = new PushSubscriptionRepository($this->db);
+        $capability = new PushDeviceCapability(cookieWriter: static fn (): bool => true);
+        $hash = $capability->hashForEnrollment();
+        $auth = new Authorization(
+            $this->db,
+            rememberCookieWriter: static function (): void {
+            },
+            pushSubscriptions: $repository,
+            pushDeviceCapability: $capability
+        );
+        $this->assertTrue($auth->userLogin(self::USERNAME, self::PASSWORD, true));
+        $repository->save(
+            'https://updates.push.services.mozilla.com/wpush/v2/logout-current',
+            rtrim(strtr(base64_encode(str_repeat('a', 65)), '+/', '-_'), '='),
+            rtrim(strtr(base64_encode(str_repeat('b', 16)), '+/', '-_'), '='),
+            'Firefox/130',
+            $hash,
+            $this->userId,
+            true
+        );
+        $this->dibi->query($this->db->getPlatform()->isSqlite()
+            ? 'CREATE TRIGGER phpunit_push_logout_failure BEFORE DELETE ON push_subscriptions BEGIN SELECT RAISE(ABORT, "synthetic push failure"); END'
+            : "CREATE TRIGGER phpunit_push_logout_failure BEFORE DELETE ON push_subscriptions FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'synthetic push failure'");
+        try {
+            $this->assertTrue($auth->userLogout());
+            $this->assertFalse($auth->isUserLoggedIn());
+            $this->assertArrayNotHasKey(Authorization::REMEMBER_COOKIE, $_COOKIE);
+            $this->assertArrayNotHasKey(PushDeviceCapability::COOKIE_NAME, $_COOKIE);
+            $this->assertSame(0, $this->rememberTokenCount($this->userId));
+            $this->assertSame(1, $repository->count());
+        } finally {
+            $this->dibi->query('DROP TRIGGER phpunit_push_logout_failure');
+            Container::set('logger', $logger);
+        }
+    }
+
+    public function testLogoutDoesNotRequireAUserLookup(): void
+    {
+        $database = Database::sqlite(':memory:');
+        $database->ensureAuthSchema();
+        $database->addAuthUser('logout-user', 'synthetic-password', 'Logout User', Authorization::ROLE_USER);
+        $auth = new Authorization($database, rememberCookieWriter: static function (): void {
+        });
+        $this->assertTrue($auth->userLogin('logout-user', 'synthetic-password', true));
+        $database->getDibi()->query('DROP TABLE users');
+        $this->assertTrue($auth->userLogout());
+        $this->assertFalse($auth->isUserLoggedIn());
+        $this->assertArrayNotHasKey(Authorization::REMEMBER_COOKIE, $_COOKIE);
+        $this->assertSame(0, (int) $database->getDibi()->select('COUNT(*)')->from('auth_remember_tokens')->fetchSingle());
+        $database->getDibi()->disconnect();
     }
 
     public function testAuthenticatedRoleCapabilitiesAndLiveRoleChanges(): void
@@ -425,7 +509,9 @@ final class AuthIntegrationTest extends TestCase
     public function testOrdinarySessionStillExpiresAfterIdleTimeout(): void
     {
         $now = 1_788_192_000;
-        $clock = static function () use (&$now): int { return $now; };
+        $clock = static function () use (&$now): int {
+            return $now;
+        };
         $auth = new Authorization($this->db, clock: $clock);
         $this->assertTrue($auth->userLogin(self::USERNAME, self::PASSWORD));
         $now += Authorization::SESSION_IDLE_TIMEOUT + 1;

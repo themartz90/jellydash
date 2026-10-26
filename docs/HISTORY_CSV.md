@@ -70,6 +70,14 @@ between samples at most two minutes apart, allows for playback speed, and skips
 paused, stalled, backward-seek and longer-gap intervals. It cannot reconstruct
 viewing that happened before collection started or while polling was offline.
 
+Each viewing has its own `session_key`. Replaying an item within the same
+Jellyfin session creates a separate play, preserving the completed viewing
+and its watch time. Treat this field as an opaque play identity in backups.
+
+Item and series titles, user names, library names, clients and devices support
+up to 16,383 UTF-8 characters per value. Longer values are rejected for that
+stream and logged; collection continues for the other streams.
+
 ## Spreadsheet safety
 
 Media titles, user names and other text can begin with characters spreadsheet
@@ -89,6 +97,16 @@ validates the complete file and previews how many plays are new or already
 present before enabling the import. The write is transactional, so a failure
 cannot leave half of a backup in History. Existing plays are skipped and every
 restored play is marked as already notified.
+
+Playback samples captured while a restore holds the database are queued and
+retried by a later collection pass, even if playback has ended. They keep
+their original observation times and do not add time from unobserved gaps.
+
+Pending samples are stored in `var/cache/history-samples`, within the runtime
+volume persisted by both bundled Compose setups. Keep this directory when
+replacing the container. Custom installations can set `HISTORY_SAMPLE_QUEUE_DIR`
+to another persistent, writable directory. Collection reports a failure while
+samples are waiting to be recorded.
 
 Version 1 backups are still accepted with their original header, which ends at
 `is_finished`. They restore with empty duration and Unix timestamp fields.

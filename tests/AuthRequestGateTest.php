@@ -59,6 +59,23 @@ final class AuthRequestGateTest extends TestCase
         $this->assertSame('protected-reached', $result);
     }
 
+    public function testLogoutRequestClearsLocalAuthenticationWhenDatabaseStartupFails(): void
+    {
+        $script = 'require ' . var_export(ROOT_DIR . '/tests/bootstrap.php', true) . ';'
+            . '\Mk\Framework\Container::set("logger", new \Psr\Log\NullLogger());'
+            . '$path = sys_get_temp_dir() . "/jellydash-unavailable-auth-" . bin2hex(random_bytes(8)) . "/auth.sqlite";'
+            . '$db = new \Mk\Framework\Database(new \Dibi\Connection(["driver" => "sqlite3", "database" => $path, "lazy" => true]));'
+            . '\Mk\Framework\Container::set("db", $db);'
+            . '$_SESSION = ["auth_user" => ["id" => 1, "auth_generation" => 0], "auth_login_time" => time(), "auth_last_activity" => time()];'
+            . '$_COOKIE[\Mk\Framework\Authorization::REMEMBER_COOKIE] = "synthetic-unavailable-token";'
+            . '$_GET = $_REQUEST = ["auth" => "logout"]; $_SERVER["REQUEST_METHOD"] = "POST";'
+            . '$_POST = ["csrf_token" => \Mk\Framework\Csrf::token()];'
+            . 'register_shutdown_function(static function (): void { echo "|authenticated=" . (int) isset($_SESSION["auth_user"]) . "|remember=" . (int) isset($_COOKIE[\Mk\Framework\Authorization::REMEMBER_COOKIE]) . "|status=" . http_response_code(); });'
+            . 'require ' . var_export(ROOT_DIR . '/operations/@request.php', true) . ';';
+        $result = $this->runIsolated($script, 'true');
+        $this->assertSame('|authenticated=0|remember=0|status=302', $result);
+    }
+
     private function runIsolated(string $script, string $authFlag): string
     {
         $environment = getenv();

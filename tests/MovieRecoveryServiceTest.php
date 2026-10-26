@@ -840,7 +840,8 @@ final class MovieRecoveryServiceTest extends TestCase
             self::assertSame('', $stderr);
             self::assertSame(0, proc_close($process));
             $process = null;
-            self::assertFileExists($marker . '.done');
+            self::assertTrue(is_file($marker . '.done') || is_file($marker . '.queued'));
+            (new PlayHistoryRepository($this->database))->logActiveStreams([]);
             self::assertSame('new', $this->replacements->resolve('old'));
             // Observe the later writer as a new request, with a fresh SQLite read snapshot.
             $this->connection->disconnect();
@@ -853,6 +854,7 @@ final class MovieRecoveryServiceTest extends TestCase
                 proc_terminate($process);
                 proc_close($process);
             }
+            @unlink($marker . '.queued');
             foreach ([$pipes[1], $pipes[2]] as $pipe) {
                 if (is_resource($pipe)) {
                     fclose($pipe);

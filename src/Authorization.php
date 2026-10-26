@@ -258,24 +258,67 @@ class Authorization
 
     public function userLogout(): bool
     {
-        $sessionUser = $this->user();
-        $userId = isset($sessionUser['id']) ? (int) $sessionUser['id'] : null;
+        // Logout only removes this browser's authority. It must not need a
+        // successful user lookup before it can clear the local session.
+        $sessionUser = $_SESSION[self::SESSION_USER] ?? null;
+        $userId = is_array($sessionUser) && is_int($sessionUser['id'] ?? null) && $sessionUser['id'] > 0
+            ? $sessionUser['id'] : null;
         $deviceCapability = $this->pushDeviceCapability ??= new PushDeviceCapability();
         $deviceCapabilityHash = $deviceCapability->existingHash();
-        if ($deviceCapabilityHash !== null) {
-            ($this->pushSubscriptions ??= new PushSubscriptionRepository($this->db))
-                ->revokeCurrent($deviceCapabilityHash, $userId, true);
-            $deviceCapability->clear();
+        try {
+            if ($deviceCapabilityHash !== null) {
+                try {
+                    ($this->pushSubscriptions ??= new PushSubscriptionRepository($this->db))
+                        ->revokeCurrent($deviceCapabilityHash, $userId, true);
+                } catch (\Throwable $e) {
+                    Log::logException($e);
+                }
+            }
+            try {
+                $token = $this->rememberCookie();
+                if ($token !== '') {
+                    $this->tokens()->revoke($token);
+                }
+            } catch (\Throwable $e) {
+                Log::logException($e);
+            }
+        } finally {
+            $this->clearLoginSession();
+            try {
+                if ($deviceCapabilityHash !== null) {
+                    try {
+                        $deviceCapability->clear();
+                    } catch (\Throwable $e) {
+                        Log::logException($e);
+                    }
+                }
+                $this->clearRememberCookie();
+            } finally {
+                $this->regenerateId();
+            }
         }
-
-        $token = $this->rememberCookie();
-        if ($token !== '') {
-            $this->tokens()->revoke($token);
-        }
-        $this->clearRememberCookie();
-        $this->clearLoginSession();
-        $this->regenerateId();
         return true;
+    }
+
+    /** Local fallback when authentication cannot even connect to the database. */
+    public static function clearLocalAuthentication(): void
+    {
+        unset($_SESSION[self::SESSION_USER], $_SESSION[self::SESSION_LOGIN_TIME], $_SESSION[self::SESSION_LAST_ACTIVITY]);
+        unset($_COOKIE[self::REMEMBER_COOKIE]);
+        setcookie(self::REMEMBER_COOKIE, '', self::rememberCookieOptions(time() - 3600));
+        try {
+            $capability = new PushDeviceCapability();
+            if ($capability->existingHash() !== null) {
+                $capability->clear();
+            }
+        } catch (\Throwable $e) {
+            Log::logException($e);
+        } finally {
+            unset($_COOKIE[PushDeviceCapability::COOKIE_NAME]);
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                session_regenerate_id(true);
+            }
+        }
     }
 
     // --- Internals ---------------------------------------------------------
@@ -376,20 +419,29 @@ class Authorization
 
     private function clearRememberCookie(): void
     {
-        ($this->rememberCookieWriter)('', $this->now() - 3600);
-        unset($_COOKIE[self::REMEMBER_COOKIE]);
+        try {
+            ($this->rememberCookieWriter)('', $this->now() - 3600);
+        } finally {
+            unset($_COOKIE[self::REMEMBER_COOKIE]);
+        }
     }
 
     private function writeRememberCookie(string $value, int $expires): void
     {
+        setcookie(self::REMEMBER_COOKIE, $value, self::rememberCookieOptions($expires));
+    }
+
+    /** @return array{expires: int, path: string, secure: bool, httponly: true, samesite: string} */
+    private static function rememberCookieOptions(int $expires): array
+    {
         $params = session_get_cookie_params();
-        setcookie(self::REMEMBER_COOKIE, $value, [
+        return [
             'expires' => $expires,
             'path' => '/',
             'secure' => $params['secure'],
             'httponly' => true,
             'samesite' => 'Lax',
-        ]);
+        ];
     }
 
     private function now(): int

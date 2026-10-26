@@ -40,8 +40,10 @@ class Config
             return $default;
         }
         $parsed = filter_var($value, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE);
-        if ($key === 'AUTH_ENABLED' && $parsed === null) {
-            throw new \InvalidArgumentException('AUTH_ENABLED must be a valid boolean.');
+        if ($parsed === null && in_array($key, [
+            'AUTH_ENABLED', 'JELLYFIN_VERIFY_SSL', 'JELLYSEER_VERIFY_SSL', 'SAB_VERIFY_SSL',
+        ], true)) {
+            throw new \InvalidArgumentException($key . ' must be a valid boolean.');
         }
 
         return $parsed ?? false;

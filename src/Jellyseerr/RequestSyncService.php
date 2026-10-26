@@ -18,10 +18,12 @@ final class RequestSyncService
 {
     // Page size and the number refreshed during an ordinary sync.
     private const FETCH_COUNT = 40;
+    private const METADATA_REPAIR_LIMIT = 5;
 
     public function __construct(
         private ?JellyseerrClient $client = null,
         private ?SeerrRequestRepository $repository = null,
+        private ?\Closure $clock = null,
     ) {
     }
 
@@ -47,10 +49,6 @@ final class RequestSyncService
             ? $client->requests(self::FETCH_COUNT)
             : $this->requestsThroughKnownBoundary($client, $repo);
 
-        if ($requests === []) {
-            return 0;
-        }
-
         $ids = [];
         foreach ($requests as $request) {
             $id = (int) ($request['id'] ?? 0);
@@ -60,7 +58,8 @@ final class RequestSyncService
         }
 
         $known = $repo->knownIds($ids);
-        $now = (new \DateTimeImmutable('now'))->format('Y-m-d H:i:s');
+        $nowEpoch = $this->clock !== null ? ($this->clock)() : time();
+        $now = (new \DateTimeImmutable('@' . $nowEpoch))->setTimezone(new \DateTimeZone(Config::timezone()))->format('Y-m-d H:i:s');
         $statusUpdates = [];
         $inserts = [];
 
@@ -89,6 +88,8 @@ final class RequestSyncService
             }
 
             $details = $this->detailsFor($client, $mediaType, $tmdbId);
+            $pending = $details === null;
+            $details ??= ['title' => $mediaType === 'tv' ? 'Unknown series' : 'Unknown title', 'year' => null, 'posterPath' => null];
 
             $inserts[] = [
                 'request_id' => $requestId,
@@ -97,19 +98,28 @@ final class RequestSyncService
                 'title' => $details['title'],
                 'year' => $details['year'],
                 'poster_path' => $details['posterPath'],
+                'metadata_pending' => $pending ? 1 : 0,
+                'metadata_attempts' => $pending ? 1 : 0,
+                'metadata_retry_at_epoch' => $pending ? $nowEpoch + 60 : null,
                 'requested_by' => $this->requesterName($request),
                 'request_status' => $requestStatus,
                 'media_status' => $mediaStatus,
                 'is_4k' => ($request['is4k'] ?? false) ? 1 : 0,
                 'season_count' => isset($request['seasonCount']) ? (int) $request['seasonCount'] : null,
                 'requested_at' => $this->requestedAt($request, $now),
-                'requested_at_epoch' => $requestedAtEpoch ?? time(),
+                'requested_at_epoch' => $requestedAtEpoch ?? $nowEpoch,
                 'notified' => ($firstRun || !$notificationsEnabled) ? 1 : 0,
                 'created_at' => $now,
             ];
         }
 
-        return $repo->applySyncBatch($statusUpdates, $inserts);
+        $inserted = $requests === [] ? 0 : $repo->applySyncBatch($statusUpdates, $inserts);
+        foreach ($repo->pendingMetadata(self::METADATA_REPAIR_LIMIT, $nowEpoch) as $pending) {
+            $details = $this->detailsFor($client, (string) $pending['media_type'], (int) $pending['tmdb_id']);
+            $repo->finishMetadataAttempt($pending, $details, $nowEpoch);
+        }
+
+        return $inserted;
     }
 
     /**
@@ -166,9 +176,9 @@ final class RequestSyncService
      * the sync: we store a placeholder so the request still shows up and still
      * triggers its notification.
      *
-     * @return array{title: string, year: ?string, posterPath: ?string}
+     * @return array{title: string, year: ?string, posterPath: ?string}|null
      */
-    private function detailsFor(JellyseerrClient $client, string $mediaType, int $tmdbId): array
+    private function detailsFor(JellyseerrClient $client, string $mediaType, int $tmdbId): ?array
     {
         try {
             $detail = $mediaType === 'tv' ? $client->tv($tmdbId) : $client->movie($tmdbId);
@@ -177,7 +187,7 @@ final class RequestSyncService
         } catch (\Throwable $e) {
             Log::logException($e);
 
-            return ['title' => $mediaType === 'tv' ? 'Unknown series' : 'Unknown title', 'year' => null, 'posterPath' => null];
+            return null;
         }
     }
 

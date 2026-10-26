@@ -184,6 +184,16 @@ final class JellyfinSessionMapper
             'isLive' => $isLive,
         ];
 
+        if (in_array($session['_jellydash_theme_classification'] ?? null, [ThemePlaybackClassifier::ORDINARY, ThemePlaybackClassifier::THEME], true)) {
+            $stream['themeClassification'] = $session['_jellydash_theme_classification'];
+            if (is_int($session['_jellydash_theme_observed_at_epoch'] ?? null)) {
+                $stream['themeClassificationEpoch'] = $session['_jellydash_theme_observed_at_epoch'];
+            }
+            if (is_int($session['_jellydash_theme_base_version'] ?? null)) {
+                $stream['themeClassificationVersion'] = $session['_jellydash_theme_base_version'];
+            }
+        }
+
         return $isLive ? array_merge($stream, $this->liveOverrides($item, $positionTicks)) : $stream;
     }
 

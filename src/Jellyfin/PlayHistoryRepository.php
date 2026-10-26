@@ -8,6 +8,7 @@ use Mk\Framework\Config;
 use Mk\Framework\Container;
 use Mk\Framework\Database;
 use Mk\Framework\DatabasePlatform;
+use Mk\Framework\Log;
 
 final class PlayHistoryRepository implements LibraryHistorySource
 {
@@ -54,6 +55,16 @@ final class PlayHistoryRepository implements LibraryHistorySource
     private const LIVE_OVERLAP_SECONDS = 300;
     private const MAX_SAMPLE_GAP_SECONDS = 120;
 
+    /** @var array<string, int> */
+    private const LIVE_TEXT_LIMITS = [
+        'item_type' => 16, 'season_ep' => 32, 'play_method' => 32, 'play_method_detail' => 64,
+        'source_video_codec' => 64, 'source_audio_codec' => 64,
+        'source_container' => 64, 'target_video_codec' => 64, 'target_audio_codec' => 64, 'target_container' => 64,
+    ];
+
+    private const LONG_TEXT_COLUMNS = ['user_name', 'series_name', 'item_name', 'library', 'client', 'device'];
+    private const MAX_METADATA_CHARACTERS = 16_383;
+
     /** @param (\Closure(array<string, mixed>): void)|null $beforeImportWrite */
     public function __construct(
         ?Database $database = null,
@@ -61,6 +72,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
         private ?\Closure $beforeImportWrite = null,
         ?ThemePlaybackExclusions $themePlaybackExclusions = null,
         ?MovieReplacements $movieReplacements = null,
+        private ?HistorySampleQueue $sampleQueue = null,
     ) {
         $database ??= Container::db();
         $this->database = $database;
@@ -109,184 +121,261 @@ final class PlayHistoryRepository implements LibraryHistorySource
      */
     public function logActiveStreams(array $streams, ?\DateTimeImmutable $now = null, int $casAttempt = 0): void
     {
-        (new HistoryWriteGuard($this->database))->run(function () use ($streams, $now, $casAttempt): void {
+        $now ??= new \DateTimeImmutable('now');
+        $guard = new HistoryWriteGuard($this->database);
+        if ($guard->isOwned()) {
             $this->logActiveStreamsGuarded($streams, $now, $casAttempt);
-        });
+            return;
+        }
+        $valid = [];
+        foreach ($streams as $stream) {
+            try {
+                $this->validateStreamIdentity($stream);
+                $valid[] = $stream;
+            } catch (\InvalidArgumentException $e) {
+                Log::logException($e);
+            }
+        }
+        ($this->sampleQueue ??= HistorySampleQueue::forDatabase($this->database))->record(
+            $valid,
+            $now,
+            function (array $pending, \DateTimeImmutable $observedAt) use ($guard): void {
+                $this->prepareHistoryImport();
+                $guard->runSample(fn () => $this->logActiveStreamsGuarded($pending, $observedAt, 0));
+            }
+        );
     }
 
     /** @param array<int, array<string, mixed>> $streams */
     private function logActiveStreamsGuarded(array $streams, ?\DateTimeImmutable $now, int $casAttempt): void
     {
         $now ??= new \DateTimeImmutable('now');
-        $nowSql = $now->format('Y-m-d H:i:s');
-
         foreach ($streams as $stream) {
-            if ($this->exclusions()->excludes($this->nullableString($stream['user'] ?? null))) {
-                continue;
-            }
-            $previousSampleEpoch = null;
-            $sessionKey = (string) ($stream['id'] ?? '');
-            $itemId = (string) ($stream['itemId'] ?? '');
-
-            if ($sessionKey === '' || $itemId === '') {
-                continue;
-            }
-            if ($this->themePlaybackExclusions->classification($itemId) === ThemePlaybackClassifier::THEME) {
-                continue;
-            }
-
-            $existing = $this->db->select('id, watched_sec, watch_duration_sec, is_finished, last_sample_epoch, last_sample_position_sec, last_sample_paused, last_sample_rate')
-                ->from('play_history')
-                ->where('session_key = %s', $sessionKey)
-                ->where('item_id = %s', $itemId)
-                ->fetch();
-
-            $position = max(0, (int) ($stream['watchedSec'] ?? 0));
-            $runtimeSec = max(0, (int) ($stream['runtimeSec'] ?? 0));
-            $paused = ($stream['isPaused'] ?? false) === true;
-            $playbackRate = self::playbackRate($stream['playbackRate'] ?? 1.0);
-
-            // Continuation of the existing row, or a brand-new play?
-            $isNewPlay = false;
-            if ($existing) {
-                $previousSampleEpoch = $existing['last_sample_epoch'] === null
-                    ? null
-                    : (int) $existing['last_sample_epoch'];
-                if ($previousSampleEpoch !== null && $now->getTimestamp() <= $previousSampleEpoch) {
-                    continue;
+            try {
+                $this->logActiveStream($stream, $now, $casAttempt);
+            } catch (\InvalidArgumentException|\JsonException $e) {
+                Log::logException($e);
+            } catch (\Dibi\DriverException $e) {
+                // Invalid row data must not discard the other active streams.
+                // Connection and lock failures remain retryable by the caller.
+                if (!$e instanceof \Dibi\ConstraintViolationException
+                    && !(!$this->platform->isSqlite() && in_array((int) $e->getCode(), [1048, 1264, 1366, 1406], true))) {
+                    throw $e;
                 }
-                // A finished row only becomes a new play when the position
-                // jumped back well below what was already watched (an actual
-                // restart). A finished item still playing out (credits) is a
-                // continuation; treating it as new would reset the row and
-                // re-fire its alert on every poll until the session ends.
-                $restarted = (bool) $existing['is_finished']
-                    && $position + 60 < (int) $existing['watched_sec'];
-
-                $isNewPlay = $restarted;
+                Log::logException($e);
             }
+        }
+    }
 
-            $previousWatchedSec = ($existing && !$isNewPlay) ? (int) $existing['watched_sec'] : 0;
-            $watchedSec = max($position, $previousWatchedSec);
-            $isFinished = self::isPlayFinished($watchedSec, $runtimeSec);
-            $library = $this->nullableString($stream['library'] ?? null);
-            $libraryResolved = ($stream['libraryResolved'] ?? false) === true;
+    /** @param array<string, mixed> $stream */
+    private function logActiveStream(array $stream, \DateTimeImmutable $now, int $casAttempt): void
+    {
+        $nowSql = $now->format('Y-m-d H:i:s');
+        $this->validateStreamIdentity($stream);
+        if ($this->exclusions()->excludes($this->nullableString($stream['user'] ?? null))) {
+            return;
+        }
+        $previousSampleEpoch = null;
+        $sessionKey = (string) ($stream['id'] ?? '');
+        $itemId = (string) ($stream['itemId'] ?? '');
 
-            $data = [
-                'user_id' => $this->nullableString($stream['userId'] ?? null),
-                'user_name' => $this->nullableString($stream['user'] ?? null),
-                'item_type' => (string) ($stream['itemType'] ?? ''),
-                'series_name' => $this->nullableString($stream['seriesName'] ?? null),
-                'item_name' => $this->nullableString($stream['itemName'] ?? null),
-                'season_ep' => $this->nullableString($stream['seasonEp'] ?? null),
-                'library' => $library,
-                'library_resolved_at' => $libraryResolved ? $nowSql : null,
-                'play_method' => (string) ($stream['playMethod'] ?? ''),
-                'play_method_detail' => $this->nullableString($stream['methodLabel'] ?? null),
-                'client' => $this->nullableString($stream['client'] ?? null),
-                'device' => $this->nullableString($stream['device'] ?? null),
-                'source_video_codec' => $this->nullableString($stream['sourceVideoCodec'] ?? null),
-                'source_audio_codec' => $this->nullableString($stream['sourceAudioCodec'] ?? null),
-                'source_container' => $this->nullableString($stream['sourceContainer'] ?? null),
-                'target_video_codec' => $this->nullableString($stream['targetVideoCodec'] ?? null),
-                'target_audio_codec' => $this->nullableString($stream['targetAudioCodec'] ?? null),
-                'target_container' => $this->nullableString($stream['targetContainer'] ?? null),
-                'is_video_direct' => isset($stream['isVideoDirect']) ? (filter_var($stream['isVideoDirect'], FILTER_VALIDATE_BOOL) ? 1 : 0) : null,
-                'is_audio_direct' => isset($stream['isAudioDirect']) ? (filter_var($stream['isAudioDirect'], FILTER_VALIDATE_BOOL) ? 1 : 0) : null,
-                'transcode_reasons' => $this->encodedReasons($stream['transcodeReasons'] ?? []),
-                'watched_sec' => $watchedSec,
-                'runtime_sec' => $runtimeSec,
-                'updated_at' => $nowSql,
-                'updated_at_epoch' => $now->getTimestamp(),
-                'ended_at' => $isFinished ? $nowSql : null,
-                'ended_at_epoch' => $isFinished ? $now->getTimestamp() : null,
-                'library_resolved_at_epoch' => $libraryResolved ? $now->getTimestamp() : null,
-                'is_finished' => $isFinished ? 1 : 0,
-            ];
-
-            if ($existing) {
-                // A fresh play reuses the row (session_key + item_id is unique)
-                // but resets the start time so the history shows the new viewing.
-                // Resetting `notified` lets the alert fire again for the re-watch;
-                // a plain continuation leaves it untouched so it never re-fires.
-                if ($isNewPlay) {
-                    $data['started_at'] = $nowSql;
-                    $data['started_at_epoch'] = $now->getTimestamp();
-                    $data['notified'] = 0;
-                    $data['notification_attempts'] = 0;
-                    $data['notification_claim_token'] = null;
-                    $data['notification_claimed_at_epoch'] = null;
-                    $data['notification_next_attempt_at_epoch'] = null;
-                    $data['watch_duration_sec'] = 0;
-                    $data['last_sample_epoch'] = $now->getTimestamp();
-                    $data['last_sample_position_sec'] = $position;
-                    $data['last_sample_paused'] = $paused ? 1 : 0;
-                    $data['last_sample_rate'] = $playbackRate;
-                } else {
-                    if ($existing['watch_duration_sec'] !== null && $previousSampleEpoch !== null) {
-                        $data['watch_duration_sec'] = (int) $existing['watch_duration_sec'] + self::sampledViewingSeconds(
-                            $previousSampleEpoch,
-                            (int) ($existing['last_sample_position_sec'] ?? 0),
-                            (bool) ($existing['last_sample_paused'] ?? false),
-                            $now->getTimestamp(),
-                            $position,
-                            $paused,
-                            (float) ($existing['last_sample_rate'] ?? $playbackRate),
-                        );
-                    }
-                    $data['last_sample_epoch'] = $now->getTimestamp();
-                    $data['last_sample_position_sec'] = $position;
-                    $data['last_sample_paused'] = $paused ? 1 : 0;
-                    $data['last_sample_rate'] = $playbackRate;
-                }
-                if (!$libraryResolved) {
-                    unset($data['library'], $data['library_resolved_at'], $data['library_resolved_at_epoch']);
-                }
-
-                $update = $this->db->update('play_history', $data)
-                    ->where('id = %i', (int) $existing['id']);
-                if ($previousSampleEpoch === null) {
-                    $update->where('last_sample_epoch IS NULL');
-                } else {
-                    $update->where('last_sample_epoch = %i', $previousSampleEpoch);
-                }
-                $update->execute();
-                if ($this->db->getAffectedRows() === 0 && $casAttempt < 2) {
-                    $this->logActiveStreams([$stream], $now, $casAttempt + 1);
-                }
-                continue;
+        if ($sessionKey === '' || $itemId === '') {
+            return;
+        }
+        $classification = $stream['themeClassification'] ?? null;
+        if (in_array($classification, [ThemePlaybackClassifier::ORDINARY, ThemePlaybackClassifier::THEME], true)) {
+            $classificationEpoch = is_int($stream['themeClassificationEpoch'] ?? null) ? $stream['themeClassificationEpoch'] : $now->getTimestamp();
+            $version = is_int($stream['themeClassificationVersion'] ?? null) ? $stream['themeClassificationVersion'] : null;
+            $this->themePlaybackExclusions->remember($itemId, (string) ($stream['itemType'] ?? ''), $classification, $classificationEpoch, fromQueue: true, expectedVersion: $version);
+            if ($classification === ThemePlaybackClassifier::THEME) {
+                return;
             }
+        }
+        if ($this->themePlaybackExclusions->classification($itemId) === ThemePlaybackClassifier::THEME) {
+            return;
+        }
 
-            $data['session_key'] = $sessionKey;
-            $data['item_id'] = $itemId;
-            $data['started_at'] = $nowSql;
-            $data['started_at_epoch'] = $now->getTimestamp();
-            $data['notified'] = 0;
-            $data['notification_attempts'] = 0;
-            $data['notification_claim_token'] = null;
-            $data['notification_claimed_at_epoch'] = null;
-            $data['notification_next_attempt_at_epoch'] = null;
-            $data['watch_duration_sec'] = 0;
+        $existing = $this->activePlaySelection(
+            $sessionKey,
+            $itemId,
+            'id, watched_sec, watch_duration_sec, is_finished, last_sample_epoch, last_sample_position_sec, last_sample_paused, last_sample_rate, updated_at_epoch',
+        )->fetch();
+
+        $position = max(0, (int) ($stream['watchedSec'] ?? 0));
+        $runtimeSec = max(0, (int) ($stream['runtimeSec'] ?? 0));
+        $paused = ($stream['isPaused'] ?? false) === true;
+        $playbackRate = self::playbackRate($stream['playbackRate'] ?? 1.0);
+
+        // Continuation of the existing row, or a brand-new play?
+        $isNewPlay = false;
+        if ($existing) {
+            $previousSampleEpoch = $existing['last_sample_epoch'] === null
+                ? null
+                : (int) $existing['last_sample_epoch'];
+            if ($previousSampleEpoch !== null && $now->getTimestamp() <= $previousSampleEpoch) {
+                return;
+            }
+            if ($previousSampleEpoch === null && $existing['updated_at_epoch'] !== null
+                && $now->getTimestamp() <= (int) $existing['updated_at_epoch']) {
+                return;
+            }
+            // A finished row only becomes a new play when the position
+            // jumped back well below what was already watched (an actual
+            // restart). A finished item still playing out (credits) is a
+            // continuation; treating it as new would reset the row and
+            // re-fire its alert on every poll until the session ends.
+            $restarted = (bool) $existing['is_finished']
+                && $position + 60 < (int) $existing['watched_sec'];
+
+            $isNewPlay = $restarted;
+        }
+
+        $previousWatchedSec = ($existing && !$isNewPlay) ? (int) $existing['watched_sec'] : 0;
+        $watchedSec = max($position, $previousWatchedSec);
+        $isFinished = self::isPlayFinished($watchedSec, $runtimeSec);
+        $library = $this->nullableString($stream['library'] ?? null);
+        $libraryResolved = ($stream['libraryResolved'] ?? false) === true;
+
+        $data = [
+            'user_id' => $this->nullableString($stream['userId'] ?? null),
+            'user_name' => $this->nullableString($stream['user'] ?? null),
+            'item_type' => (string) ($stream['itemType'] ?? ''),
+            'series_name' => $this->nullableString($stream['seriesName'] ?? null),
+            'item_name' => $this->nullableString($stream['itemName'] ?? null),
+            'season_ep' => $this->nullableString($stream['seasonEp'] ?? null),
+            'library' => $library,
+            'library_resolved_at' => $libraryResolved ? $nowSql : null,
+            'play_method' => (string) ($stream['playMethod'] ?? ''),
+            'play_method_detail' => $this->nullableString($stream['methodLabel'] ?? null),
+            'client' => $this->nullableString($stream['client'] ?? null),
+            'device' => $this->nullableString($stream['device'] ?? null),
+            'source_video_codec' => $this->nullableString($stream['sourceVideoCodec'] ?? null),
+            'source_audio_codec' => $this->nullableString($stream['sourceAudioCodec'] ?? null),
+            'source_container' => $this->nullableString($stream['sourceContainer'] ?? null),
+            'target_video_codec' => $this->nullableString($stream['targetVideoCodec'] ?? null),
+            'target_audio_codec' => $this->nullableString($stream['targetAudioCodec'] ?? null),
+            'target_container' => $this->nullableString($stream['targetContainer'] ?? null),
+            'is_video_direct' => isset($stream['isVideoDirect']) ? (filter_var($stream['isVideoDirect'], FILTER_VALIDATE_BOOL) ? 1 : 0) : null,
+            'is_audio_direct' => isset($stream['isAudioDirect']) ? (filter_var($stream['isAudioDirect'], FILTER_VALIDATE_BOOL) ? 1 : 0) : null,
+            'transcode_reasons' => $this->encodedReasons($stream['transcodeReasons'] ?? []),
+            'watched_sec' => $watchedSec,
+            'runtime_sec' => $runtimeSec,
+            'updated_at' => $nowSql,
+            'updated_at_epoch' => $now->getTimestamp(),
+            'ended_at' => $isFinished ? $nowSql : null,
+            'ended_at_epoch' => $isFinished ? $now->getTimestamp() : null,
+            'library_resolved_at_epoch' => $libraryResolved ? $now->getTimestamp() : null,
+            'is_finished' => $isFinished ? 1 : 0,
+        ];
+
+        foreach (self::LONG_TEXT_COLUMNS as $column) {
+            if ($data[$column] !== null && mb_strlen((string) $data[$column], 'UTF-8') > self::MAX_METADATA_CHARACTERS) {
+                throw new \InvalidArgumentException('Jellyfin supplied History metadata that exceeds the storage limit.');
+            }
+        }
+        foreach (self::LIVE_TEXT_LIMITS as $column => $limit) {
+            if ($data[$column] !== null) {
+                $data[$column] = mb_substr(mb_scrub((string) $data[$column], 'UTF-8'), 0, $limit, 'UTF-8');
+            }
+        }
+
+        if ($existing && !$isNewPlay) {
+            if ($existing['watch_duration_sec'] !== null && $previousSampleEpoch !== null) {
+                $data['watch_duration_sec'] = (int) $existing['watch_duration_sec'] + self::sampledViewingSeconds(
+                    $previousSampleEpoch,
+                    (int) ($existing['last_sample_position_sec'] ?? 0),
+                    (bool) ($existing['last_sample_paused'] ?? false),
+                    $now->getTimestamp(),
+                    $position,
+                    $paused,
+                    (float) ($existing['last_sample_rate'] ?? $playbackRate),
+                );
+            }
             $data['last_sample_epoch'] = $now->getTimestamp();
             $data['last_sample_position_sec'] = $position;
             $data['last_sample_paused'] = $paused ? 1 : 0;
             $data['last_sample_rate'] = $playbackRate;
+            if (!$libraryResolved) {
+                unset($data['library'], $data['library_resolved_at'], $data['library_resolved_at_epoch']);
+            }
 
-            try {
-                $this->db->insert('play_history', $data)->execute();
-            } catch (\Dibi\UniqueConstraintViolationException) {
-                // Another writer (the poller and an open dashboard both call this)
-                // inserted the same session+item first, so update that row instead.
-                // The winning writer may already have claimed this row for a
-                // notification. Preserve its flag when applying our fresher
-                // playback details so the alert cannot become eligible again.
-                // Re-read through the CAS path. A same-time sample becomes a
-                // no-op, while a genuinely newer sample can add its interval.
-                if ($casAttempt < 2) {
-                    $this->logActiveStreams([$stream], $now, $casAttempt + 1);
-                }
+            $update = $this->db->update('play_history', $data)
+                ->where('id = %i', (int) $existing['id']);
+            if ($previousSampleEpoch === null) {
+                $update->where('last_sample_epoch IS NULL');
+            } else {
+                $update->where('last_sample_epoch = %i', $previousSampleEpoch);
+            }
+            $update->execute();
+            if ($this->db->getAffectedRows() === 0 && $casAttempt < 2) {
+                $this->logActiveStreamsGuarded([$stream], $now, $casAttempt + 1);
+            }
+            return;
+        }
+
+        $data['session_key'] = $isNewPlay
+            ? self::replayPrefix($sessionKey, $itemId) . $now->getTimestamp()
+            : $sessionKey;
+        $data['item_id'] = $itemId;
+        $data['started_at'] = $nowSql;
+        $data['started_at_epoch'] = $now->getTimestamp();
+        $data['notified'] = 0;
+        $data['notification_attempts'] = 0;
+        $data['notification_claim_token'] = null;
+        $data['notification_claimed_at_epoch'] = null;
+        $data['notification_next_attempt_at_epoch'] = null;
+        $data['watch_duration_sec'] = 0;
+        $data['last_sample_epoch'] = $now->getTimestamp();
+        $data['last_sample_position_sec'] = $position;
+        $data['last_sample_paused'] = $paused ? 1 : 0;
+        $data['last_sample_rate'] = $playbackRate;
+
+        try {
+            $this->db->insert('play_history', $data)->execute();
+        } catch (\Dibi\UniqueConstraintViolationException) {
+            // Another writer (the poller and an open dashboard both call this)
+            // inserted the same session+item first, so update that row instead.
+            // The winning writer may already have claimed this row for a
+            // notification. Preserve its flag when applying our fresher
+            // playback details so the alert cannot become eligible again.
+            // Re-read through the CAS path. A same-time sample becomes a
+            // no-op, while a genuinely newer sample can add its interval.
+            if ($casAttempt < 2) {
+                $this->logActiveStreamsGuarded([$stream], $now, $casAttempt + 1);
             }
         }
+    }
+
+    private static function replayPrefix(string $sessionKey, string $itemId): string
+    {
+        return 'jd-replay-' . hash('sha256', $sessionKey . "\0" . $itemId) . '-';
+    }
+
+    /** @param array<string, mixed> $stream */
+    private function validateStreamIdentity(array $stream): void
+    {
+        foreach (['user', 'seriesName', 'itemName', 'library', 'client', 'device'] as $field) {
+            if (!mb_check_encoding((string) ($stream[$field] ?? ''), 'UTF-8')) {
+                throw new \InvalidArgumentException('Jellyfin supplied invalid History metadata.');
+            }
+        }
+        foreach (['id' => 128, 'itemId' => 64, 'userId' => 64] as $field => $limit) {
+            $value = (string) ($stream[$field] ?? '');
+            if (!mb_check_encoding($value, 'UTF-8') || mb_strlen($value, 'UTF-8') > $limit) {
+                throw new \InvalidArgumentException('Jellyfin supplied an invalid History identity.');
+            }
+        }
+    }
+
+    private function activePlaySelection(string $sessionKey, string $itemId, string $columns): \Dibi\Fluent
+    {
+        return $this->db->select($columns)->from('play_history')
+            ->where('(session_key = %s OR session_key LIKE %s)', $sessionKey, self::replayPrefix($sessionKey, $itemId) . '%')
+            ->where('item_id = %s', $itemId)
+            ->orderBy('started_at_epoch')->desc()
+            ->orderBy('started_at')->desc()
+            ->orderBy('id')->desc()
+            ->limit(1);
     }
 
     private static function playbackRate(mixed $rate): float
@@ -509,11 +598,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
                 continue;
             }
 
-            $row = $this->db->select('library, library_resolved_at')
-                ->from('play_history')
-                ->where('session_key = %s', $sessionKey)
-                ->where('item_id = %s', $itemId)
-                ->fetch();
+            $row = $this->activePlaySelection($sessionKey, $itemId, 'library, library_resolved_at')->fetch();
             if (!$row) {
                 continue;
             }
@@ -1386,18 +1471,18 @@ final class PlayHistoryRepository implements LibraryHistorySource
                 `id` bigint NOT NULL AUTO_INCREMENT,
                 `session_key` varchar(128) NOT NULL,
                 `user_id` varchar(64) DEFAULT NULL,
-                `user_name` varchar(128) DEFAULT NULL,
+                `user_name` text DEFAULT NULL,
                 `item_id` varchar(64) NOT NULL,
                 `item_type` varchar(16) NOT NULL,
-                `series_name` varchar(255) DEFAULT NULL,
-                `item_name` varchar(255) DEFAULT NULL,
+                `series_name` text DEFAULT NULL,
+                `item_name` text DEFAULT NULL,
                 `season_ep` varchar(32) DEFAULT NULL,
-                `library` varchar(64) DEFAULT NULL,
+                `library` text DEFAULT NULL,
                 `library_resolved_at` datetime DEFAULT NULL,
                 `play_method` varchar(32) NOT NULL,
                 `play_method_detail` varchar(64) DEFAULT NULL,
-                `client` varchar(64) DEFAULT NULL,
-                `device` varchar(64) DEFAULT NULL,
+                `client` text DEFAULT NULL,
+                `device` text DEFAULT NULL,
                 `source_video_codec` varchar(64) DEFAULT NULL,
                 `source_audio_codec` varchar(64) DEFAULT NULL,
                 `source_container` varchar(64) DEFAULT NULL,
@@ -1426,8 +1511,8 @@ final class PlayHistoryRepository implements LibraryHistorySource
                 PRIMARY KEY (`id`),
                 UNIQUE KEY `uniq_session_item` (`session_key`, `item_id`),
                 KEY `idx_started_at` (`started_at`),
-                KEY `idx_user_name` (`user_name`),
-                KEY `idx_library` (`library`)
+                KEY `idx_user_name` (`user_name`(128)),
+                KEY `idx_library` (`library`(64))
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci',
             'CREATE TABLE IF NOT EXISTS `play_history` (
                 `id` INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1515,7 +1600,35 @@ final class PlayHistoryRepository implements LibraryHistorySource
         $this->ensureColumn('notification_claimed_at_epoch', '`notification_claimed_at_epoch` bigint DEFAULT NULL AFTER `notification_claim_token`', '`notification_claimed_at_epoch` INTEGER DEFAULT NULL');
         $this->ensureColumn('notification_next_attempt_at_epoch', '`notification_next_attempt_at_epoch` bigint DEFAULT NULL AFTER `notification_claimed_at_epoch`', '`notification_next_attempt_at_epoch` INTEGER DEFAULT NULL');
 
+        $this->ensureMetadataTextColumns();
         self::$schemaConnections[$this->db] = true;
+    }
+
+    private function ensureMetadataTextColumns(): void
+    {
+        if ($this->platform->isSqlite()) {
+            return;
+        }
+        $columns = $this->db->query('SHOW COLUMNS FROM `play_history`')->fetchPairs('Field', 'Type');
+        $changes = [];
+        foreach (self::LONG_TEXT_COLUMNS as $column) {
+            if (!in_array(strtolower((string) ($columns[$column] ?? '')), ['text', 'mediumtext', 'longtext'], true)) {
+                $changes[] = $this->db->translate('MODIFY COLUMN %n TEXT DEFAULT NULL', $column);
+                if ($column === 'user_name' || $column === 'library') {
+                    $index = $column === 'user_name' ? 'idx_user_name' : 'idx_library';
+                    $prefix = $column === 'user_name' ? 128 : 64;
+                    $indexes = $this->db->query('SHOW INDEX FROM `play_history`')->fetchPairs(null, 'Key_name');
+                    if (in_array($index, $indexes, true)) {
+                        $changes[] = $this->db->translate('DROP INDEX %n', $index);
+                    }
+                    $changes[] = $this->db->translate('ADD INDEX %n (%n(%i))', $index, $column, $prefix);
+                }
+            }
+        }
+        if ($changes !== []) {
+            // Change the columns and their prefix indexes in one atomic DDL statement.
+            $this->db->query('ALTER TABLE `play_history` ' . implode(', ', $changes));
+        }
     }
 
     private function ensureColumn(string $column, string $mariaDbDefinition, string $sqliteDefinition): void

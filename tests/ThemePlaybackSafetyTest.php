@@ -70,7 +70,7 @@ final class ThemePlaybackSafetyTest extends TestCase
         self::assertSame(2, $calls);
     }
 
-    public function testStableMetadataDoesNotRewriteClassificationEveryPoll(): void
+    public function testStableObservationsAdvanceFreshnessWithoutInvalidatingPayloadCaches(): void
     {
         $database = Database::sqlite(':memory:');
         $exclusions = new ThemePlaybackExclusions($database, 'test');
@@ -82,7 +82,7 @@ final class ThemePlaybackSafetyTest extends TestCase
         $revision = $exclusions->revision();
         self::assertSame([], $exclusions->filterSessions($sessions, $client, 1005));
         self::assertSame($revision, $exclusions->revision());
-        self::assertSame(1000, (int) $database->getDibi()->select('updated_at_epoch')->from('theme_item_classifications')->fetchSingle());
+        self::assertSame(1005, (int) $database->getDibi()->select('updated_at_epoch')->from('theme_item_classifications')->fetchSingle());
     }
 
     public function testBackgroundScanMovesPastMissingItemsWithoutChangingHistory(): void

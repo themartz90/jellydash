@@ -155,8 +155,13 @@ use Mk\Framework\View;
     if ($requests->authIs('logout') && $isPost) {
         Csrf::check();
 
-        $auth_class = new Authorization();
-        $auth_class->userLogout();
+        try {
+            $auth_class = new Authorization();
+            $auth_class->userLogout();
+        } catch (\Throwable $e) {
+            Authorization::clearLocalAuthentication();
+            \Mk\Framework\Log::logException($e);
+        }
         Pager::login();
     }
 }
