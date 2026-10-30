@@ -24,6 +24,28 @@ final class ViewingTimeMeasurementTest extends TestCase
         $this->cleanup();
     }
 
+    public function testShortPlayBecomesVisibleOnlyAfterMeasuredViewingReachesThreshold(): void
+    {
+        $previous = \Mk\Framework\AppSettings::get('minimum_viewing_seconds');
+        try {
+            \Mk\Framework\AppSettings::set('minimum_viewing_seconds', '60');
+            $filters = new \Mk\Framework\Jellyfin\HistoryFilters(range: 'all');
+            $start = new DateTimeImmutable('2026-09-08 12:00:00');
+            $this->repository->logActiveStreams([$this->stream(1800)], $start);
+            $this->assertSame(0, $this->repository->historyTotal($filters));
+            $this->repository->logActiveStreams([$this->stream(3000)], $start->modify('+30 seconds'));
+            $this->assertSame(0, $this->repository->historyTotal($filters));
+            $this->repository->logActiveStreams([$this->stream(3000, true)], $start->modify('+60 seconds'));
+            $this->repository->logActiveStreams([$this->stream(3000)], $start->modify('+90 seconds'));
+            $this->assertSame(0, $this->repository->historyTotal($filters));
+            $this->repository->logActiveStreams([$this->stream(3030)], $start->modify('+120 seconds'));
+            $this->assertSame(1, $this->repository->historyTotal($filters));
+            $this->assertSame(60, $this->duration($this->database));
+        } finally {
+            \Mk\Framework\AppSettings::set('minimum_viewing_seconds', $previous);
+        }
+    }
+
     public function testViewingTimeUsesObservedSamplesWithoutCountingSeeksPausesOrGaps(): void
     {
         $database = $this->database;

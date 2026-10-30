@@ -364,6 +364,10 @@ Confirmed background theme songs and videos are excluded automatically. The hist
 To silence music alerts without hiding music activity, select the library under **Settings > Exclusions > Notifications**. Library names match exactly, ignoring letter case. If Jellydash cannot identify a new play's library, it waits for that information before sending an alert. An unresolved play expires without an alert after 10 minutes.
 For manually entered names or `PUSH_IGNORE_LIBRARIES`, put a library name containing a comma in double quotes.
 
+Under **Settings > Exclusions > Short plays**, set **Minimum viewing time** to hide brief playback checks from History, Statistics, Trending, Most Watched, library activity and CSV exports. The value is in seconds; 0 keeps every play visible. Try 60 or 120 seconds for encoding or HDR checks. The filter applies to all media, including music.
+
+Plays stay in the database, so lowering the value makes them visible again. The cutoff uses sampled viewing time rather than playback position; paused time and skipped portions do not count as time watched. Older plays without measured viewing time remain visible. Live sessions and playback-start notifications are unchanged. Set the value to 0 before exporting if you want to include short plays in a backup.
+
 ## Exporting History
 
 Use **Export CSV** on the History page to choose a search, user, library and time period before downloading. Jellydash shows the exact number of matching plays, and the export is never limited to the page you are viewing. You can import the exported file back into Jellydash. See [History CSV format](docs/HISTORY_CSV.md) for format versions and compatibility details.

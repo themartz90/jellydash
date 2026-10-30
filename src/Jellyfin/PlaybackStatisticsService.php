@@ -535,6 +535,7 @@ final class PlaybackStatisticsService
 
         return hash('sha256', json_encode([
             'timezone' => date_default_timezone_get(),
+            'minimumViewingSeconds' => MinimumViewingTime::seconds(),
             'excludedLibraries' => $this->excludedLibraries(),
             'excludedUsers' => (new MonitoringExclusions())->fingerprint(),
             'themeClassificationContext' => $repository->themePlaybackExclusions()->fingerprint(),

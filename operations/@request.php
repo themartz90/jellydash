@@ -70,6 +70,15 @@ use Mk\Framework\View;
             exit('Forbidden');
         }
 
+        $minimumViewingSeconds = null;
+        if (array_key_exists('minimum_viewing_seconds', $_POST)) {
+            $minimumViewingSeconds = \Mk\Framework\Jellyfin\MinimumViewingTime::parse($_POST['minimum_viewing_seconds']);
+            if ($minimumViewingSeconds === null) {
+                http_response_code(400);
+                exit('Minimum viewing time must be a whole number from 0 to 2147483647 seconds.');
+            }
+        }
+
         $csv = static function (array $checked, string $extraField): string {
             $extra = array_filter(array_map(
                 static fn (string $s): string => trim($s, " \t\n\r\0\x0B\"'"),
@@ -104,6 +113,9 @@ use Mk\Framework\View;
             NotificationLibraryExclusions::fromForm($ignoreLibraries, (string) ($_POST['push_ignore_library_extra'] ?? ''))
         ));
         \Mk\Framework\AppSettings::set('ignore_users', $csv($monitoringIgnore, 'monitoring_ignore_extra'));
+        if ($minimumViewingSeconds !== null) {
+            \Mk\Framework\AppSettings::set('minimum_viewing_seconds', (string) $minimumViewingSeconds);
+        }
 
         header('Location: /settings?saved=1');
         exit;

@@ -33,6 +33,51 @@ final class PlayHistoryRepositoryTest extends TestCase
         }
     }
 
+    public function testMinimumViewingTimeFiltersAllHistorySummariesWithoutDeletingRecords(): void
+    {
+        $previous = AppSettings::get('minimum_viewing_seconds');
+        try {
+            $short = $this->insertPlay(['watch_duration_sec' => 59, 'watched_sec' => 3500]);
+            $qualifying = $this->insertPlay(['watch_duration_sec' => 60]);
+            $legacy = $this->insertPlay(['watch_duration_sec' => null, 'watched_sec' => 10]);
+            $filters = new HistoryFilters(range: 'all');
+            $now = new \DateTimeImmutable('2099-06-19 12:10:00');
+            AppSettings::set('minimum_viewing_seconds', '60');
+
+            $this->assertSame([$legacy, $qualifying], array_map(static fn ($row): int => (int) $row['id'], $this->repository->historyRows($filters)));
+            $this->assertSame(2, $this->repository->historyTotal($filters));
+            $this->assertCount(2, iterator_to_array($this->repository->historyExportRows($filters)));
+            $this->assertSame(2, $this->repository->historyAggregate($filters)['plays']);
+            $this->assertSame(70, $this->repository->historyAggregate($filters)['watch_sec']);
+            $this->assertSame(2, $this->repository->totalRows());
+            $this->assertSame(70, $this->repository->watchTimeToday($now));
+            $this->assertTrue($this->repository->watchTimeTodayIsEstimated($now));
+            $this->assertCount(2, $this->repository->statisticsRowsForPeriod(null, null));
+            $this->assertSame(2, (int) $this->repository->itemPlaySummaries()[0]['plays']);
+            $this->assertSame(3, (int) $this->dibi->select('COUNT(*)')->from('play_history')->fetchSingle());
+
+            AppSettings::set('minimum_viewing_seconds', '0');
+            $this->assertSame(3, $this->repository->historyTotal($filters));
+            $this->assertContains($short, array_map(static fn ($row): int => (int) $row['id'], $this->repository->historyRows($filters)));
+        } finally {
+            AppSettings::set('minimum_viewing_seconds', $previous);
+        }
+    }
+
+    public function testMinimumViewingTimeDoesNotDelayPlaybackAlerts(): void
+    {
+        $previous = AppSettings::get('minimum_viewing_seconds');
+        try {
+            AppSettings::set('minimum_viewing_seconds', '120');
+            $id = $this->insertPlay(['watch_duration_sec' => 0, 'notified' => 0]);
+            $claims = $this->repository->claimUnnotifiedPlays([], 120, new \DateTimeImmutable('2099-06-19 12:00:30'));
+            $this->assertSame([$id], array_map(static fn ($row): int => (int) $row['id'], $claims));
+            $this->assertSame(0, $this->repository->historyTotal(new HistoryFilters(range: 'all')));
+        } finally {
+            AppSettings::set('minimum_viewing_seconds', $previous);
+        }
+    }
+
     public function testLogActiveStreamsInsertsAndKeepsHighestWatchedProgress(): void
     {
         $now = new \DateTimeImmutable('2099-06-19 12:00:00');

@@ -1080,7 +1080,8 @@ svg.icon-filled {
 }
 
 .settings-field input[type="text"],
-.settings-field input[type="password"] {
+.settings-field input[type="password"],
+.settings-field input[type="number"] {
     padding: 10px 12px;
     color: var(--color-text);
     font: inherit;
@@ -1091,7 +1092,8 @@ svg.icon-filled {
 }
 
 .settings-field input[type="text"]:focus,
-.settings-field input[type="password"]:focus {
+.settings-field input[type="password"]:focus,
+.settings-field input[type="number"]:focus {
     outline: none;
     border-color: rgba(124, 92, 255, .55);
     background: rgba(124, 92, 255, .07);

@@ -9,6 +9,37 @@ use PHPUnit\Framework\TestCase;
 
 final class LibraryOverviewServiceTest extends TestCase
 {
+    public function testMinimumViewingTimeChangeInvalidatesFreshLibraryCacheAndFailureBackoff(): void
+    {
+        $previous = \Mk\Framework\AppSettings::get('minimum_viewing_seconds');
+        foreach ([false, true] as $failure) {
+            $cachePath = sys_get_temp_dir() . '/jellydash-threshold-' . bin2hex(random_bytes(8)) . '.json';
+            $client = new FakeLibraryOverviewClient(
+                [['Id' => 'movies', 'Name' => 'Movies', 'CollectionType' => 'movies']],
+                ['movies|Movie' => 1],
+                $failure ? ['movies'] : [],
+            );
+            $service = new LibraryOverviewService($client, new FakeLibraryHistorySource(), $cachePath);
+            try {
+                \Mk\Framework\AppSettings::set('minimum_viewing_seconds', '0');
+                $service->cachedPayload();
+                $service->cachedPayload();
+                $this->assertSame(1, $client->folderCalls);
+                \Mk\Framework\AppSettings::set('minimum_viewing_seconds', '60');
+                $service->cachedPayload();
+                $this->assertSame(2, $client->folderCalls);
+                \Mk\Framework\AppSettings::set('minimum_viewing_seconds', '0');
+                $service->cachedPayload();
+                $this->assertSame(3, $client->folderCalls);
+            } finally {
+                \Mk\Framework\AppSettings::set('minimum_viewing_seconds', $previous);
+                @unlink($cachePath);
+                @unlink($cachePath . '.retry');
+                @unlink($cachePath . '.lock');
+            }
+        }
+    }
+
     public function testLegacyContributionsLabelLibraryAndSummaryTotalsAsEstimated(): void
     {
         $client = new FakeLibraryOverviewClient(
@@ -88,8 +119,10 @@ final class LibraryOverviewServiceTest extends TestCase
         $data = (new LibraryOverviewService($client, new FakeLibraryHistorySource()))->data();
 
         $this->assertSame(9, $data['libraries'][0]['totalFilesRaw']);
-        $this->assertSame(['Movies' => '2', 'Series' => '3', 'Videos' => '1', 'Episodes' => '6'],
-            array_column($data['libraries'][0]['breakdown'], 'value', 'label'));
+        $this->assertSame(
+            ['Movies' => '2', 'Series' => '3', 'Videos' => '1', 'Episodes' => '6'],
+            array_column($data['libraries'][0]['breakdown'], 'value', 'label')
+        );
         $this->assertSame('9', $data['summary'][1]['value']);
     }
 

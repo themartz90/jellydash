@@ -10,6 +10,7 @@ use Mk\Framework\Config;
 use Mk\Framework\Controller;
 use Mk\Framework\Downloads\Feature;
 use Mk\Framework\Jellyfin\JellyfinClient;
+use Mk\Framework\Jellyfin\MinimumViewingTime;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
 use Mk\Framework\Log;
 use Mk\Framework\Main;
@@ -122,6 +123,7 @@ final class SettingsController extends Controller
             'server_label_value' => AppSettings::get('server_label', 'Jellyfin dashboard'),
             'show_server_stats' => AppSettings::bool('show_server_stats', true),
             'show_recently_added' => AppSettings::bool('show_recently_added', true),
+            'minimum_viewing_seconds' => MinimumViewingTime::seconds(),
             'downloads_enabled' => Feature::enabled(),
             'libraries' => $libraries,
             'excluded' => $excluded,

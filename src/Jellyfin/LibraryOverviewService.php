@@ -230,6 +230,7 @@ final class LibraryOverviewService
             'partial' => !$data['complete'],
             'monitoring_context' => ($this->exclusions ?? new MonitoringExclusions())->fingerprint(),
             'theme_classification_context' => $this->themeClassificationContext(),
+            'minimum_viewing_seconds' => MinimumViewingTime::seconds(),
         ];
     }
 
@@ -284,6 +285,7 @@ final class LibraryOverviewService
                 'retry_after' => $this->now() + $this->failureBackoff,
                 'monitoring_context' => ($this->exclusions ?? new MonitoringExclusions())->fingerprint(),
                 'theme_classification_context' => $this->themeClassificationContext(),
+                'minimum_viewing_seconds' => MinimumViewingTime::seconds(),
                 'message' => $message,
                 'payload' => $payload,
             ]);
@@ -306,6 +308,7 @@ final class LibraryOverviewService
 
         return $context !== ''
             && hash_equals($expected, $context)
+            && ($failure['minimum_viewing_seconds'] ?? 0) === MinimumViewingTime::seconds()
             && $themeContext !== null
             && ($themeContext === '' || (
                 is_string($failure['theme_classification_context'] ?? null)
@@ -381,6 +384,7 @@ final class LibraryOverviewService
         $themeContext = $this->themeClassificationContext();
 
         return $context === $policy->fingerprint()
+            && ($cached['minimum_viewing_seconds'] ?? 0) === MinimumViewingTime::seconds()
             && $themeContext !== null
             && ($themeContext === '' || (
                 is_string($cached['theme_classification_context'] ?? null)

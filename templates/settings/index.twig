@@ -123,6 +123,15 @@
             <small class="settings-note">Earlier activity stays saved and will reappear when you remove the exclusion. Activity skipped while the user was excluded cannot be recovered. Names must match exactly, but case does not matter.</small>
             </fieldset>
             <fieldset class="settings-exclusion-group">
+                <legend>Short plays</legend>
+                <label class="settings-field">
+                    <span>Minimum viewing time (seconds)</span>
+                    <input type="number" name="minimum_viewing_seconds" min="0" max="2147483647" step="1" required value="{{ minimum_viewing_seconds }}" aria-describedby="minimum-viewing-help">
+                    <small id="minimum-viewing-help">Hide shorter plays from History, statistics, library activity, and history exports. Set to 0 to show all plays, or try 60 or 120 seconds to hide brief checks. This applies to all media, including music.</small>
+                </label>
+                <p class="settings-note">Plays stay saved and reappear when you lower this value. The cutoff uses sampled viewing time, excluding pauses and skipped portions. Older plays without measured viewing time remain visible. Live sessions and playback alerts are unaffected.</p>
+            </fieldset>
+            <fieldset class="settings-exclusion-group">
                 <legend>Notifications</legend>
                 <p class="settings-note">Users: Selected users never trigger playback alerts. Their activity is still recorded unless they are also excluded from monitoring.</p>
             {% if users is not empty %}
