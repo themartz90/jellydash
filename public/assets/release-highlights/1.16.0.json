@@ -1,0 +1,22 @@
+{
+  "version": "1.16.0",
+  "auto_show": true,
+  "title": "Short-play filtering and History fixes",
+  "summary": "Hide brief playback checks from History and statistics, with fixes for replays, restores and request metadata.",
+  "highlights": [
+    "Set a minimum viewing time under Settings > Exclusions > Short plays. Try 60 or 120 seconds; 0 keeps the current behavior. Hidden plays stay saved and reappear when you lower the value.",
+    "The filter uses sampled viewing time and also applies to library activity and CSV exports. Older plays without measured time remain visible. Live sessions and playback alerts are unchanged.",
+    "Replaying a finished item keeps the earlier viewing as a separate play. Playback samples captured during a History restore are queued and retried afterward.",
+    "Jellyseerr retries missing titles and posters. Other fixes keep collection running after invalid stream metadata, preserve local logout when revocation fails, and reject invalid SSL verification flags."
+  ],
+  "links": [
+    {
+      "label": "History CSV guide",
+      "url": "https://github.com/themartz90/jellydash/blob/v1.16.0/docs/HISTORY_CSV.md"
+    },
+    {
+      "label": "Full release notes",
+      "url": "https://github.com/themartz90/jellydash/releases/tag/v1.16.0"
+    }
+  ]
+}
