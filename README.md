@@ -219,6 +219,10 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 Updating then means `git pull` and running the same command again. For a source-built SQLite install, replace `docker-compose.yml` with `docker-compose.sqlite.yml`.
 
+## One-Click Deploy
+
+[![Deploy on RepoCloud](https://d16t0pc4846x52.cloudfront.net/deploylobe.svg)](https://repocloud.io/details/Jellydash/)
+
 ## Downloads
 
 Open the Downloads card in Settings, then select **Manage clients** to add a client, test its connection and choose which categories, tags or labels to monitor. You can add up to ten clients. The Downloads page appears once a client is configured, and Now Playing shows a small activity indicator. With Jellydash login enabled, an owner or admin manages these settings.
