@@ -10,6 +10,7 @@ use Mk\Framework\DatabaseSchemaInitializer;
 final class MariaDbToSqliteMigrator
 {
     private const BATCH_SIZE = 500;
+    private const BLOB_BATCH_SIZE = 8;
 
     /** @var list<string> */
     private const TABLES = [
@@ -29,6 +30,14 @@ final class MariaDbToSqliteMigrator
         'integration_connections',
         'download_connection_state',
         'download_completions',
+        'artwork_sources',
+        'artwork_items',
+        'artwork_posters',
+        'artwork_images',
+        'artwork_external_bindings',
+        'artwork_external_searches',
+        'artwork_external_assets',
+        'artwork_external_bodies',
     ];
 
     /**
@@ -56,6 +65,14 @@ final class MariaDbToSqliteMigrator
         'integration_connections' => ['id', 'provider', 'display_name', 'endpoint', 'endpoint_hash', 'username', 'verify_tls', 'enabled', 'filter_mode', 'categories_json', 'tags_json', 'credential_envelope', 'credential_source', 'config_revision', 'created_at_epoch', 'updated_at_epoch'],
         'download_connection_state' => ['connection_id', 'config_revision', 'lease_token', 'lease_expires_at', 'next_due_at', 'last_attempt_at', 'last_success_at', 'failure_code', 'failure_count', 'cursor_json', 'snapshot_json', 'snapshot_at', 'session_envelope'],
         'download_completions' => ['connection_id', 'source_id_digest', 'source_id', 'title', 'category', 'tags_json', 'size_bytes', 'completed_at', 'observed_at', 'last_seen_at'],
+        'artwork_sources' => ['source_key', 'server_id', 'blocked', 'lease_token', 'lease_until', 'used_bytes', 'backfill_cursor'],
+        'artwork_items' => ['source_key', 'item_id', 'item_type', 'title', 'series_name', 'poster_id', 'observed_at', 'evidence', 'status', 'next_attempt'],
+        'artwork_posters' => ['source_key', 'poster_id', 'kind', 'requested_tag', 'observed_at', 'revision', 'attempts', 'next_attempt', 'last_checked', 'suppressed', 'last_error'],
+        'artwork_images' => ['source_key', 'poster_id', 'body', 'content_type', 'tag', 'body_size', 'sha256', 'saved_at'],
+        'artwork_external_bindings' => ['source_key', 'item_id', 'identity_key', 'kind', 'verified_id', 'identity_conflict', 'tmdb_id', 'poster_path', 'asset_key', 'presence', 'state', 'origin', 'suppressed', 'snoozed_until', 'revision', 'next_attempt', 'attempts', 'last_error', 'expires_at'],
+        'artwork_external_assets' => ['source_key', 'asset_key', 'revision', 'kind', 'provider_id', 'poster_path', 'title', 'year', 'requested_language', 'image_language', 'body_size', 'content_type', 'sha256', 'saved_at', 'expires_at'],
+        'artwork_external_bodies' => ['source_key', 'asset_key', 'body'],
+        'artwork_external_searches' => ['source_key', 'query_key', 'server_id', 'config_revision', 'kind', 'query_title', 'acquired_at', 'expires_at', 'candidates_json', 'last_error', 'revision'],
     ];
 
     public function __construct(private readonly Database $source)
@@ -176,11 +193,19 @@ final class MariaDbToSqliteMigrator
             'integration_connections' => ['id'],
             'download_connection_state' => ['connection_id'],
             'download_completions' => ['connection_id', 'source_id_digest'],
+            'artwork_sources' => ['source_key'],
+            'artwork_items', 'artwork_posters', 'artwork_images' => ['source_key', $table === 'artwork_items' ? 'item_id' : 'poster_id'],
+            'artwork_external_bindings' => ['source_key', 'item_id'],
+            'artwork_external_searches' => ['source_key', 'query_key'],
+            'artwork_external_assets', 'artwork_external_bodies' => ['source_key', 'asset_key'],
             default => [in_array('id', $columns, true) ? 'id' : $columns[0]],
         };
         $expectedSourceCount = (int) $this->source->getDibi()
             ->select('COUNT(*)')->from($table)->fetchSingle();
-        [$sourceCount, $sourceDigest] = $this->copyRows($table, $columns, $orderBy, $destination);
+        $batchSize = in_array($table, ['artwork_images', 'artwork_external_bodies'], true)
+            ? self::BLOB_BATCH_SIZE
+            : self::BATCH_SIZE;
+        [$sourceCount, $sourceDigest] = $this->copyRows($table, $columns, $orderBy, $destination, $batchSize);
         if ($sourceCount !== $expectedSourceCount) {
             throw new \RuntimeException("Source row count changed while copying {$table}.");
         }
@@ -189,7 +214,7 @@ final class MariaDbToSqliteMigrator
             $destination->query('UPDATE `play_history` SET `notified` = 1');
         }
 
-        [$destinationCount, $destinationDigest] = $this->tableDigest($destination, $table, $columns, $orderBy);
+        [$destinationCount, $destinationDigest] = $this->tableDigest($destination, $table, $columns, $orderBy, $batchSize);
         if ($sourceCount !== $destinationCount || !hash_equals($sourceDigest, $destinationDigest)) {
             throw new \RuntimeException("Verification failed for {$table}.");
         }
@@ -232,6 +257,7 @@ final class MariaDbToSqliteMigrator
         array $columns,
         array $orderBy,
         \Dibi\Connection $destination,
+        int $batchSize,
     ): array {
         $source = $this->source->getDibi();
         $hash = hash_init('sha256');
@@ -239,15 +265,36 @@ final class MariaDbToSqliteMigrator
         $offset = 0;
 
         do {
-            $rows = $this->selectBatch($source, $table, $columns, $orderBy, $offset);
+            $rows = $this->selectBatch($source, $table, $columns, $orderBy, $offset, $batchSize);
             foreach ($rows as $row) {
                 $data = $row->toArray();
                 $this->updateDigest($hash, $data, $columns);
-                $destination->insert($table, $data)->execute();
+                if ($table === 'artwork_images') {
+                    $destination->query(
+                        'INSERT INTO `artwork_images` (`source_key`, `poster_id`, `body`, `content_type`, `tag`, `body_size`, `sha256`, `saved_at`) VALUES (%s, %s, %bin, %s, %s, %i, %s, %i)',
+                        $data['source_key'],
+                        $data['poster_id'],
+                        $data['body'],
+                        $data['content_type'],
+                        $data['tag'],
+                        $data['body_size'],
+                        $data['sha256'],
+                        $data['saved_at'],
+                    );
+                } elseif ($table === 'artwork_external_bodies') {
+                    $destination->query(
+                        'INSERT INTO `artwork_external_bodies` (`source_key`, `asset_key`, `body`) VALUES (%s, %s, %bin)',
+                        $data['source_key'],
+                        $data['asset_key'],
+                        $data['body'],
+                    );
+                } else {
+                    $destination->insert($table, $data)->execute();
+                }
                 ++$count;
             }
             $offset += count($rows);
-        } while (count($rows) === self::BATCH_SIZE);
+        } while (count($rows) === $batchSize);
 
         return [$count, hash_final($hash)];
     }
@@ -262,19 +309,20 @@ final class MariaDbToSqliteMigrator
         string $table,
         array $columns,
         array $orderBy,
+        int $batchSize,
     ): array {
         $hash = hash_init('sha256');
         $count = 0;
         $offset = 0;
 
         do {
-            $rows = $this->selectBatch($connection, $table, $columns, $orderBy, $offset);
+            $rows = $this->selectBatch($connection, $table, $columns, $orderBy, $offset, $batchSize);
             foreach ($rows as $row) {
                 $this->updateDigest($hash, $row->toArray(), $columns);
                 ++$count;
             }
             $offset += count($rows);
-        } while (count($rows) === self::BATCH_SIZE);
+        } while (count($rows) === $batchSize);
 
         return [$count, hash_final($hash)];
     }
@@ -290,6 +338,7 @@ final class MariaDbToSqliteMigrator
         array $columns,
         array $orderBy,
         int $offset,
+        int $batchSize,
     ): array {
         $driver = $connection->getDriver();
         $columnSql = implode(', ', array_map($driver->escapeIdentifier(...), $columns));
@@ -300,7 +349,7 @@ final class MariaDbToSqliteMigrator
             $selection->orderBy($driver->escapeIdentifier($column));
         }
 
-        return $selection->limit(self::BATCH_SIZE)
+        return $selection->limit($batchSize)
             ->offset($offset)
             ->fetchAll();
     }
@@ -311,19 +360,20 @@ final class MariaDbToSqliteMigrator
      */
     private function updateDigest(\HashContext $hash, array $row, array $columns): void
     {
-        $values = [];
+        $encoded = '';
         foreach ($columns as $column) {
-            $value = $row[$column] ?? null;
+            $value = $row[$column];
             if ($value instanceof \DateTimeInterface) {
                 $value = $value->format('Y-m-d H:i:s');
-            } elseif ($value !== null) {
-                $value = (string) $value;
             }
-            $values[] = $value;
+            if ($value === null) {
+                $encoded .= 'N';
+            } else {
+                $value = (string) $value;
+                $encoded .= 'V' . pack('N', strlen($value)) . $value;
+            }
         }
-
-        $encoded = json_encode($values, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        hash_update($hash, pack('N', strlen($encoded)) . $encoded);
+        hash_update($hash, $encoded);
     }
 
     private function removeDestination(string $path): void

@@ -13,12 +13,17 @@ RUN apt-get update \
         libcurl4-openssl-dev \
         libonig-dev \
         libgmp-dev \
+        libpng-dev \
+        libjpeg62-turbo-dev \
+        libwebp-dev \
+    && docker-php-ext-configure gd --with-jpeg --with-webp \
     && docker-php-ext-install \
         curl \
         mbstring \
         mysqli \
         gmp \
-    && php -r "exit(extension_loaded('curl') && extension_loaded('mbstring') && extension_loaded('mysqli') && extension_loaded('gmp') && extension_loaded('sqlite3') && extension_loaded('openssl') ? 0 : 1);" \
+        gd \
+    && php -r "exit(extension_loaded('curl') && extension_loaded('mbstring') && extension_loaded('mysqli') && extension_loaded('gmp') && extension_loaded('gd') && extension_loaded('sqlite3') && extension_loaded('openssl') ? 0 : 1);" \
     && a2enmod rewrite headers \
     && rm -rf /var/lib/apt/lists/*
 

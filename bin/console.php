@@ -189,6 +189,23 @@ try {
             }
             break;
 
+        case 'artwork:expire':
+            $removed = (new Jellyfin\ArtworkRepository($db))->purgeExpiredExternal(time());
+            Jellyfin\ExternalPosterCache::expire();
+            echo "Expired external poster records: {$removed}\n";
+            break;
+
+        case 'artwork:poll':
+            $result = (new Jellyfin\ArtworkCollector())->runBatch();
+            if ($result['error'] !== null) {
+                echo 'Artwork collection paused: ' . $result['error'] . "\n";
+            }
+            $external = (new Jellyfin\ExternalPosterCollector())->runBatch();
+            if ($external['error'] !== null) {
+                echo 'External poster recovery paused: ' . $external['error'] . "\n";
+            }
+            break;
+
         case 'seerr:poll':
             // Mirror the latest Jellyseerr requests locally (one list call, plus
             // a detail lookup only for requests we've never seen) and alert
@@ -401,6 +418,8 @@ try {
             echo "  php bin/console.php user:role <username> <role 1-4>\n";
             echo "  php bin/console.php user:list\n";
             echo "  php bin/console.php history:poll   (record currently-playing sessions)\n";
+            echo "  php bin/console.php artwork:poll   (save and refresh historical posters)\n";
+            echo "  php bin/console.php artwork:expire (remove expired online poster data without network requests)\n";
             echo "  php bin/console.php history:replace-movie <old-id> <current-id> [--apply --confirm-same-movie]\n";
             echo "  php bin/console.php history:unlink-movie <old-id> [--apply]\n";
             echo "  php bin/console.php downloads:poll (refresh configured download clients)\n";

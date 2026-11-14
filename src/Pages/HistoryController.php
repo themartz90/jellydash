@@ -354,7 +354,7 @@ final class HistoryController extends Controller
         }
 
         // Episodes resolve to their series poster; movies use their own poster.
-        $url = '/api/image.php?item=' . rawurlencode($itemId) . '&type=Primary&maxWidth=240';
+        $url = '/api/image.php?item=' . rawurlencode($itemId) . '&type=Primary&maxWidth=240&retained=1';
         if ($itemType === 'Episode') {
             $url .= '&kind=series';
         }

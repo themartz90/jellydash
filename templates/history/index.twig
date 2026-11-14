@@ -93,6 +93,7 @@
 {% endblock %}
 
 {% block dashboard_content %}
+    {% include '_poster_review_notice.twig' %}
     {% if groups is empty %}
         {% include "history/_empty.twig" %}
     {% else %}

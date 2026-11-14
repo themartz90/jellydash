@@ -1,0 +1,101 @@
+.artwork-recovery,
+.artwork-recovery * { box-sizing: border-box; }
+.artwork-recovery { min-width: 0; }
+.artwork-recovery [hidden] { display: none !important; }
+.artwork-recovery .settings-card-head { grid-template-columns: minmax(0, 1fr); }
+.artwork-status,
+.artwork-error,
+.artwork-notice,
+.artwork-warning { margin: .65rem 0; font-size: .9rem; line-height: 1.5; overflow-wrap: anywhere; }
+.artwork-status { color: var(--color-muted); }
+.artwork-error { color: #ffb7ba; }
+.artwork-notice { color: #c8bbff; }
+.artwork-warning {
+    padding: .75rem .85rem;
+    color: #f0d6a7;
+    border: 1px solid rgba(220, 173, 92, .3);
+    border-radius: 9px;
+    background: rgba(220, 173, 92, .08);
+}
+.artwork-warning.is-blocked {
+    color: #ffb7ba;
+    border-color: rgba(255, 112, 120, .35);
+    background: rgba(255, 112, 120, .08);
+}
+.artwork-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: .6rem 1rem;
+    margin: 1rem 0;
+}
+.artwork-summary > div { min-width: 0; }
+.artwork-summary dt { color: var(--color-muted); font-size: .75rem; }
+.artwork-summary dd { margin: .2rem 0 0; font-size: .95rem; font-weight: 650; overflow-wrap: anywhere; }
+.artwork-actions { display: flex; flex-wrap: wrap; gap: .55rem; margin: .8rem 0; }
+.artwork-legacy { margin: .8rem 0; padding-top: .8rem; border-top: 1px solid var(--color-border); }
+.artwork-legacy p { margin-top: 0; }
+.artwork-section { min-width: 0; margin-top: .85rem; border-top: 1px solid var(--color-border); }
+.artwork-section > summary {
+    padding: .85rem 0 .55rem;
+    color: var(--color-purple-soft);
+    font-weight: 650;
+    line-height: 1.4;
+    cursor: pointer;
+}
+.artwork-section > summary span { color: var(--color-muted); font-weight: 500; }
+.artwork-group,
+.artwork-poster { min-width: 0; padding: .9rem 0; border-top: 1px solid rgba(255, 255, 255, .07); }
+.artwork-group h3,
+.artwork-poster h3 { margin: 0 0 .3rem; font-size: .96rem; line-height: 1.4; overflow-wrap: anywhere; }
+.artwork-group p,
+.artwork-poster p { margin: .3rem 0 .65rem; color: var(--color-muted); font-size: .84rem; line-height: 1.5; overflow-wrap: anywhere; }
+.artwork-search { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .55rem; align-items: end; margin-top: .8rem; }
+.artwork-search label { display: block; min-width: 0; color: var(--color-muted); font-size: .78rem; }
+.artwork-search input {
+    display: block;
+    width: 100%;
+    min-height: 42px;
+    margin-top: .3rem;
+    padding: .55rem .7rem;
+    color: var(--color-text);
+    font: inherit;
+    font-size: .9rem;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: rgba(8, 7, 13, .55);
+}
+.artwork-search input:focus-visible,
+.artwork-recovery button:focus-visible,
+.artwork-recovery summary:focus-visible,
+.artwork-recovery a:focus-visible,
+.artwork-recovery h2:focus-visible { outline: 2px solid #bba9ff; outline-offset: 3px; }
+.artwork-results { min-width: 0; margin-top: .65rem; }
+.artwork-candidate,
+.artwork-poster-row { display: flex; min-width: 0; align-items: center; gap: .8rem; padding: .65rem 0; }
+.artwork-candidate img,
+.artwork-poster-row img {
+    display: block;
+    width: 48px;
+    height: 68px;
+    flex: 0 0 auto;
+    border-radius: 5px;
+    background: #272339;
+    object-fit: cover;
+}
+.artwork-poster-row img { width: 58px; height: 82px; }
+.artwork-candidate-copy,
+.artwork-poster-copy { display: grid; min-width: 0; flex: 1; gap: .25rem; }
+.artwork-candidate-copy strong,
+.artwork-poster-copy strong { overflow-wrap: anywhere; }
+.artwork-candidate-copy small,
+.artwork-poster-copy small { color: var(--color-muted); overflow-wrap: anywhere; }
+.artwork-row-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .4rem; }
+.artwork-recovery button { white-space: normal; }
+.artwork-recovery button:disabled { cursor: wait; opacity: .55; }
+.artwork-pager { display: flex; flex-wrap: wrap; gap: .65rem; align-items: center; justify-content: space-between; margin-top: 1rem; }
+.artwork-pager span { flex: 1; text-align: center; color: var(--color-muted); font-size: .84rem; }
+@media (max-width: 520px) {
+    .artwork-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .artwork-search { grid-template-columns: minmax(0, 1fr); }
+    .artwork-search button { justify-self: start; }
+}

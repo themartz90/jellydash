@@ -7,6 +7,7 @@ namespace Mk\Framework;
 use Mk\Framework\Downloads\DownloadRepository;
 use Mk\Framework\Health\WorkerStatusRepository;
 use Mk\Framework\Integrations\ConnectionRepository;
+use Mk\Framework\Jellyfin\ArtworkRepository;
 use Mk\Framework\Jellyfin\MovieIdentityRepository;
 use Mk\Framework\Jellyfin\MovieReplacements;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
@@ -24,6 +25,7 @@ final class DatabaseSchemaInitializer
         new ThemePlaybackExclusions($database);
         new MovieReplacements($database);
         new MovieIdentityRepository($database);
+        new ArtworkRepository($database);
         new PushSubscriptionRepository($database);
         new SeerrRequestRepository($database);
         WorkerStatusRepository::ensureSchema($database);

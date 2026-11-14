@@ -65,8 +65,8 @@ final class MonthlyRecapServiceTest extends TestCase
         self::assertSame('10m', $recap['otherWatch']);
         self::assertTrue($recap['hasOtherMedia']);
         self::assertSame(['Dune', 'Example Show', 'Dune'], array_column($recap['featured'], 'title'));
-        self::assertSame('/api/image.php?item=movie-2&type=Primary&maxWidth=320', $recap['featured'][0]['poster']);
-        self::assertSame('/api/image.php?item=episode-2&type=Primary&maxWidth=320&kind=series', $recap['series'][0]['poster']);
+        self::assertSame('/api/image.php?item=movie-2&type=Primary&maxWidth=320&retained=1', $recap['featured'][0]['poster']);
+        self::assertSame('/api/image.php?item=episode-2&type=Primary&maxWidth=320&retained=1&kind=series', $recap['series'][0]['poster']);
         self::assertSame('3 February', $recap['bestDay']);
         self::assertStringContainsString('Days without entries mean no recorded viewing', $recap['coverageNote']);
         self::assertStringContainsString('music and other media', $recap['rankingNote']);

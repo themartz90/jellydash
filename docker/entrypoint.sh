@@ -47,6 +47,13 @@ EOF
 
 # Each worker runs detached alongside the web server. A failed run never stops
 # its loop.
+# Expiring external data is local maintenance and also runs when polling is off.
+(
+    while true; do
+        gosu www-data php /var/www/html/bin/console.php artwork:expire || true
+        sleep 60
+    done
+) &
 if [ "$workers_enabled" = "1" ]; then
     echo "[entrypoint] starting background workers (history every ${POLL_INTERVAL}s, libraries every ${LIBRARIES_CACHE_TTL}s, jellyseerr every ${SEERR_POLL_INTERVAL}s)"
 
@@ -56,6 +63,14 @@ if [ "$workers_enabled" = "1" ]; then
         while true; do
             gosu www-data php /var/www/html/bin/console.php history:poll || true
             sleep "${POLL_INTERVAL}"
+        done
+    ) &
+
+    # Retain historical posters separately so image requests never delay samples.
+    (
+        while true; do
+            gosu www-data php /var/www/html/bin/console.php artwork:poll || true
+            sleep 30
         done
     ) &
 
@@ -85,7 +100,7 @@ if [ "$workers_enabled" = "1" ]; then
         done
     ) &
 else
-    echo "[entrypoint] background workers disabled (POLLER_ENABLED is false or invalid)"
+    echo "[entrypoint] network polling disabled (POLLER_ENABLED is false or invalid); local poster expiry remains active"
 fi
 
 exec "$@"

@@ -264,6 +264,321 @@ final class MariaDbToSqliteMigratorTest extends TestCase
         $destination->getDibi()->disconnect();
     }
 
+    public function testMigratesArtworkImagesAsBinaryAcrossSmallBatches(): void
+    {
+        DatabaseSchemaInitializer::initialize($this->source);
+        $sourceKey = hash('sha256', 'artwork-scope-different-from-destination-config');
+        $observedAt = 1_800_000_000_123_456;
+        $observation = json_encode([
+            'source' => $sourceKey,
+            'server' => 'art-server',
+            'series' => null,
+            'tag' => 'poster-tag-4',
+            'observedAt' => $observedAt,
+        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+        $this->sourceConnection->insert('artwork_sources', [
+            'source_key' => $sourceKey,
+            'server_id' => 'art-server',
+            'backfill_cursor' => 41,
+            'legacy_confirmed' => 1,
+            'anchored_at' => $observedAt - 10,
+            'fresh_cursor' => 83,
+            'next_attempt' => 1_800_000_120,
+            'last_error' => 'request_failed',
+            'external_preference' => 1,
+            'external_revision' => 7,
+            'external_discovery_after' => 1_800_000_180,
+        ])->execute();
+        $this->sourceConnection->insert('play_history', [
+            'session_key' => 'artwork-observation-migration',
+            'user_id' => 'migration-user',
+            'user_name' => 'Artwork Migration',
+            'item_id' => 'item-1',
+            'item_type' => 'Movie',
+            'item_name' => 'Binary artwork fixture',
+            'library' => 'Movies',
+            'play_method' => 'DirectPlay',
+            'watched_sec' => 120,
+            'watch_duration_sec' => 120,
+            'runtime_sec' => 3600,
+            'started_at' => '2026-08-11 12:00:00',
+            'updated_at' => '2026-08-11 12:02:00',
+            'started_at_epoch' => 1_800_000_000,
+            'updated_at_epoch' => 1_800_000_120,
+            'is_finished' => 0,
+            'notified' => 1,
+            'artwork_observation' => $observation,
+            'artwork_observed_at' => $observedAt,
+        ])->execute();
+        $this->sourceConnection->insert('artwork_items', [
+            'source_key' => $sourceKey,
+            'item_id' => 'item-1',
+            'item_type' => 'Movie',
+            'title' => 'Binary artwork fixture',
+            'series_name' => '',
+            'poster_id' => 'poster-1',
+            'observed_at' => 1_800_000_000,
+            'evidence' => 'item',
+            'status' => 'ready',
+            'next_attempt' => 0,
+        ])->execute();
+        for ($row = 1; $row <= 11; ++$row) {
+            $this->sourceConnection->insert('artwork_posters', [
+                'source_key' => $sourceKey,
+                'poster_id' => 'poster-' . $row,
+                'kind' => 'Primary',
+                'requested_tag' => null,
+                'observed_at' => 1_800_000_000,
+                'revision' => 1,
+                'attempts' => 0,
+                'next_attempt' => 0,
+                'last_checked' => 0,
+                'suppressed' => 0,
+                'last_error' => null,
+                'provider_tmdb_id' => $row === 1 ? '202' : null,
+                'provider_title' => $row === 1 ? 'Original provider title' : '',
+                'provider_year' => $row === 1 ? 2001 : null,
+                'provider_conflict' => $row === 1 ? 1 : 0,
+                'presence' => $row === 1 ? 0 : -1,
+                'presence_checked' => $row === 1 ? 1_800_000_050 : 0,
+            ])->execute();
+        }
+
+        $bodies = [];
+        for ($row = 1; $row <= 11; ++$row) {
+            $body = match ($row) {
+                1 => "\0\xFF\xC3\x28artwork",
+                2 => "\x89PNG\r\n\x1A\n\0\x80",
+                default => "image-{$row}\0" . chr(255 - $row) . random_bytes(8),
+            };
+            $bodies[$row] = $body;
+            $this->sourceConnection->query(
+                'INSERT INTO `artwork_images` (`source_key`, `poster_id`, `body`, `content_type`, `tag`, `body_size`, `sha256`, `saved_at`) VALUES (%s, %s, %bin, %s, %s, %i, %s, %i)',
+                $sourceKey,
+                'poster-' . $row,
+                $body,
+                'image/jpeg',
+                null,
+                strlen($body),
+                hash('sha256', $body),
+                1_800_000_000 + $row,
+            );
+        }
+
+        $externalBodies = [];
+        for ($row = 1; $row <= 11; ++$row) {
+            $assetKey = hash('sha256', 'external-asset-' . $row);
+            $body = match ($row) {
+                1 => "\0\xFF\xC3\x28external-artwork",
+                2 => "\x89PNG\r\n\x1A\n\0\x80",
+                default => "external-{$row}\0" . chr(255 - $row) . random_bytes(8),
+            };
+            $externalBodies[$row] = $body;
+            $this->sourceConnection->insert('artwork_external_assets', [
+                'source_key' => $sourceKey,
+                'asset_key' => $assetKey,
+                'kind' => 'Series',
+                'provider_id' => 'series-' . $row,
+                'poster_path' => '/w500/poster-' . $row . '.jpg',
+                'title' => 'External Show ' . $row,
+                'year' => 2020 + $row,
+                'requested_language' => 'en-US',
+                'image_language' => 'en',
+                'body_size' => strlen($body),
+                'content_type' => 'image/jpeg',
+                'sha256' => hash('sha256', $body),
+                'saved_at' => 1_800_000_100 + $row,
+            ])->execute();
+            $this->sourceConnection->query(
+                'INSERT INTO `artwork_external_bodies` (`source_key`, `asset_key`, `body`) VALUES (%s, %s, %bin)',
+                $sourceKey,
+                $assetKey,
+                $body,
+            );
+        }
+        $this->sourceConnection->insert('artwork_external_bindings', [
+            'source_key' => $sourceKey,
+            'item_id' => 'item-1',
+            'identity_key' => hash('sha256', 'Movie:item-1'),
+            'kind' => 'Movie',
+            'verified_id' => 'verified-movie-1',
+            'identity_conflict' => 0,
+            'tmdb_id' => '101',
+            'poster_path' => '/w500/poster-1.jpg',
+            'selected_title' => 'Manually selected feature',
+            'selected_year' => 1998,
+            'asset_key' => hash('sha256', 'external-asset-1'),
+            'presence' => 0,
+            'state' => 'saved',
+            'origin' => 'automatic',
+            'suppressed' => 0,
+            'suppressed_by' => 'placeholder',
+            'snoozed_until' => 0,
+            'revision' => 3,
+            'next_attempt' => 0,
+            'attempts' => 1,
+            'last_error' => null,
+            'discovery_after' => 1_800_000_240,
+            'expires_at' => 1_800_000_300,
+        ])->execute();
+        $discoveryCandidates = [[
+            'id' => '1429',
+            'kind' => 'Series',
+            'title' => '進撃の巨人',
+            'year' => 2013,
+            'path' => 'attack-on-titan.jpg',
+            'expires_at' => 1_815_552_000,
+        ]];
+        $discoveryJson = json_encode($discoveryCandidates, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $this->sourceConnection->insert('artwork_external_searches', [
+            'source_key' => $sourceKey,
+            'query_key' => hash('sha256', 'native-discovery-query'),
+            'server_id' => 'art-server',
+            'config_revision' => 7,
+            'kind' => 'Series',
+            'query_title' => '進撃の巨人',
+            'acquired_at' => 1_800_000_120,
+            'expires_at' => 1_800_604_920,
+            'candidates_json' => $discoveryJson,
+            'last_error' => null,
+            'revision' => 2,
+        ])->execute();
+
+        $sourceBefore = $this->sourceConnection->select('source_key, poster_id, body, content_type, tag, body_size, sha256, saved_at')
+            ->from('artwork_images')->orderBy('source_key, poster_id')->fetchAll();
+        $externalBodiesBefore = $this->sourceConnection->select('source_key, asset_key, body')
+            ->from('artwork_external_bodies')->orderBy('source_key, asset_key')->fetchAll();
+        $counts = (new MariaDbToSqliteMigrator($this->source))->migrate($this->destinationPath);
+        $this->assertSame(1, $counts['play_history']);
+        $this->assertSame(11, $counts['artwork_images']);
+        $this->assertSame(11, $counts['artwork_posters']);
+        $this->assertSame(1, $counts['artwork_external_bindings']);
+        $this->assertSame(1, $counts['artwork_external_searches']);
+        $this->assertSame(11, $counts['artwork_external_assets']);
+        $this->assertSame(11, $counts['artwork_external_bodies']);
+
+        $destination = Database::sqlite($this->destinationPath);
+        $sqlite = $destination->getDibi();
+        $rows = $sqlite->select('source_key, poster_id, body, content_type, tag, body_size, sha256, saved_at')
+            ->from('artwork_images')->orderBy('source_key, poster_id')->fetchAll();
+        $this->assertCount(11, $rows);
+        $this->assertSame(
+            array_map(static fn (\Dibi\Row $row): array => $row->toArray(), $sourceBefore),
+            array_map(static fn (\Dibi\Row $row): array => $row->toArray(), $rows),
+        );
+        foreach ($rows as $row) {
+            $posterNumber = (int) substr((string) $row['poster_id'], strlen('poster-'));
+            $body = $bodies[$posterNumber];
+            $this->assertSame($body, (string) $row['body']);
+            $this->assertSame(strlen($body), (int) $row['body_size']);
+            $this->assertSame(hash('sha256', $body), (string) $row['sha256']);
+            $this->assertSame($sourceKey, (string) $row['source_key']);
+            $this->assertSame('image/jpeg', (string) $row['content_type']);
+        }
+        $externalRows = $sqlite->query(
+            'SELECT b.source_key, b.asset_key, b.body, a.provider_id, a.body_size, a.sha256 '
+            . 'FROM artwork_external_bodies b JOIN artwork_external_assets a '
+            . 'ON a.source_key = b.source_key AND a.asset_key = b.asset_key '
+            . 'ORDER BY b.source_key, b.asset_key',
+        )->fetchAll();
+        $this->assertCount(11, $externalRows);
+        $this->assertSame(
+            array_map(static fn (\Dibi\Row $row): array => $row->toArray(), $externalBodiesBefore),
+            array_map(static fn (\Dibi\Row $row): array => [
+                'source_key' => $row['source_key'],
+                'asset_key' => $row['asset_key'],
+                'body' => $row['body'],
+            ], $externalRows),
+        );
+        foreach ($externalRows as $row) {
+            $assetNumber = (int) substr((string) $row['provider_id'], strlen('series-'));
+            $body = $externalBodies[$assetNumber];
+            $this->assertSame($body, (string) $row['body']);
+            $this->assertSame(strlen($body), (int) $row['body_size']);
+            $this->assertSame(hash('sha256', $body), (string) $row['sha256']);
+        }
+        $this->assertSame('saved', (string) $sqlite->select('state')->from('artwork_external_bindings')
+            ->where('source_key = %s AND item_id = %s', $sourceKey, 'item-1')->fetchSingle());
+        $this->assertSame(1, (int) $sqlite->select('COUNT(*)')->from('artwork_external_assets')
+            ->where('source_key = %s AND asset_key = %s', $sourceKey, hash('sha256', 'external-asset-1'))->fetchSingle());
+        $externalBinding = $sqlite->select('selected_title, selected_year, suppressed_by, discovery_after, expires_at')
+            ->from('artwork_external_bindings')->where('source_key = %s AND item_id = %s', $sourceKey, 'item-1')->fetch();
+        $this->assertNotFalse($externalBinding);
+        $this->assertSame('Manually selected feature', (string) $externalBinding['selected_title']);
+        $this->assertSame(1998, (int) $externalBinding['selected_year']);
+        $this->assertSame('placeholder', (string) $externalBinding['suppressed_by']);
+        $this->assertSame(1_800_000_240, (int) $externalBinding['discovery_after']);
+        $this->assertSame(1_800_000_300, (int) $externalBinding['expires_at']);
+        $sourceDiscovery = $this->sourceConnection->select('*')->from('artwork_external_searches')
+            ->where('source_key = %s', $sourceKey)->fetch();
+        $destinationDiscovery = $sqlite->select('*')->from('artwork_external_searches')
+            ->where('source_key = %s', $sourceKey)->fetch();
+        $this->assertNotFalse($sourceDiscovery);
+        $this->assertNotFalse($destinationDiscovery);
+        $this->assertSame($sourceDiscovery->toArray(), $destinationDiscovery->toArray());
+        $this->assertSame('進撃の巨人', (string) $destinationDiscovery['query_title']);
+        $this->assertSame($discoveryJson, (string) $destinationDiscovery['candidates_json']);
+        $this->assertSame(1_800_000_180, (int) $sqlite->select('external_discovery_after')->from('artwork_sources')
+            ->where('source_key = %s', $sourceKey)->fetchSingle());
+        $providerMetadata = $sqlite->select('provider_tmdb_id, provider_title, provider_year, provider_conflict, presence, presence_checked')
+            ->from('artwork_posters')->where('source_key = %s AND poster_id = %s', $sourceKey, 'poster-1')->fetch();
+        $this->assertNotFalse($providerMetadata);
+        $this->assertSame('202', (string) $providerMetadata['provider_tmdb_id']);
+        $this->assertSame('Original provider title', (string) $providerMetadata['provider_title']);
+        $this->assertSame(2001, (int) $providerMetadata['provider_year']);
+        $this->assertSame(1, (int) $providerMetadata['provider_conflict']);
+        $this->assertSame(0, (int) $providerMetadata['presence']);
+        $this->assertSame(1_800_000_050, (int) $providerMetadata['presence_checked']);
+        $sourceAfter = $this->sourceConnection->select('source_key, poster_id, body, content_type, tag, body_size, sha256, saved_at')
+            ->from('artwork_images')->orderBy('source_key, poster_id')->fetchAll();
+        $this->assertSame(
+            array_map(static fn (\Dibi\Row $row): array => $row->toArray(), $sourceBefore),
+            array_map(static fn (\Dibi\Row $row): array => $row->toArray(), $sourceAfter),
+        );
+        $externalBodiesAfter = $this->sourceConnection->select('source_key, asset_key, body')
+            ->from('artwork_external_bodies')->orderBy('source_key, asset_key')->fetchAll();
+        $this->assertSame(
+            array_map(static fn (\Dibi\Row $row): array => $row->toArray(), $externalBodiesBefore),
+            array_map(static fn (\Dibi\Row $row): array => $row->toArray(), $externalBodiesAfter),
+        );
+        $this->assertSame(1, (int) $sqlite->select('COUNT(*)')->from('artwork_sources')->where('source_key = %s', $sourceKey)->fetchSingle());
+        $sourceState = $this->sourceConnection->select('*')->from('artwork_sources')
+            ->where('source_key = %s', $sourceKey)->fetch();
+        $destinationState = $sqlite->select('*')->from('artwork_sources')
+            ->where('source_key = %s', $sourceKey)->fetch();
+        $this->assertNotFalse($sourceState);
+        $this->assertNotFalse($destinationState);
+        $this->assertSame($sourceState->toArray(), $destinationState->toArray());
+        $this->assertSame(1, (int) $destinationState['external_preference']);
+        $this->assertSame(7, (int) $destinationState['external_revision']);
+        $sourceObservation = $this->sourceConnection->select('artwork_observation, artwork_observed_at')
+            ->from('play_history')->where('session_key = %s', 'artwork-observation-migration')->fetch();
+        $destinationObservation = $sqlite->select('artwork_observation, artwork_observed_at')
+            ->from('play_history')->where('session_key = %s', 'artwork-observation-migration')->fetch();
+        $this->assertNotFalse($sourceObservation);
+        $this->assertNotFalse($destinationObservation);
+        $this->assertSame((string) $sourceObservation['artwork_observation'], (string) $destinationObservation['artwork_observation']);
+        $this->assertSame((int) $sourceObservation['artwork_observed_at'], (int) $destinationObservation['artwork_observed_at']);
+        $this->assertSame($observedAt, (int) $destinationObservation['artwork_observed_at']);
+        $this->assertSame('poster-1', (string) $sqlite->select('poster_id')->from('artwork_items')->where('item_id = %s', 'item-1')->fetchSingle());
+        $this->assertSame('Primary', (string) $sqlite->select('kind')->from('artwork_posters')->where('poster_id = %s', 'poster-1')->fetchSingle());
+        $sqlite->disconnect();
+    }
+
+    public function testSchemaOnlyArtworkInitializationDoesNotCreatePhantomSourceDuringMigration(): void
+    {
+        DatabaseSchemaInitializer::initialize($this->source);
+        $this->assertSame(0, (int) $this->sourceConnection->select('COUNT(*)')->from('artwork_sources')->fetchSingle());
+
+        $counts = (new MariaDbToSqliteMigrator($this->source))->migrate($this->destinationPath);
+        $this->assertSame(0, $counts['artwork_sources']);
+
+        $destination = Database::sqlite($this->destinationPath);
+        $sqlite = $destination->getDibi();
+        $this->assertSame(0, (int) $sqlite->select('COUNT(*)')->from('artwork_sources')->fetchSingle());
+        $sqlite->disconnect();
+    }
+
     public function testRejectsAnUnknownSourceColumnInsteadOfDroppingItsData(): void
     {
         DatabaseSchemaInitializer::initialize($this->source);

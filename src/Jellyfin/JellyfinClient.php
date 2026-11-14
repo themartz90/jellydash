@@ -417,28 +417,32 @@ final class JellyfinClient implements LibraryOverviewClient
     /**
      * @return mixed
      */
-    public function getJson(string $path, int $timeout = 8): mixed
+    public function getJson(string $path, int $timeout = 8, int $maxBytes = 0): mixed
     {
-        return $this->requestJson($path, 'GET', null, $timeout);
+        return $this->requestJson($path, 'GET', null, $timeout, $maxBytes);
     }
 
     /**
      * @param array<string, mixed> $payload
      * @return mixed
      */
-    public function postJson(string $path, array $payload, int $timeout = 8): mixed
+    public function postJson(string $path, array $payload, int $timeout = 8, int $maxBytes = 0): mixed
     {
-        return $this->requestJson($path, 'POST', $payload, $timeout);
+        return $this->requestJson($path, 'POST', $payload, $timeout, $maxBytes);
     }
 
     /**
      * @param array<string, mixed>|null $payload
      * @return mixed
      */
-    private function requestJson(string $path, string $method = 'GET', ?array $payload = null, int $timeout = 8): mixed
+    private function requestJson(string $path, string $method = 'GET', ?array $payload = null, int $timeout = 8, int $maxBytes = 0): mixed
     {
         if ($this->requester !== null) {
-            return ($this->requester)($path, $method, $payload, $timeout);
+            $value = ($this->requester)($path, $method, $payload, $timeout);
+            if ($maxBytes > 0 && strlen(json_encode($value, JSON_THROW_ON_ERROR)) > $maxBytes) {
+                throw new \RuntimeException('Jellyfin response exceeded its size limit.');
+            }
+            return $value;
         }
 
         if ($this->baseUrl === '' || $this->token === '') {
@@ -473,6 +477,28 @@ final class JellyfinClient implements LibraryOverviewClient
         }
 
         $options[CURLOPT_HTTPHEADER] = $headers;
+        $boundedBody = '';
+        $tooLarge = false;
+        $retryAfter = 0;
+        $options[CURLOPT_HEADERFUNCTION] = static function ($curl, string $line) use (&$retryAfter): int {
+            if (str_starts_with($line, 'HTTP/')) {
+                $retryAfter = 0;
+            } elseif (stripos($line, 'Retry-After:') === 0) {
+                $retryAfter = max($retryAfter, \Mk\Framework\Http\RemoteRequestException::parseRetryAfter(substr($line, 12), time()));
+            }
+            return strlen($line);
+        };
+        if ($maxBytes > 0) {
+            $options[CURLOPT_RETURNTRANSFER] = false;
+            $options[CURLOPT_WRITEFUNCTION] = static function ($curl, string $chunk) use (&$boundedBody, &$tooLarge, $maxBytes): int {
+                if (strlen($boundedBody) + strlen($chunk) > $maxBytes) {
+                    $tooLarge = true;
+                    return 0;
+                }
+                $boundedBody .= $chunk;
+                return strlen($chunk);
+            };
+        }
         curl_setopt_array($handle, $options);
 
         $body = curl_exec($handle);
@@ -480,16 +506,26 @@ final class JellyfinClient implements LibraryOverviewClient
         $error = curl_error($handle);
         curl_close($handle);
 
+        if ($tooLarge) {
+            if (in_array($status, [429, 503], true)) {
+                throw new \Mk\Framework\Http\RemoteRequestException($this->httpErrorMessage($path, $status), $status, $retryAfter);
+            }
+            throw new \RuntimeException('Jellyfin response exceeded its size limit.');
+        }
+
         if ($body === false) {
             throw new \RuntimeException('Jellyfin request failed: ' . $error);
         }
 
         if ($status < 200 || $status >= 300) {
-            throw new \RuntimeException($this->httpErrorMessage($path, $status));
+            if (in_array($status, [429, 503], true)) {
+                throw new \Mk\Framework\Http\RemoteRequestException($this->httpErrorMessage($path, $status), $status, $retryAfter);
+            }
+            throw new \RuntimeException($this->httpErrorMessage($path, $status), $status);
         }
 
         try {
-            return json_decode((string) $body, true, flags: JSON_THROW_ON_ERROR);
+            return json_decode($maxBytes > 0 ? $boundedBody : (string) $body, true, flags: JSON_THROW_ON_ERROR);
         } catch (\JsonException $e) {
             throw new \RuntimeException('Jellyfin returned invalid JSON.', previous: $e);
         }

@@ -551,7 +551,7 @@ final class PlaybackStatisticsService
             return $gradient;
         }
 
-        $url = '/api/image.php?item=' . rawurlencode($itemId) . '&type=Primary&maxWidth=320';
+        $url = '/api/image.php?item=' . rawurlencode($itemId) . '&type=Primary&maxWidth=320&retained=1';
         if ($isEpisode) {
             $url .= '&kind=series';
         }

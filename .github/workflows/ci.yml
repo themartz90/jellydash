@@ -44,7 +44,7 @@ jobs:
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: "8.3"
-          extensions: mysqli, sqlite3, mbstring, intl
+          extensions: mysqli, sqlite3, mbstring, intl, gd
           coverage: none
 
       - name: Install dependencies
@@ -76,7 +76,7 @@ jobs:
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: "8.3"
-          extensions: sqlite3, mbstring, intl
+          extensions: sqlite3, mbstring, intl, gd
           coverage: none
 
       - name: Install dependencies

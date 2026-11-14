@@ -198,8 +198,14 @@ final class PlayHistoryRepository implements LibraryHistorySource
         $existing = $this->activePlaySelection(
             $sessionKey,
             $itemId,
-            'id, watched_sec, watch_duration_sec, is_finished, last_sample_epoch, last_sample_position_sec, last_sample_paused, last_sample_rate, updated_at_epoch',
+            'id, watched_sec, watch_duration_sec, is_finished, last_sample_epoch, last_sample_position_sec, last_sample_paused, last_sample_rate, updated_at_epoch, artwork_observation, artwork_observed_at',
         )->fetch();
+
+        $previousObservation = $existing && is_string($existing['artwork_observation'] ?? null)
+            ? $existing['artwork_observation']
+            : null;
+        $artworkObservation = ArtworkObservation::encode($stream, $now, $previousObservation);
+        $artworkObservedAt = (int) $now->format('Uu');
 
         $position = max(0, (int) ($stream['watchedSec'] ?? 0));
         $runtimeSec = max(0, (int) ($stream['runtimeSec'] ?? 0));
@@ -213,10 +219,16 @@ final class PlayHistoryRepository implements LibraryHistorySource
                 ? null
                 : (int) $existing['last_sample_epoch'];
             if ($previousSampleEpoch !== null && $now->getTimestamp() <= $previousSampleEpoch) {
+                if ($artworkObservation !== null) {
+                    $this->persistArtworkObservation((int) $existing['id'], $artworkObservation, $artworkObservedAt);
+                }
                 return;
             }
             if ($previousSampleEpoch === null && $existing['updated_at_epoch'] !== null
                 && $now->getTimestamp() <= (int) $existing['updated_at_epoch']) {
+                if ($artworkObservation !== null) {
+                    $this->persistArtworkObservation((int) $existing['id'], $artworkObservation, $artworkObservedAt);
+                }
                 return;
             }
             // A finished row only becomes a new play when the position
@@ -307,7 +319,11 @@ final class PlayHistoryRepository implements LibraryHistorySource
                 $update->where('last_sample_epoch = %i', $previousSampleEpoch);
             }
             $update->execute();
-            if ($this->db->getAffectedRows() === 0 && $casAttempt < 2) {
+            $progressRowsUpdated = $this->db->getAffectedRows();
+            if ($artworkObservation !== null) {
+                $this->persistArtworkObservation((int) $existing['id'], $artworkObservation, $artworkObservedAt);
+            }
+            if ($progressRowsUpdated === 0 && $casAttempt < 2) {
                 $this->logActiveStreamsGuarded([$stream], $now, $casAttempt + 1);
             }
             return;
@@ -329,6 +345,8 @@ final class PlayHistoryRepository implements LibraryHistorySource
         $data['last_sample_position_sec'] = $position;
         $data['last_sample_paused'] = $paused ? 1 : 0;
         $data['last_sample_rate'] = $playbackRate;
+        $data['artwork_observation'] = $artworkObservation;
+        $data['artwork_observed_at'] = $artworkObservation === null ? null : $artworkObservedAt;
 
         try {
             $this->db->insert('play_history', $data)->execute();
@@ -344,6 +362,16 @@ final class PlayHistoryRepository implements LibraryHistorySource
                 $this->logActiveStreamsGuarded([$stream], $now, $casAttempt + 1);
             }
         }
+    }
+
+    private function persistArtworkObservation(int $id, string $observation, int $observedAt): void
+    {
+        $this->db->update('play_history', [
+            'artwork_observation' => $observation,
+            'artwork_observed_at' => $observedAt,
+        ])->where('id = %i', $id)
+            ->where('(artwork_observed_at IS NULL OR artwork_observed_at < %i)', $observedAt)
+            ->execute();
     }
 
     private static function replayPrefix(string $sessionKey, string $itemId): string
@@ -1501,6 +1529,8 @@ final class PlayHistoryRepository implements LibraryHistorySource
                 `last_sample_position_sec` int DEFAULT NULL,
                 `last_sample_paused` tinyint(1) DEFAULT NULL,
                 `last_sample_rate` decimal(6,3) DEFAULT NULL,
+                `artwork_observation` text DEFAULT NULL,
+                `artwork_observed_at` bigint DEFAULT NULL,
                 `runtime_sec` int NOT NULL DEFAULT 0,
                 `started_at` datetime NOT NULL,
                 `updated_at` datetime NOT NULL,
@@ -1548,6 +1578,8 @@ final class PlayHistoryRepository implements LibraryHistorySource
                 `last_sample_position_sec` INTEGER DEFAULT NULL,
                 `last_sample_paused` INTEGER DEFAULT NULL,
                 `last_sample_rate` REAL DEFAULT NULL,
+                `artwork_observation` TEXT DEFAULT NULL,
+                `artwork_observed_at` INTEGER DEFAULT NULL,
                 `runtime_sec` INTEGER NOT NULL DEFAULT 0,
                 `started_at` TEXT NOT NULL,
                 `updated_at` TEXT NOT NULL,
@@ -1602,6 +1634,8 @@ final class PlayHistoryRepository implements LibraryHistorySource
         $this->ensureColumn('notification_claim_token', '`notification_claim_token` varchar(64) DEFAULT NULL AFTER `notification_attempts`', '`notification_claim_token` TEXT DEFAULT NULL');
         $this->ensureColumn('notification_claimed_at_epoch', '`notification_claimed_at_epoch` bigint DEFAULT NULL AFTER `notification_claim_token`', '`notification_claimed_at_epoch` INTEGER DEFAULT NULL');
         $this->ensureColumn('notification_next_attempt_at_epoch', '`notification_next_attempt_at_epoch` bigint DEFAULT NULL AFTER `notification_claimed_at_epoch`', '`notification_next_attempt_at_epoch` INTEGER DEFAULT NULL');
+        $this->ensureColumn('artwork_observation', '`artwork_observation` text DEFAULT NULL', '`artwork_observation` TEXT DEFAULT NULL');
+        $this->ensureColumn('artwork_observed_at', '`artwork_observed_at` bigint DEFAULT NULL', '`artwork_observed_at` INTEGER DEFAULT NULL');
 
         $this->ensureMetadataTextColumns();
         self::$schemaConnections[$this->db] = true;

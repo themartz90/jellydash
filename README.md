@@ -73,6 +73,8 @@ The project is still young and under active development.
 
 - **History.** Jellydash records play history in the background, even when nobody has the dashboard open. Search it, filter by user or library, export the matching plays to CSV, and enjoy the poster art. Existing Jellyfin or Emby Playback Reporting backups can be imported from Settings.
 
+- **Saved posters.** Keep Jellyfin's selected posters, including custom artwork, with recorded History after media is deleted. Online recovery fills missing posters using verified TMDB IDs, with manager review for uncertain matches. It can also help older entries whose images were already lost. See [Saved posters](docs/ARTWORK.md).
+
 - **Statistics.** Watch time trends, top users, device activity, clients, codecs and transcode reasons. Open linked watch-time totals, chart bars, source video codecs and transcoding reasons in History to see matching plays. There is a Trending strip for what is hot right now, and all-time Most Watched charts for both shows and movies.
 
 - **Monthly recap.** Open Monthly recap from Statistics to look back at a completed month, with watch time, movie and series rankings, daily activity and a viewer filter. Viewing time inferred from older history is labelled as an estimate.
@@ -414,6 +416,8 @@ Jellydash is free and always will be. If you enjoy it and want to support its de
 The Jellydash mascot is based on a [jellyfish icon](https://www.flaticon.com/free-icon/jellyfish_2977310) by Magnific from [Flaticon](https://www.flaticon.com), modified for this project.
 
 Interface icons come from [Tabler Icons](https://tabler.io/icons), used under its [MIT license](THIRD_PARTY_NOTICES.md).
+
+Online poster recovery uses TMDB through Jellyfin. This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB. The TMDB logo follows its [branding guidance](https://www.themoviedb.org/about/logos-attribution) and is not covered by Jellydash's MIT license.
 
 The interface uses [Barlow](https://github.com/jpt/barlow), bundled locally under the [SIL Open Font License 1.1](public/assets/fonts/barlow/OFL.txt).
 

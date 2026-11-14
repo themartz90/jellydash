@@ -1,0 +1,50 @@
+<section class="settings-card artwork-recovery" id="artwork-recovery" data-artwork-recovery aria-labelledby="artwork-recovery-title">
+    <header class="settings-card-head">
+        <span class="settings-card-copy">
+            <strong id="artwork-recovery-title" tabindex="-1">Saved posters</strong>
+            <span>Keep small Jellyfin posters with History, including custom posters.</span>
+        </span>
+    </header>
+    <p class="settings-note">Removing a poster in Jellyfin leaves the saved copy here. Clear a poster when you want Jellydash to stop keeping it.</p>
+
+    <p class="artwork-status" data-artwork-status role="status" aria-live="polite">Loading saved posters…</p>
+    <p class="artwork-error" data-artwork-error role="alert" hidden></p>
+    <div class="artwork-notices" data-artwork-notices aria-live="polite"></div>
+
+    <dl class="artwork-summary" data-artwork-summary hidden>
+        <div><dt>Saved</dt><dd data-artwork-saved>0</dd></div>
+        <div><dt>Pending</dt><dd data-artwork-pending>0</dd></div>
+        <div><dt>Review</dt><dd data-artwork-review>0</dd></div>
+        <div><dt>Storage</dt><dd data-artwork-storage>0 of 0</dd></div>
+    </dl>
+
+    <div class="artwork-actions">
+        <button class="settings-secondary-btn" type="button" data-artwork-refresh>Refresh</button>
+        <button class="settings-secondary-btn" type="button" data-artwork-retry hidden>Retry checks</button>
+    </div>
+
+    <div class="artwork-legacy" data-artwork-legacy hidden>
+        <p class="settings-note">Older History does not identify its Jellyfin server. Check it against the current server only if it belongs here.</p>
+        <button class="settings-secondary-btn" type="button" data-artwork-backfill>Check existing History</button>
+    </div>
+
+    <details class="artwork-section" data-artwork-groups-wrap hidden>
+        <summary>Find missing posters <span data-artwork-groups-count></span></summary>
+        <div class="artwork-groups" data-artwork-groups></div>
+    </details>
+
+    <details class="artwork-section" data-artwork-posters-wrap>
+        <summary>Saved posters <span data-artwork-posters-count></span></summary>
+        <div class="artwork-posters" data-artwork-posters></div>
+    </details>
+
+    <nav class="artwork-pager" data-artwork-pager aria-label="Saved poster pages" hidden>
+        <button class="settings-secondary-btn" type="button" data-artwork-prev>Previous</button>
+        <span data-artwork-page></span>
+        <button class="settings-secondary-btn" type="button" data-artwork-next>Next</button>
+    </nav>
+
+    {% include "settings/_external_posters.twig" %}
+
+    <noscript><p>Enable JavaScript to review saved posters here. Background checks can still run through Jellydash.</p></noscript>
+</section>

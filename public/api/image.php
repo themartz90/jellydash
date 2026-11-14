@@ -7,6 +7,7 @@ use Mk\Framework\Config;
 use Mk\Framework\Http\ImageContentType;
 use Mk\Framework\Http\UserAvatarResponse;
 use Mk\Framework\Jellyfin\MovieReplacements;
+use Mk\Framework\Jellyfin\ArtworkResolver;
 use Mk\Framework\Log;
 
 define('ROOT_DIR', dirname(__DIR__, 2));
@@ -24,6 +25,13 @@ if (session_status() === PHP_SESSION_ACTIVE) {
     session_write_close();
 }
 
+foreach (['item', 'user', 'type', 'maxWidth', 'kind', 'tag', 'retained', 'direct'] as $field) {
+    if (isset($_GET[$field]) && !is_string($_GET[$field])) {
+        header('Cache-Control: no-store');
+        http_response_code(400);
+        exit;
+    }
+}
 $itemId = (string) ($_GET['item'] ?? '');
 $userId = (string) ($_GET['user'] ?? '');
 $type = (string) ($_GET['type'] ?? 'Backdrop');
@@ -34,8 +42,67 @@ $kind = (string) ($_GET['kind'] ?? '');
 
 $baseUrl = rtrim((string) Config::get('JELLYFIN_URL', ''), '/');
 $token = (string) Config::get('JELLYFIN_API_TOKEN', Config::get('JELLYFIN_API_KEY', ''));
+$seriesResolved = false;
+$movieResolved = false;
+$direct = ($_GET['direct'] ?? '') === '1';
+$retained = ($_GET['retained'] ?? '') === '1';
+$placeholder = null;
+if (($direct && (!$retained || $type !== 'Primary' || $userId !== ''))
+    || ($retained && $userId === '' && !preg_match('/^[A-Za-z0-9_-]{1,64}$/D', $itemId))) {
+    header('Cache-Control: no-store');
+    http_response_code(400);
+    exit;
+}
+if ($retained) {
+    header('Cache-Control: private, no-cache');
+    header('Vary: Cookie');
+}
+if (($_GET['retained'] ?? '') === '1' && $userId === '' && $type === 'Primary'
+    && preg_match('/^[A-Za-z0-9_-]{1,64}$/D', $itemId)) {
+    try {
+        $resolver = new ArtworkResolver();
+        if ($resolver->blocked()) {
+            header('Cache-Control: no-store');
+            http_response_code(404);
+            exit;
+        }
+        $image = $resolver->image($itemId, $kind === 'series', $direct);
+        if ($image !== null) {
+            header('Cache-Control: private, no-cache');
+            header('Vary: Cookie');
+            $etag = '"' . hash('sha256', (string) $image['body']) . '"';
+            header('ETag: ' . $etag);
+            if (trim((string) ($_SERVER['HTTP_IF_NONE_MATCH'] ?? '')) === $etag) {
+                http_response_code(304);
+                exit;
+            }
+            header('Content-Type: ' . $image['content_type']);
+            echo $image['body'];
+            exit;
+        }
+        if (!$direct) {
+            $placeholder = $resolver->placeholder($itemId);
+            $target = $resolver->target($itemId, $kind === 'series');
+            if ($target !== null) {
+                $itemId = $target;
+                $seriesResolved = $kind === 'series';
+                $movieResolved = $kind !== 'series';
+            }
+        }
+    } catch (\Throwable $error) {
+        Log::logException($error);
+    }
+    if ($direct) {
+        header('Cache-Control: no-store');
+        http_response_code(404);
+        exit;
+    }
+}
 
 if ($baseUrl === '' || $token === '') {
+    if ($placeholder !== null) {
+        respondPosterPlaceholder($placeholder);
+    }
     http_response_code(404);
     exit;
 }
@@ -74,7 +141,7 @@ if ($itemId === '' || !preg_match('/^[A-Za-z0-9_-]+$/', $itemId)) {
 }
 
 // Old History links can still request the deleted copy's artwork.
-if ($kind !== 'series') {
+if ($kind !== 'series' && !$direct && !$movieResolved) {
     try {
         $itemId = (new MovieReplacements())->resolve($itemId);
     } catch (\Throwable $error) {
@@ -88,10 +155,16 @@ if (!in_array($type, $allowedTypes, true)) {
 }
 
 $fallbackTypes = array_values(array_unique([$type, 'Backdrop', 'Thumb', 'Primary']));
+if ($seriesResolved) {
+    $fallbackTypes = ['Primary'];
+}
+if ($retained && $type === 'Primary') {
+    $fallbackTypes = ['Primary'];
+}
 
 // Resolve episode -> series so TV history rows show the series poster.
 // On any failure we keep the original item id (falls back to its own image).
-if ($kind === 'series') {
+if ($kind === 'series' && !$seriesResolved) {
     $lookupHandle = curl_init($baseUrl . '/Items?Ids=' . rawurlencode($itemId));
     if ($lookupHandle !== false) {
         curl_setopt_array($lookupHandle, [
@@ -134,13 +207,32 @@ foreach ($fallbackTypes as $imageType) {
     }
 
     header('Content-Type: ' . $image['contentType']);
-    header('Cache-Control: public, max-age=300');
+    header('Cache-Control: ' . ($retained ? 'private, no-cache' : 'public, max-age=300'));
     echo $image['body'];
     exit;
 }
 
+if ($placeholder !== null) {
+    respondPosterPlaceholder($placeholder);
+}
 header('Cache-Control: no-store');
 http_response_code(404);
+
+function respondPosterPlaceholder(string $body): never
+{
+    header('Content-Type: image/svg+xml; charset=utf-8');
+    header('Cache-Control: private, no-cache');
+    header('Vary: Cookie');
+    header('X-Content-Type-Options: nosniff');
+    $etag = '"' . hash('sha256', $body) . '"';
+    header('ETag: ' . $etag);
+    if (trim((string) ($_SERVER['HTTP_IF_NONE_MATCH'] ?? '')) === $etag) {
+        http_response_code(304);
+    } else {
+        echo $body;
+    }
+    exit;
+}
 
 /**
  * @return array{body: string, contentType: string}|null

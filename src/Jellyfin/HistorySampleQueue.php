@@ -63,7 +63,10 @@ final class HistorySampleQueue
             $fields = array_fill_keys(self::FIELDS, true);
             $payload = json_encode([
                 'observed_at' => $observedAt->format('Y-m-d\TH:i:s.uP'),
-                'streams' => array_map(static fn (array $stream): array => array_intersect_key($stream, $fields), $streams),
+                'streams' => array_map(static fn (array $stream): array => array_replace(
+                    array_intersect_key($stream, $fields),
+                    ArtworkObservation::streamFields($stream),
+                ), $streams),
             ], JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE);
             $name = $this->directory . '/' . sprintf('%020d', $observedAt->getTimestamp()) . '-' . bin2hex(random_bytes(12));
             $temporary = $name . '.tmp';

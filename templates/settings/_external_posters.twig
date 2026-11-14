@@ -1,0 +1,46 @@
+<section class="external-posters" id="external-poster-review" data-external-posters aria-labelledby="external-posters-title">
+    <h3 id="external-posters-title">Online poster recovery</h3>
+    <p class="external-posters-help">Jellydash recovers posters with a verified TMDB ID automatically. For missing posters without an ID, it searches the saved movie or series title and prepares suggestions for you to review. Title matches need your confirmation. A poster saved in Jellyfin keeps priority. Turning this off stops new online requests. Saved online copies stay available until cleared or expired.</p>
+
+    <label class="external-posters-toggle">
+        <input type="checkbox" data-external-enabled>
+        <span>Enable online poster recovery</span>
+    </label>
+    <details class="external-posters-providers">
+        <summary>About online providers</summary>
+        <p>Title searches send saved movie or series names to TMDB through Jellyfin. Native names are supported. If the Jellyfin item is gone, Jellyfin supplies its server defaults for the lookup. Jellydash does not reuse options from the deleted library.</p>
+        <p>Online copies are renewed after 150 days and expire after 180 days if they cannot be renewed. Jellyfin's saved custom posters do not have this limit.</p>
+    </details>
+    <aside class="external-posters-credit" aria-label="TMDB credits">
+        <a href="https://www.themoviedb.org" target="_blank" rel="noopener noreferrer"><img src="/assets/img/tmdb.svg" width="100" height="13" alt="TMDB"></a>
+        <p>This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB.</p>
+    </aside>
+
+    <p class="external-posters-status" data-external-status role="status" aria-live="polite">Loading online poster status…</p>
+    <p class="external-posters-error" data-external-error role="alert" hidden></p>
+    <div class="external-posters-notices" data-external-notices aria-live="polite"></div>
+
+    <details class="external-posters-review" data-external-review-wrap hidden>
+        <summary>Poster matches to review <span data-external-review-count></span></summary>
+        <div data-external-review></div>
+    </details>
+
+    <details class="external-posters-jobs-wrap" data-external-jobs-wrap hidden>
+        <summary>Online poster activity <span data-external-jobs-count></span></summary>
+        <div data-external-jobs></div>
+    </details>
+
+    <details class="external-posters-assets-wrap" data-external-assets-wrap hidden>
+        <summary>Saved online images <span data-external-assets-count></span></summary>
+        <p class="external-posters-help">Images can be shared by several linked titles. Clearing an image removes those bytes and pauses external recovery for every linked title. Use the item controls above to change one title only.</p>
+        <div data-external-assets></div>
+    </details>
+
+    <nav class="external-posters-pager" data-external-pager aria-label="Online poster review pages" hidden>
+        <button class="settings-secondary-btn" type="button" data-external-action="prev" data-external-focus-key="prev" data-external-prev>Previous</button>
+        <span data-external-page></span>
+        <button class="settings-secondary-btn" type="button" data-external-action="next" data-external-focus-key="next" data-external-next>Next</button>
+    </nav>
+
+    <noscript><p>Enable JavaScript to review suggestions and manage online poster recovery. Automatic recovery and title lookups can continue through Jellydash's background worker.</p></noscript>
+</section>

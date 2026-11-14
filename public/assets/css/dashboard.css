@@ -6896,3 +6896,14 @@ a.trending-card:hover .trending-poster {
         transition: none;
     }
 }
+.poster-review-notice {
+    margin: 0 0 18px;
+    padding: 10px 14px;
+    border-left: 3px solid #8c72e8;
+    background: rgba(140, 114, 232, .07);
+    color: #bfb7cf;
+    font-size: 14px;
+}
+.poster-review-notice a { color: #d5c6ff; text-decoration: underline; margin-left: 6px; }
+.poster-review-badge { display: inline-block; min-width: 20px; padding: 1px 6px; margin-left: 5px; border-radius: 10px; background: #55418b; color: #fff; text-align: center; font-size: 11px; }
+.poster-review-badge[hidden] { display: none; }

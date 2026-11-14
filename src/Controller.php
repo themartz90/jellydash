@@ -34,6 +34,14 @@ abstract class Controller
     {
         $auth = new Authorization();
         $agent = new Agent();
+        $posterReviewCount = 0;
+        if ($auth->can(Authorization::CAPABILITY_MANAGE_GLOBAL)) {
+            try {
+                $posterReviewCount = (new \Mk\Framework\Jellyfin\ExternalPosterManager())->noticeCount();
+            } catch (\Throwable) {
+                // Poster review must not prevent the rest of the dashboard loading.
+            }
+        }
 
         $base = [
             'page' => PAGE,
@@ -45,6 +53,7 @@ abstract class Controller
             'desktop' => $agent->isDesktop(),
             'phone' => $agent->isPhone(),
             'iphone' => $agent->isiPhone(),
+            'poster_review_count' => $posterReviewCount,
         ];
 
         return array_merge($base, $extra);

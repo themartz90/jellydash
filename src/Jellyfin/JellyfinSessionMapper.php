@@ -194,7 +194,36 @@ final class JellyfinSessionMapper
             }
         }
 
+        if (in_array($type, ['Movie', 'Episode'], true)) {
+            $serverId = $this->validArtworkId($item['ServerId'] ?? null)
+                ? $item['ServerId']
+                : ($this->validArtworkId($session['ServerId'] ?? null) ? $session['ServerId'] : '');
+            $stream['artworkServerId'] = $serverId;
+            if ($this->baseUrl !== '') {
+                $stream['artworkSource'] = ThemePlaybackExclusions::serverKey($this->baseUrl);
+            }
+            if ($type === 'Episode' && $this->validArtworkId($item['SeriesId'] ?? null)) {
+                $stream['seriesId'] = $item['SeriesId'];
+            }
+            $tag = $type === 'Episode'
+                ? ($item['SeriesPrimaryImageTag'] ?? null)
+                : (is_array($item['ImageTags'] ?? null) ? ($item['ImageTags']['Primary'] ?? null) : null);
+            if ($this->validArtworkTag($tag)) {
+                $stream['posterTag'] = $tag;
+            }
+        }
+
         return $isLive ? array_merge($stream, $this->liveOverrides($item, $positionTicks)) : $stream;
+    }
+
+    private function validArtworkId(mixed $value): bool
+    {
+        return is_string($value) && preg_match('/^[A-Za-z0-9_-]{1,64}$/D', $value) === 1;
+    }
+
+    private function validArtworkTag(mixed $value): bool
+    {
+        return is_string($value) && preg_match('/^[A-Za-z0-9._-]{1,255}$/D', $value) === 1;
     }
 
     /**

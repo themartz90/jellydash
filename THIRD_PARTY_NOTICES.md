@@ -1,5 +1,16 @@
 # Third-party notices
 
+## TMDB
+
+`public/assets/img/tmdb.svg` is the unmodified approved short logo from
+[TMDB's logos and attribution page](https://www.themoviedb.org/about/logos-attribution).
+It identifies online poster recovery and is not covered by Jellydash's MIT license.
+External images and metadata remain subject to the provider's terms and the
+rights of their respective owners.
+
+This application uses TMDB and the TMDB APIs but is not endorsed, certified, or
+otherwise approved by TMDB.
+
 ## Barlow
 
 Jellydash bundles Barlow Regular, Medium, SemiBold and Bold as local WOFF2 fonts.

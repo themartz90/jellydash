@@ -1,0 +1,6 @@
+{% if layout.poster_review_count|default(0) > 0 %}
+<p class="poster-review-notice" role="status">
+    {{ layout.poster_review_count }} poster {{ layout.poster_review_count == 1 ? 'match needs' : 'matches need' }} your help.
+    <a href="/settings#external-poster-review">Review posters in Settings</a>
+</p>
+{% endif %}

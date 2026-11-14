@@ -433,7 +433,7 @@ final class MonthlyRecapService
         if ($itemId === '' || !preg_match('/^[A-Za-z0-9_-]+$/D', $itemId)) {
             return null;
         }
-        $url = '/api/image.php?item=' . rawurlencode($itemId) . '&type=Primary&maxWidth=320';
+        $url = '/api/image.php?item=' . rawurlencode($itemId) . '&type=Primary&maxWidth=320&retained=1';
 
         return $series ? $url . '&kind=series' : $url;
     }

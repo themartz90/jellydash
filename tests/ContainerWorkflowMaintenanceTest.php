@@ -18,7 +18,7 @@ final class ContainerWorkflowMaintenanceTest extends TestCase
             'COPY --from=composer:2.10.3@sha256:d8f6343d3fae98107426bc49163ccad46ef85aabd4a27d80a74401fab4aba332',
             $dockerfile,
         );
-        foreach (['curl', 'mbstring', 'mysqli', 'gmp', 'sqlite3', 'openssl'] as $extension) {
+        foreach (['curl', 'mbstring', 'mysqli', 'gmp', 'gd', 'sqlite3', 'openssl'] as $extension) {
             self::assertStringContainsString("extension_loaded('{$extension}')", $dockerfile);
         }
     }

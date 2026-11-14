@@ -16,6 +16,9 @@
     "friendsofphp/php-cs-fixer": "^3.66",
     "phpunit/phpunit": "^11.0"
   },
+  "suggest": {
+    "ext-gd": "Validate and retain historical posters."
+  },
   "autoload": {
     "psr-4": {
       "Mk\\Framework\\": "src/"
