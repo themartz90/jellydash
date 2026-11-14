@@ -1,0 +1,22 @@
+{
+  "version": "1.17.0",
+  "auto_show": true,
+  "title": "Saved posters and clearer History",
+  "summary": "Keep posters after deleting media from Jellyfin, recover missing artwork, and separate stopped viewings.",
+  "highlights": [
+    "Jellydash keeps small copies of Jellyfin's selected posters, including custom artwork, for History, Statistics and Monthly recap. A poster must be saved successfully before its source is deleted.",
+    "Online poster recovery is on by default. Verified TMDB IDs can recover automatically; saved titles produce suggestions for you to confirm under Settings > Saved posters. Older History may need Check existing History first.",
+    "Stopping and restarting an unfinished item creates a separate viewing when Jellydash observes the stop. Pausing and resuming stays together. Stops entirely between checks may still share a row.",
+    "History shows recorded time separately from playback position. A full position bar does not mean the entire runtime was recorded. Existing viewing time stays intact; an ongoing play may split once during this upgrade."
+  ],
+  "links": [
+    {
+      "label": "Saved posters guide",
+      "url": "https://github.com/themartz90/jellydash/blob/v1.17.0/docs/ARTWORK.md"
+    },
+    {
+      "label": "Full release notes",
+      "url": "https://github.com/themartz90/jellydash/releases/tag/v1.17.0"
+    }
+  ]
+}
