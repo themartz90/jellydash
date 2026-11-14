@@ -18,8 +18,13 @@
     <div class="history-mono">{{ play.client }}</div>
     <div class="history-mono is-muted">{{ play.device }}</div>
     <div class="history-watched">
-        <strong>{{ play.watchedLabel }}{% if play.finished %}<span aria-label="Finished">&#10003;</span>{% endif %}</strong>
-        <div class="mini-track"><span style="width: {{ play.completionPct }}%"></span></div>
+        <strong>{{ play.watchedLabel }}{% if play.finished %}<span aria-label="{{ play.finishedLabel|default('Marked complete') }}" title="Completion is separate from recorded viewing time.">&#10003;</span>{% endif %}</strong>
+        {% if play.positionKnown ?? true %}
+            <div class="mini-track" role="progressbar" aria-label="Furthest playback position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ play.completionPct }}"><span style="width: {{ play.completionPct }}%"></span></div>
+            <small class="history-position-label">Position {{ play.completionPct }}%</small>
+        {% else %}
+            <small class="history-position-label">Position unavailable</small>
+        {% endif %}
     </div>
     <details class="history-playback-details">
         <summary>Playback details <span class="visually-hidden">for {{ play.title }}, {{ play.user }} at {{ play.time }}</span><span aria-hidden="true">+</span></summary>

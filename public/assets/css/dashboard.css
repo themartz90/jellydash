@@ -3731,7 +3731,7 @@ svg.icon-filled {
 .history-head,
 .history-row {
     display: grid;
-    grid-template-columns: 60px 168px minmax(150px, 1fr) 154px 124px 134px 100px;
+    grid-template-columns: 60px 140px minmax(150px, 1fr) 118px 112px 112px 112px;
     gap: 16px;
     align-items: center;
     padding: 0 18px;
@@ -3880,6 +3880,20 @@ svg.icon-filled {
 .history-watched strong span {
     color: var(--color-green);
     font-size: 12px;
+}
+
+.history-position-label {
+    display: block;
+    margin-top: 5px;
+    color: var(--color-text-muted, #a89bb8);
+    font-size: 10px;
+}
+
+.history-time-help {
+    margin: 0 0 14px;
+    color: var(--color-text-muted, #a89bb8);
+    font-size: 12px;
+    line-height: 1.6;
 }
 
 .history-playback-details {

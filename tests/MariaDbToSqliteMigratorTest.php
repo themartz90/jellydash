@@ -310,6 +310,50 @@ final class MariaDbToSqliteMigratorTest extends TestCase
             'artwork_observation' => $observation,
             'artwork_observed_at' => $observedAt,
         ])->execute();
+        $playbackSessionRows = [
+            [
+                'source_key' => $sourceKey,
+                'connection_key' => hash('sha256', 'migration-open-connection'),
+                'owner_key' => hash('sha256', 'migration-open-owner'),
+                'server_key' => hash('sha256', 'migration-open-server'),
+                'journal_key' => str_repeat('a', 32),
+                'capture_order' => 41,
+                'observed_at' => 1_800_000_000_123_456,
+                'is_open' => 1,
+                'item_id' => 'movie-open',
+                'stream_key' => 'jd-view-open-stream',
+                'pending_item_id' => 'pending-theme-item',
+                'pending_stream_key' => 'pending-theme-stream',
+                'pending_owner_key' => hash('sha256', 'migration-pending-owner'),
+                'pending_server_key' => hash('sha256', 'migration-pending-server'),
+            ],
+            [
+                'source_key' => $sourceKey,
+                'connection_key' => hash('sha256', 'migration-closed-connection'),
+                'owner_key' => hash('sha256', 'migration-closed-owner'),
+                'server_key' => hash('sha256', 'migration-closed-server'),
+                'journal_key' => str_repeat('b', 32),
+                'capture_order' => 42,
+                'observed_at' => 1_800_000_060_654_321,
+                'is_open' => 0,
+                'item_id' => null,
+                'stream_key' => 'jd-view-closed-stream',
+                'pending_item_id' => null,
+                'pending_stream_key' => null,
+                'pending_owner_key' => null,
+                'pending_server_key' => null,
+            ],
+        ];
+        foreach ($playbackSessionRows as $playbackSessionRow) {
+            $this->sourceConnection->insert('history_playback_sessions', $playbackSessionRow)->execute();
+        }
+        $captureReceiptRows = [
+            ['source_key' => $sourceKey, 'receipt_id' => str_repeat('c', 32), 'observed_at' => 1_800_000_000_123_456],
+            ['source_key' => $sourceKey, 'receipt_id' => str_repeat('d', 32), 'observed_at' => 1_800_000_060_654_321],
+        ];
+        foreach ($captureReceiptRows as $captureReceiptRow) {
+            $this->sourceConnection->insert('history_capture_receipts', $captureReceiptRow)->execute();
+        }
         $this->sourceConnection->insert('artwork_items', [
             'source_key' => $sourceKey,
             'item_id' => 'item-1',
@@ -450,6 +494,8 @@ final class MariaDbToSqliteMigratorTest extends TestCase
             ->from('artwork_external_bodies')->orderBy('source_key, asset_key')->fetchAll();
         $counts = (new MariaDbToSqliteMigrator($this->source))->migrate($this->destinationPath);
         $this->assertSame(1, $counts['play_history']);
+        $this->assertSame(2, $counts['history_playback_sessions']);
+        $this->assertSame(2, $counts['history_capture_receipts']);
         $this->assertSame(11, $counts['artwork_images']);
         $this->assertSame(11, $counts['artwork_posters']);
         $this->assertSame(1, $counts['artwork_external_bindings']);
@@ -520,6 +566,55 @@ final class MariaDbToSqliteMigratorTest extends TestCase
         $this->assertSame($discoveryJson, (string) $destinationDiscovery['candidates_json']);
         $this->assertSame(1_800_000_180, (int) $sqlite->select('external_discovery_after')->from('artwork_sources')
             ->where('source_key = %s', $sourceKey)->fetchSingle());
+        $migratedPlaybackSessionRows = $sqlite->select('*')->from('history_playback_sessions')
+            ->where('source_key = %s', $sourceKey)->orderBy('source_key, connection_key')->fetchAll();
+        $sourcePlaybackSessionRows = $this->sourceConnection->select('*')->from('history_playback_sessions')
+            ->where('source_key = %s', $sourceKey)->orderBy('source_key, connection_key')->fetchAll();
+        $this->assertSame(
+            array_map(static fn (\Dibi\Row $row): array => $row->toArray(), $sourcePlaybackSessionRows),
+            array_map(static fn (\Dibi\Row $row): array => $row->toArray(), $migratedPlaybackSessionRows),
+        );
+        $openPlaybackSession = $sqlite->select('*')
+            ->from('history_playback_sessions')->where('source_key = %s AND connection_key = %s', $sourceKey, hash('sha256', 'migration-open-connection'))->fetch();
+        $closedPlaybackSession = $sqlite->select('*')
+            ->from('history_playback_sessions')->where('source_key = %s AND connection_key = %s', $sourceKey, hash('sha256', 'migration-closed-connection'))->fetch();
+        $this->assertNotFalse($openPlaybackSession);
+        $this->assertNotFalse($closedPlaybackSession);
+        $this->assertSame(1, (int) $openPlaybackSession['is_open']);
+        $this->assertSame(41, (int) $openPlaybackSession['capture_order']);
+        $this->assertSame(1_800_000_000_123_456, (int) $openPlaybackSession['observed_at']);
+        $this->assertSame('movie-open', (string) $openPlaybackSession['item_id']);
+        $this->assertSame('pending-theme-item', (string) $openPlaybackSession['pending_item_id']);
+        $this->assertSame('pending-theme-stream', (string) $openPlaybackSession['pending_stream_key']);
+        $this->assertSame(hash('sha256', 'migration-pending-owner'), (string) $openPlaybackSession['pending_owner_key']);
+        $this->assertSame(hash('sha256', 'migration-pending-server'), (string) $openPlaybackSession['pending_server_key']);
+        $this->assertSame(0, (int) $closedPlaybackSession['is_open']);
+        $this->assertSame(42, (int) $closedPlaybackSession['capture_order']);
+        $this->assertSame(1_800_000_060_654_321, (int) $closedPlaybackSession['observed_at']);
+        $this->assertNull($closedPlaybackSession['item_id']);
+        $this->assertNull($closedPlaybackSession['pending_item_id']);
+        $this->assertNull($closedPlaybackSession['pending_stream_key']);
+        $this->assertNull($closedPlaybackSession['pending_owner_key']);
+        $this->assertNull($closedPlaybackSession['pending_server_key']);
+        $migratedCaptureReceiptRows = $sqlite->select('*')->from('history_capture_receipts')
+            ->where('source_key = %s', $sourceKey)->orderBy('source_key, receipt_id')->fetchAll();
+        $sourceCaptureReceiptRows = $this->sourceConnection->select('*')->from('history_capture_receipts')
+            ->where('source_key = %s', $sourceKey)->orderBy('source_key, receipt_id')->fetchAll();
+        $this->assertSame(
+            array_map(static fn (\Dibi\Row $row): array => $row->toArray(), $sourceCaptureReceiptRows),
+            array_map(static fn (\Dibi\Row $row): array => $row->toArray(), $migratedCaptureReceiptRows),
+        );
+        $this->assertSame(str_repeat('c', 32), (string) $migratedCaptureReceiptRows[0]['receipt_id']);
+        $this->assertSame(1_800_000_000_123_456, (int) $migratedCaptureReceiptRows[0]['observed_at']);
+        $this->assertSame(str_repeat('d', 32), (string) $migratedCaptureReceiptRows[1]['receipt_id']);
+        $this->assertSame(1_800_000_060_654_321, (int) $migratedCaptureReceiptRows[1]['observed_at']);
+        $migratedHistoricalRow = $sqlite->select('session_key, item_id, item_type, watch_duration_sec, artwork_observed_at')
+            ->from('play_history')->where('session_key = %s', 'artwork-observation-migration')->fetch();
+        $this->assertNotFalse($migratedHistoricalRow);
+        $this->assertSame('item-1', (string) $migratedHistoricalRow['item_id']);
+        $this->assertSame('Movie', (string) $migratedHistoricalRow['item_type']);
+        $this->assertSame(120, (int) $migratedHistoricalRow['watch_duration_sec']);
+        $this->assertSame($observedAt, (int) $migratedHistoricalRow['artwork_observed_at']);
         $providerMetadata = $sqlite->select('provider_tmdb_id, provider_title, provider_year, provider_conflict, presence, presence_checked')
             ->from('artwork_posters')->where('source_key = %s AND poster_id = %s', $sourceKey, 'poster-1')->fetch();
         $this->assertNotFalse($providerMetadata);

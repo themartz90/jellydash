@@ -7,6 +7,7 @@ namespace Mk\Framework\Pages;
 use Mk\Framework\Controller;
 use Mk\Framework\Jellyfin\HistoryFilters;
 use Mk\Framework\Jellyfin\JellyfinUserAvatars;
+use Mk\Framework\Jellyfin\PlaybackReportingParser;
 use Mk\Framework\Jellyfin\PlaybackStatisticsService;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
 use Mk\Framework\Main;
@@ -219,7 +220,7 @@ final class HistoryController extends Controller
             $count = count($group['plays']);
             $group['summary'] = $count . ($count === 1 ? ' play - ' : ' plays - ')
                 . $this->durationLabel((int) $group['watch_sec'])
-                . ($group['estimated'] ? ' estimated' : ' watched');
+                . ($group['estimated'] ? ' estimated' : ' recorded');
             unset($group['watch_sec'], $group['estimated']);
         }
         unset($group);
@@ -239,6 +240,8 @@ final class HistoryController extends Controller
         $viewingSec = (int) ($watchDuration ?? $watchedSec);
         $runtimeSec = (int) $row['runtime_sec'];
         $completion = $runtimeSec > 0 ? min(100, (int) round(($watchedSec / $runtimeSec) * 100)) : 0;
+        $positionKnown = $runtimeSec > 0 && !str_starts_with((string) ($row['session_key'] ?? ''), PlaybackReportingParser::SESSION_PREFIX);
+        $positionFinished = $positionKnown && $watchedSec * 100 >= $runtimeSec * 95;
         $seriesName = (string) ($row['series_name'] ?? '');
         $itemName = (string) ($row['item_name'] ?? 'Unknown title');
         $user = (string) ($row['user_name'] ?? '');
@@ -262,9 +265,11 @@ final class HistoryController extends Controller
             'isDirect' => !$isTranscode,
             'client' => (string) ($row['client'] ?? ''),
             'device' => (string) ($row['device'] ?? ''),
-            'watchedLabel' => $this->durationLabel($viewingSec) . ($watchDuration === null ? ' estimated' : ' watched'),
+            'watchedLabel' => $this->durationLabel($viewingSec) . ($watchDuration === null ? ' estimated' : ' recorded'),
             'completionPct' => $completion,
-            'finished' => (bool) $row['is_finished'] || $completion >= 95,
+            'positionKnown' => $positionKnown,
+            'finishedLabel' => $positionFinished ? 'At least 95% position' : 'Marked complete',
+            'finished' => (bool) $row['is_finished'] || $positionFinished,
             'poster' => $this->poster((string) ($row['resolved_item_id'] ?? $row['item_id']), $itemType),
         ];
     }

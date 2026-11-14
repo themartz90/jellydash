@@ -128,6 +128,8 @@ final class JellyfinSessionMapper
 
         $stream = [
             'id' => $streamId,
+            'playbackOwner' => hash('sha256', json_encode([(string) ($session['UserId'] ?? ''), (string) ($session['DeviceId'] ?? ''), (string) ($session['Client'] ?? '')], JSON_THROW_ON_ERROR)),
+            'playbackServer' => hash('sha256', (string) ($item['ServerId'] ?? $session['ServerId'] ?? '')),
             'diagnosticsId' => 'stream-diagnostics-' . substr(hash('sha256', $streamId), 0, 12),
             'itemId' => $itemId,
             'itemType' => $type,

@@ -43,6 +43,8 @@ final class PlayHistoryRepository implements LibraryHistorySource
     private ?MonitoringExclusions $monitoringExclusions;
     private ThemePlaybackExclusions $themePlaybackExclusions;
     private MovieReplacements $movieReplacements;
+    private PlaybackSessionState $playbackState;
+    private ?string $captureSourceKey = null;
     /** @var \WeakMap<\Dibi\Connection, true>|null */
     private static ?\WeakMap $schemaConnections = null;
 
@@ -80,6 +82,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
         $this->platform = $database->getPlatform();
         $this->monitoringExclusions = $monitoringExclusions;
         $this->ensureSchema();
+        $this->playbackState = new PlaybackSessionState($database);
         $this->movieReplacements = $movieReplacements ?? new MovieReplacements($database);
         $this->themePlaybackExclusions = $themePlaybackExclusions ?? new ThemePlaybackExclusions(
             $database,
@@ -139,11 +142,128 @@ final class PlayHistoryRepository implements LibraryHistorySource
         ($this->sampleQueue ??= HistorySampleQueue::forDatabase($this->database))->record(
             $valid,
             $now,
-            function (array $pending, \DateTimeImmutable $observedAt) use ($guard): void {
+            function (array $pending, \DateTimeImmutable $observedAt, ?array $capture = null) use ($guard): void {
                 $this->prepareHistoryImport();
-                $guard->runSample(fn () => $this->logActiveStreamsGuarded($pending, $observedAt, 0));
+                $guard->runSample(fn () => $capture === null ? $this->applyLegacySnapshot($pending, $observedAt) : $this->applyCapturedSnapshot($pending, $observedAt, $capture));
             }
         );
+    }
+
+    /** @param \Closure(): array<string, mixed> $prepare @return array<string, mixed> */
+    public function captureSnapshot(string $source, \Closure $prepare): array
+    {
+        $this->captureSourceKey = $source;
+        return ($this->sampleQueue ??= HistorySampleQueue::forDatabase($this->database))->capture(
+            $source,
+            $prepare,
+            fn (string $journal): int => $this->playbackState->captureOrder($source, $journal)
+        );
+    }
+
+    /** @param \Closure(array<int, array<string, mixed>>): array<int, array<string, mixed>> $enrich */
+    public function drainSnapshots(\Closure $enrich): void
+    {
+        $guard = new HistoryWriteGuard($this->database);
+        ($this->sampleQueue ??= HistorySampleQueue::forDatabase($this->database))->drain(function (array $pending, \DateTimeImmutable $at, ?array $capture = null) use ($guard, $enrich): void {
+            $this->prepareHistoryImport();
+            if ($capture === null || $capture['source'] === $this->captureSourceKey) {
+                $pending = $enrich($pending);
+            }
+            $guard->runSample(fn () => $capture === null ? $this->applyLegacySnapshot($pending, $at) : $this->applyCapturedSnapshot($pending, $at, $capture));
+        });
+    }
+
+    /** @param list<array<string, mixed>> $streams */
+    private function applyLegacySnapshot(array $streams, \DateTimeImmutable $at): void
+    {
+        $source = $this->captureSourceKey ?? ThemePlaybackExclusions::serverKey((string) Config::get('JELLYFIN_URL', ''));
+        foreach ($streams as $stream) {
+            $state = $this->playbackState->connection($source, (string) $stream['id']);
+            if ($state !== null) {
+                if ((int) $at->format('Uu') <= (int) $state['observed_at'] || (int) $state['is_open'] !== 1 || $state['item_id'] !== ($stream['itemId'] ?? null)) {
+                    continue;
+                }
+                $stream['id'] = $state['stream_key'];
+            }
+            $this->logActiveStreamsGuarded([$stream], $at, 0);
+        }
+    }
+
+    /** @param list<array<string, mixed>> $streams @param array<string, mixed> $capture */
+    private function applyCapturedSnapshot(array $streams, \DateTimeImmutable $at, array $capture): void
+    {
+        $operation = function () use ($streams, $at, $capture): void {
+            if (($capture['receipt_id'] ?? null) !== null && $this->playbackState->hasReceipt($capture['source'], $capture['receipt_id'])) {
+                return;
+            }
+            $remaining = [];
+            foreach ($streams as $stream) {
+                $remaining[(string) $stream['id']] = $stream;
+            }
+            foreach ($capture['connections'] as $connection) {
+                $id = $connection['id'];
+                $stream = $remaining[$id] ?? null;
+                unset($remaining[$id]);
+                $next = $this->playbackState->next($capture, $connection, $at);
+                if ($next === null) {
+                    continue;
+                }
+                $this->db->query('SAVEPOINT playback_connection');
+                $release = true;
+                try {
+                    if (!$connection['idle']) {
+                        if ($stream === null || $this->exclusions()->excludes($this->nullableString($stream['user'] ?? null))) {
+                            continue;
+                        }
+                        $stream['id'] = ($connection['eligible'] ?? true) ? $next['stream_key'] : $next['pending_stream_key'];
+                        $this->logActiveStream($stream, $at, 0);
+                        if ($this->themePlaybackExclusions->classification((string) $stream['itemId']) === ThemePlaybackClassifier::THEME
+                            || $this->activePlaySelection((string) $stream['id'], (string) $stream['itemId'], 'id')->fetchSingle() === null) {
+                            continue;
+                        }
+                    }
+                } catch (\Throwable $error) {
+                    $rowLocal = $error instanceof \InvalidArgumentException || $error instanceof \JsonException || $error instanceof \Dibi\ConstraintViolationException
+                        || (!$this->platform->isSqlite() && $error instanceof \Dibi\DriverException && in_array((int) $error->getCode(), [1048, 1264, 1366, 1406], true));
+                    if (!$rowLocal) {
+                        $release = false;
+                        throw $error;
+                    }
+                    $this->db->query('ROLLBACK TO SAVEPOINT playback_connection');
+                    Log::logException($error);
+                    continue;
+                } finally {
+                    if ($release) {
+                        $this->db->query('RELEASE SAVEPOINT playback_connection');
+                    }
+                }
+                $this->playbackState->save($next);
+            }
+            foreach ($remaining as $stream) {
+                $tracked = $this->playbackState->connection($capture['source'], (string) $stream['id']);
+                if ($tracked !== null && $tracked['item_id'] === ($stream['itemId'] ?? null)) {
+                    continue;
+                }
+                $this->logActiveStreamsGuarded([$stream], $at, 0);
+            }
+            if (($capture['receipt_id'] ?? null) !== null) {
+                $this->playbackState->acknowledge($capture['source'], $capture['receipt_id'], $at);
+            }
+        };
+        $originalThemes = $this->themePlaybackExclusions;
+        $currentSource = $this->captureSourceKey ?? ThemePlaybackExclusions::serverKey((string) Config::get('JELLYFIN_URL', ''));
+        if ($capture['source'] !== $currentSource) {
+            $this->themePlaybackExclusions = new ThemePlaybackExclusions($this->database, $capture['source']);
+        }
+        try {
+            if ($this->platform->isSqlite()) {
+                $operation();
+            } else {
+                $this->db->transaction($operation);
+            }
+        } finally {
+            $this->themePlaybackExclusions = $originalThemes;
+        }
     }
 
     /** @param array<int, array<string, mixed>> $streams */
@@ -330,7 +450,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
         }
 
         $data['session_key'] = $isNewPlay
-            ? self::replayPrefix($sessionKey, $itemId) . $now->getTimestamp()
+            ? self::replayPrefix($sessionKey, $itemId) . $now->getTimestamp() . '-' . bin2hex(random_bytes(8))
             : $sessionKey;
         $data['item_id'] = $itemId;
         $data['started_at'] = $nowSql;
@@ -623,6 +743,16 @@ final class PlayHistoryRepository implements LibraryHistorySource
             $sessionKey = (string) ($stream['id'] ?? '');
             $itemId = (string) ($stream['itemId'] ?? '');
             if ($sessionKey === '' || $itemId === '' || ($stream['isLive'] ?? false) === true) {
+                continue;
+            }
+            $state = $this->playbackState->connection($this->captureSourceKey ?? ThemePlaybackExclusions::serverKey((string) Config::get('JELLYFIN_URL', '')), $sessionKey);
+            if ($state !== null) {
+                if ((int) $state['is_open'] !== 1 || $state['item_id'] !== $itemId || $state['owner_key'] !== ($stream['playbackOwner'] ?? null)
+                    || ($state['server_key'] !== hash('sha256', '') && ($stream['playbackServer'] ?? hash('sha256', '')) !== hash('sha256', '') && $state['server_key'] !== $stream['playbackServer'])) {
+                    continue;
+                }
+                $sessionKey = (string) $state['stream_key'];
+            } elseif ($this->captureSourceKey !== null) {
                 continue;
             }
 

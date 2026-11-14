@@ -57,6 +57,8 @@ final class SQLiteSchemaCompatibilityTest extends TestCase
             'auth_remember_tokens',
             'download_completions',
             'download_connection_state',
+            'history_capture_receipts',
+            'history_playback_sessions',
             'integration_connections',
             'login_attempts',
             'movie_identity_items',

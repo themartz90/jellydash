@@ -97,6 +97,7 @@
     {% if groups is empty %}
         {% include "history/_empty.twig" %}
     {% else %}
+        <p class="history-time-help">Viewing time is what Jellydash recorded or estimated. The bar shows the furthest playback position. A completion check doesn't mean the full runtime was recorded.</p>
         {% include "history/_pager.twig" %}
         {% for group in groups %}
             {% include "history/_day_group.twig" with { group: group } %}

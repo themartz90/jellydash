@@ -26,21 +26,18 @@ final class NowPlayingService
     {
         $client = $this->client ?? new JellyfinClient();
         $mapper = $this->mapper ?? new JellyfinSessionMapper($client->baseUrl());
-        $sessions = ($this->exclusions ?? new MonitoringExclusions())->filterSessions($client->sessions());
-        $observedAt = new \DateTimeImmutable('now');
         $history = null;
-        $themeSamples = [];
         try {
             $history = $this->history ?? new PlayHistoryRepository();
-            $sessions = $history->themePlaybackExclusions()->filterSessions($sessions, $client);
-            $themeSamples = $history->themePlaybackExclusions()->observedThemeSamples();
         } catch (\Throwable $e) {
             // Theme metadata and its local cache are optional to live playback.
             // If either is unavailable, unknown sessions remain visible.
             Log::logException($e);
         }
+        $observation = $this->observe($client, $mapper, $history, true);
+        $sessions = $observation['sessions'];
         $this->captureMovieIdentities($sessions, $client);
-        $mapped = $mapper->map($sessions);
+        $mapped = $observation['mapped'];
         /** @var array<int, array<string, mixed>> $streams */
         $streams = $mapped['streams'];
         $cycle = [
@@ -58,7 +55,12 @@ final class NowPlayingService
             $cycle = $this->historyCycle(
                 $streams,
                 fn (array $activeStreams): array => $this->resolveLibraries($activeStreams, $client, $history),
-                fn (array $activeStreams) => $history->logActiveStreams([...$activeStreams, ...$themeSamples], $observedAt),
+                function () use ($history, $client, $observation): void {
+                    if (!$observation['captured']) {
+                        throw new HistoryWriteBusyException('This refresh could not capture playback History.');
+                    }
+                    $history->drainSnapshots(fn (array $pending): array => $this->enrichCaptured($pending, $client, $history));
+                },
                 $history->watchTimeToday(...),
                 $history->watchTimeTodayIsEstimated(...),
             );
@@ -95,24 +97,92 @@ final class NowPlayingService
         $client = $this->client ?? new JellyfinClient();
         $mapper = $this->mapper ?? new JellyfinSessionMapper($client->baseUrl());
         $history = $this->history ?? new PlayHistoryRepository();
-        $sessions = ($this->exclusions ?? new MonitoringExclusions())->filterSessions($client->sessions());
-        $observedAt = new \DateTimeImmutable('now');
-        $sessions = $history->themePlaybackExclusions()->filterSessions($sessions, $client);
-        $themeSamples = $history->themePlaybackExclusions()->observedThemeSamples();
+        $observation = $this->observe($client, $mapper, $history, false);
+        $sessions = $observation['sessions'];
         $this->captureMovieIdentities($sessions, $client);
         /** @var array<int, array<string, mixed>> $streams */
-        $streams = $mapper->map($sessions)['streams'];
-
-        try {
-            $streams = $this->resolveLibraries($streams, $client, $history);
-        } catch (\Throwable $e) {
-            Log::logException($e);
-        }
-
-        $history->logActiveStreams([...$streams, ...$themeSamples], $observedAt);
+        $streams = $observation['mapped']['streams'];
+        $history->drainSnapshots(fn (array $pending): array => $this->enrichCaptured($pending, $client, $history));
         $history->themePlaybackExclusions()->classifyHistoryBatch($client);
 
         return count($streams);
+    }
+
+    /** @return array<string, mixed> */
+    private function observe(JellyfinClient $client, JellyfinSessionMapper $mapper, ?PlayHistoryRepository $history, bool $displayFallback): array
+    {
+        $exclusions = $this->exclusions ?? new MonitoringExclusions();
+        $context = new class () {
+            /** @var list<array<string, mixed>>|null */
+            public ?array $raw = null;
+            /** @var list<array<string, mixed>>|null */
+            public ?array $filteredDisplay = null;
+            public ?\Throwable $fetchError = null;
+        };
+        try {
+            if ($history === null) {
+                throw new HistoryWriteBusyException('History storage is unavailable.');
+            }
+            return $history->captureSnapshot(ThemePlaybackExclusions::serverKey($client->baseUrl()), function () use ($client, $mapper, $history, $exclusions, $context): array {
+                try {
+                    $all = $client->sessions();
+                } catch (\Throwable $error) {
+                    $context->fetchError = $error;
+                    throw $error;
+                }
+                $at = new \DateTimeImmutable('now');
+                $counts = [];
+                foreach ($all as $session) {
+                    $id = trim((string) ($session['Id'] ?? ''));
+                    if ($id !== '') {
+                        $counts[$id] = ($counts[$id] ?? 0) + 1;
+                    }
+                }
+                $ambiguous = array_keys(array_filter($counts, static fn (int $count): bool => $count > 1));
+                $context->raw = $exclusions->filterSessions($all);
+                $sessions = $history->themePlaybackExclusions()->filterSessions($context->raw, $client);
+                $context->filteredDisplay = $sessions;
+                $mapped = $mapper->map($sessions);
+                $ordinary = [];
+                foreach ($mapped['streams'] as $stream) {
+                    if ($history->themePlaybackExclusions()->classification((string) $stream['itemId']) === ThemePlaybackClassifier::ORDINARY) {
+                        $ordinary[] = (string) $stream['itemId'];
+                    }
+                }
+                $snapshot = PlaybackSnapshot::create($context->raw, $mapped['streams'], $ordinary, $ambiguous);
+                return ['sessions' => $sessions, 'mapped' => $mapped, 'streams' => [...$snapshot['streams'], ...$history->themePlaybackExclusions()->observedThemeSamples()],
+                    'connections' => $snapshot['connections'], 'at' => $at, 'captured' => true];
+            });
+        } catch (\Throwable $error) {
+            if (!$displayFallback || $context->fetchError !== null) {
+                throw $error;
+            }
+            Log::logException($error);
+            $context->raw ??= $exclusions->filterSessions($client->sessions());
+            if ($context->filteredDisplay === null && $history !== null) {
+                try {
+                    $context->filteredDisplay = $history->themePlaybackExclusions()->filterSessions($context->raw, $client);
+                } catch (\Throwable $filterError) {
+                    Log::logException($filterError);
+                }
+            }
+            $context->filteredDisplay ??= array_values(array_filter($context->raw, static fn (array $session): bool =>
+                !is_array($session['NowPlayingItem'] ?? null) || (new ThemePlaybackClassifier())->classify($session['NowPlayingItem']) !== ThemePlaybackClassifier::THEME));
+            return ['sessions' => $context->filteredDisplay, 'mapped' => $mapper->map($context->filteredDisplay), 'captured' => false];
+        }
+    }
+
+    /** @param array<int, array<string, mixed>> $pending @return array<int, array<string, mixed>> */
+    private function enrichCaptured(array $pending, JellyfinClient $client, PlayHistoryRepository $history): array
+    {
+        $themes = array_filter($pending, static fn (array $stream): bool => ($stream['themeClassification'] ?? null) === ThemePlaybackClassifier::THEME);
+        $active = array_filter($pending, static fn (array $stream): bool => ($stream['themeClassification'] ?? null) !== ThemePlaybackClassifier::THEME);
+        try {
+            $active = $this->resolveLibraries($active, $client, $history);
+        } catch (\Throwable $error) {
+            Log::logException($error);
+        }
+        return [...$active, ...$themes];
     }
 
     /** @param array<int, array<string, mixed>> $sessions */

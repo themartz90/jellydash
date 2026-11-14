@@ -71,7 +71,7 @@ The project is still young and under active development.
 
 - **Now Playing.** Live cards for every active stream: artwork, user, quality, progress and the playback method (Direct Play, Remux or Transcode, including the reason why). Live TV channels from tuners like Tunarr show up too, with real program progress and a red on-air badge.
 
-- **History.** Jellydash records play history in the background, even when nobody has the dashboard open. Search it, filter by user or library, export the matching plays to CSV, and enjoy the poster art. Existing Jellyfin or Emby Playback Reporting backups can be imported from Settings.
+- **History.** Jellydash records play history in the background, even when nobody has the dashboard open. Search it, filter by user or library, export the matching plays to CSV, and enjoy the poster art. Existing Jellyfin or Emby Playback Reporting backups can be imported from Settings. See [History and viewing time](docs/HISTORY.md) for how recorded time, position and separate viewings work.
 
 - **Saved posters.** Keep Jellyfin's selected posters, including custom artwork, with recorded History after media is deleted. Online recovery fills missing posters using verified TMDB IDs, with manager review for uncertain matches. It can also help older entries whose images were already lost. See [Saved posters](docs/ARTWORK.md).
 
