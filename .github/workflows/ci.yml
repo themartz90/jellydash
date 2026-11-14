@@ -121,7 +121,7 @@ jobs:
             jellydash:ci sh -c 'sleep 2' 2>&1)
           printf '%s\n' "$output" | grep -F '[entrypoint] starting background workers (history every 30s, libraries every 300s, jellyseerr every 120s)'
           output=$(docker run --rm --env POLLER_ENABLED=OFF jellydash:ci sh -c 'sleep 1' 2>&1)
-          printf '%s\n' "$output" | grep -F '[entrypoint] background workers disabled'
+          printf '%s\n' "$output" | grep -F '[entrypoint] network polling disabled (POLLER_ENABLED is false or invalid); local poster expiry remains active'
 
       - name: Check Apache configuration
         run: docker run --rm --entrypoint apache2ctl jellydash:ci -t
