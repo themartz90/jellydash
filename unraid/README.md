@@ -24,6 +24,8 @@ If you make Jellydash reachable from outside your trusted network, read the [opt
 
 The template uses `ghcr.io/themartz90/jellydash:latest`. Unraid's normal container update action pulls new releases. Keep the appdata and uploads paths mapped when updating.
 
-For optional Jellyseerr, notification channels, or a MariaDB setup, see the [main Jellydash README](https://github.com/themartz90/jellydash#readme). The Unraid template starts with SQLite and the settings needed for a basic Jellyfin connection. Ask for help in [Jellydash Discussions](https://github.com/themartz90/jellydash/discussions).
+To add Jellyseerr, create an API key under **Settings > General > API Key** in Jellyseerr. Add two variables to the Jellydash container. Set `JELLYSEER_URL` to the Jellyseerr address the container can reach and `JELLYSEER_API_TOKEN` to the key. Apply the changes to restart the container. The Jellyseerr page then appears in the menu.
+
+For notification channels or a MariaDB setup, see the [main Jellydash README](https://github.com/themartz90/jellydash#readme). Ask for help in [Jellydash Discussions](https://github.com/themartz90/jellydash/discussions).
 
 The Jellydash mascot is based on a [jellyfish icon](https://www.flaticon.com/free-icon/jellyfish_2977310) by Magnific from [Flaticon](https://www.flaticon.com), modified for this project. The code is MIT licensed; the mascot artwork is covered by its separate Flaticon license.

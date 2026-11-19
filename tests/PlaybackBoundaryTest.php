@@ -73,6 +73,67 @@ final class PlaybackBoundaryTest extends TestCase
         self::assertNotSame($rows[0]['session_key'], $rows[1]['session_key']);
     }
 
+    public function testWorkerReportsDeferredDrainSeparatelyFromAnUncapturedObservation(): void
+    {
+        $db = Container::db();
+        $status = new \Mk\Framework\Health\WorkerStatusRepository($db);
+        $monitor = new \Mk\Framework\Health\WorkerMonitor($status);
+        $run = $this->service->recordActivePlays(...);
+        $old = $status->start('history', $this->prefix, time() - 15);
+        $status->succeed('history', $old, $this->prefix, time() - 14);
+        $lastSuccess = $status->all($this->prefix)['history']['last_success_at'];
+
+        $this->sessions = [$this->session('deferred', 80)];
+        $blocker = new \Mk\Framework\Database(new \Dibi\Connection($db->getDibi()->getConfig()));
+        try {
+            $monitor->run('history', function () use ($db, $blocker, $run): int {
+                if (!$db->getPlatform()->isSqlite()) {
+                    return (new \Mk\Framework\Jellyfin\HistoryWriteGuard($blocker))->run($run);
+                }
+                $blocker->getDibi()->query('BEGIN IMMEDIATE');
+                try {
+                    return $run();
+                } finally {
+                    $blocker->getDibi()->rollback();
+                }
+            }, $this->prefix);
+            self::fail('The capture must wait for this write to finish.');
+        } catch (\Mk\Framework\Jellyfin\HistoryPollDeferredException $error) {
+            self::assertSame('history_drain_deferred', $error->reason);
+            self::assertSame(0, $this->rowCount('deferred'));
+            self::assertCount(1, glob($this->directory . '/capture-*.json'));
+        } finally {
+            $blocker->getDibi()->disconnect();
+        }
+        $row = $status->all($this->prefix)['history'];
+        self::assertSame('deferred', $row['status']);
+        self::assertSame('history_drain_deferred', $row['error_code']);
+        self::assertSame($lastSuccess, $row['last_success_at']);
+
+        $lock = fopen($this->directory . '/.capture.lock', 'c');
+        flock($lock, LOCK_EX);
+        try {
+            $monitor->run('history', $run, $this->prefix);
+            self::fail('The capture lock must prevent a new observation.');
+        } catch (\Mk\Framework\Jellyfin\HistoryWriteBusyException) {
+            self::assertCount(1, glob($this->directory . '/capture-*.json'));
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
+        self::assertSame('history_capture_busy', $status->all($this->prefix)['history']['error_code']);
+
+        $this->sessions = [];
+        self::assertSame(0, $monitor->run('history', $run, $this->prefix));
+        self::assertSame(1, $this->rowCount('deferred'));
+        self::assertSame([], glob($this->directory . '/capture-*.json'));
+        $row = $status->all($this->prefix)['history'];
+        self::assertSame('success', $row['status']);
+        self::assertNull($row['error_code']);
+        self::assertGreaterThan($lastSuccess, $row['last_success_at']);
+        $db->getDibi()->delete('system_status')->where('source_id = %s', $this->prefix)->execute();
+    }
+
     public function testPausedMovieAndMissingConnectionDoNotInventStops(): void
     {
         $this->sessions = [$this->session('movie', 80)];
@@ -84,6 +145,48 @@ final class PlaybackBoundaryTest extends TestCase
         $this->sessions = [$this->session('movie', 90)];
         $this->service->payload();
         self::assertSame(1, $this->rowCount('movie'));
+    }
+
+    public function testWorkerDistinguishesClassificationContentionAfterRecordingPlayback(): void
+    {
+        $db = Container::db();
+        $dibi = $db->getDibi();
+        $status = new \Mk\Framework\Health\WorkerStatusRepository($db);
+        $monitor = new \Mk\Framework\Health\WorkerMonitor($status);
+        $old = $status->start('history', $this->prefix, time() - 15);
+        $status->succeed('history', $old, $this->prefix, time() - 14);
+        $lastSuccess = $status->all($this->prefix)['history']['last_success_at'];
+        $this->sessions = [$this->session('recorded', 80)];
+        $events = $dibi->onEvent;
+        $dibi->onEvent[] = static function (\Dibi\Event $event): void {
+            if (str_contains((string) $event->sql, 'MIN(ph.id) AS first_id')) {
+                throw new \Mk\Framework\Jellyfin\HistoryWriteBusyException('Synthetic contention in theme classification.');
+            }
+        };
+        try {
+            try {
+                $monitor->run('history', $this->service->recordActivePlays(...), $this->prefix);
+                self::fail('Expected the classification deferral to propagate.');
+            } catch (\Mk\Framework\Jellyfin\HistoryWriteBusyException) {
+            } finally {
+                $dibi->onEvent = $events;
+            }
+            self::assertSame(1, $this->rowCount('recorded'));
+            self::assertSame([], glob($this->directory . '/capture-*.json'));
+            $row = $status->all($this->prefix)['history'];
+            self::assertSame('deferred', $row['status']);
+            self::assertSame('history_classification_deferred', $row['error_code']);
+            self::assertSame($lastSuccess, $row['last_success_at']);
+
+            $this->sessions = [];
+            self::assertSame(0, $monitor->run('history', $this->service->recordActivePlays(...), $this->prefix));
+            self::assertSame(1, $this->rowCount('recorded'));
+            $recovered = $status->all($this->prefix)['history'];
+            self::assertSame('success', $recovered['status']);
+            self::assertNull($recovered['error_code']);
+        } finally {
+            $dibi->delete('system_status')->where('source_id = %s', $this->prefix)->execute();
+        }
     }
 
     public function testDifferentEligibleItemSeparatesReturnToUnfinishedMovie(): void

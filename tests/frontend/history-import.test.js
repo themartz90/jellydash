@@ -39,6 +39,7 @@ const progressNodes = {
 const hooks = {};
 vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, '../../public/assets/js/history-import.js'), 'utf8'), {
     window: { JellydashFrontendTestHooks: hooks },
+    TextDecoder,
     document: {
         querySelector(selector) { return selector === '[data-import-history-dialog]' ? dialog : null; },
         querySelectorAll(selector) { return progressNodes[selector] || []; },
@@ -93,4 +94,32 @@ assert.equal(title.textContent, 'Import 2 plays?');
 assert.match(summary.textContent, /4 already present will be skipped/);
 assert.equal(confirm.disabled, false);
 
-console.log('History import presentation tests passed.');
+async function testImportStream() {
+    const encoder = new TextEncoder();
+    const stream = (...chunks) => new ReadableStream({
+        async start(controller) {
+            for (const chunk of chunks) {
+                await new Promise((resolve) => setImmediate(resolve));
+                controller.enqueue(encoder.encode(chunk));
+            }
+            controller.close();
+        },
+    });
+    const progress = [];
+    const importing = { phase: 'importing', processed: 6, total: 9, inserted: 2, skipped: 2 };
+    const completed = await hooks.readImportNdjson(
+        stream(JSON.stringify(importing) + '\n', JSON.stringify(result).slice(0, 8), JSON.stringify(result).slice(8)),
+        (payload) => progress.push(payload.phase),
+    );
+    assert.equal(completed.inserted, 3);
+    assert.deepEqual(progress, ['importing', 'done']);
+    for (const broken of ['{"phase":"done"', 'null', '{"phase":"done"}', JSON.stringify(importing)]) {
+        await assert.rejects(hooks.readImportNdjson(stream(broken)), /Import progress was interrupted. Check History/);
+    }
+    await assert.rejects(hooks.readImportNdjson(stream('{"phase":"error","error":"Choose a backup first."}')), /Choose a backup first/);
+}
+
+testImportStream().then(() => console.log('History import presentation tests passed.')).catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+});

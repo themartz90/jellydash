@@ -15,6 +15,9 @@
     var suspended = false;
     var activeSearches = new Map();
     var groupsByKey = new Map();
+    var groupViews = new Map();
+    var nextGroupKey = 0;
+    var currentStatus = null;
 
     function find(name) {
         return panel.querySelector('[data-artwork-' + name + ']');
@@ -53,7 +56,7 @@
             if (response.status === 401 || response.status === 403 || response.status === 419) stopped = true;
             return response.json().catch(function () { throw new Error('Saved poster status could not be read.'); }).then(function (body) {
                 if (!response.ok) {
-                    var error = new Error(typeof body.error === 'string' ? body.error : 'Saved poster request failed.');
+                    var error = new Error(body && typeof body.error === 'string' ? body.error : 'Saved poster request failed.');
                     error.status = response.status;
                     throw error;
                 }
@@ -86,7 +89,10 @@
     }
 
     function cancelSearches() {
-        activeSearches.forEach(function (entry) { entry.controller.abort(); });
+        activeSearches.forEach(function (entry) {
+            entry.controller.abort();
+            entry.results.replaceChildren();
+        });
         activeSearches.clear();
     }
 
@@ -156,14 +162,19 @@
             : 'Poster status updated.';
     }
 
-    function renderGroups(groups) {
+    function renderGroups(groups, source) {
         var container = find('groups');
+        var nextViews = new Map();
         groupsByKey.clear();
         container.replaceChildren();
         find('groups-count').textContent = '(' + groups.length + ')';
         find('groups-wrap').hidden = groups.length === 0;
-        groups.forEach(function (group, index) {
-            var key = 'group-' + index;
+        groups.forEach(function (group) {
+            var identity = JSON.stringify([source.identity, source.blocked, source.configured,
+                group.kind, group.title, group.library, group.fingerprint, group.count]);
+            var view = groupViews.get(identity) || createGroupSearch(group);
+            nextViews.set(identity, view);
+            var key = view.key;
             groupsByKey.set(key, group);
             var card = node('article', '', 'artwork-group');
             var heading = node('h3', group.title || 'Untitled group');
@@ -178,29 +189,40 @@
             }
             card.appendChild(node('p', 'Linking changes artwork matching only. The original plays stay in History.'));
 
-            var form = node('form', '', 'artwork-search');
-            form.dataset.artworkSearch = 'true';
-            form.dataset.artworkGroupKey = key;
-            var label = node('label', 'Search Jellyfin for a poster');
-            var input = node('input');
-            input.type = 'search';
-            input.name = 'search';
-            input.maxLength = 160;
-            input.autocomplete = 'off';
-            input.required = true;
-            input.value = truncateSearchTitle(group.title);
-            label.appendChild(input);
-            var searchButton = node('button', 'Search', 'settings-secondary-btn');
-            searchButton.type = 'submit';
-            form.appendChild(label);
-            form.appendChild(searchButton);
-            card.appendChild(form);
-            var results = node('div', '', 'artwork-results');
-            results.setAttribute('aria-live', 'polite');
-            results.dataset.artworkResults = key;
-            card.appendChild(results);
+            card.appendChild(view.form);
+            card.appendChild(view.results);
             container.appendChild(card);
         });
+        activeSearches.forEach(function (entry, key) {
+            if (groupsByKey.has(key)) return;
+            activeSearches.delete(key);
+            entry.controller.abort();
+        });
+        groupViews = nextViews;
+    }
+
+    function createGroupSearch(group) {
+        var key = 'group-' + (++nextGroupKey);
+        var form = node('form', '', 'artwork-search');
+        form.dataset.artworkSearch = 'true';
+        form.dataset.artworkGroupKey = key;
+        var label = node('label', 'Search Jellyfin for a poster');
+        var input = node('input');
+        input.type = 'search';
+        input.name = 'search';
+        input.maxLength = 160;
+        input.autocomplete = 'off';
+        input.required = true;
+        input.value = truncateSearchTitle(group.title);
+        label.appendChild(input);
+        var searchButton = node('button', 'Search', 'settings-secondary-btn');
+        searchButton.type = 'submit';
+        form.appendChild(label);
+        form.appendChild(searchButton);
+        var results = node('div', '', 'artwork-results');
+        results.setAttribute('aria-live', 'polite');
+        results.dataset.artworkResults = key;
+        return { key: key, form: form, results: results };
     }
 
     function truncateSearchTitle(value) {
@@ -261,6 +283,9 @@
             copy.appendChild(node('strong', poster.title || poster.id));
             copy.appendChild(node('small', poster.kind === 'Series' ? 'Series poster' : 'Movie poster'));
             copy.appendChild(node('small', poster.hasImage ? 'Saved poster' : 'No saved image yet'));
+            if (poster.error === 'unsupported_format') {
+                copy.appendChild(node('small', 'Jellyfin could not provide this poster in a format Jellydash can save.'));
+            }
             if (Array.isArray(poster.manualIds) && poster.manualIds.length > 0) {
                 copy.appendChild(node('small', poster.manualIds.length + (poster.manualIds.length === 1 ? ' History match' : ' History matches')));
             }
@@ -288,10 +313,10 @@
 
     function render(data, force) {
         if (!force && panel.contains(document.activeElement)) return;
-        cancelSearches();
+        currentStatus = data;
         renderSummary(data);
         renderNotices(data.source);
-        renderGroups(data.groups);
+        renderGroups(data.groups, data.source);
         renderPosters(data.posters);
         page = data.page;
         pages = Math.max(1, data.pages);
@@ -353,7 +378,6 @@
         if (statusRequest) statusRequest.abort();
         statusRequest = null;
         window.clearTimeout(timer);
-        cancelSearches();
         find('error').hidden = true;
         if (trigger) trigger.disabled = true;
         return request('/api/artwork.php?page=' + encodeURIComponent(page), action, payload).then(function (data) {
@@ -374,13 +398,6 @@
         return currentStatus ? currentStatus.source : { configured: true, blocked: false, legacyConfirmed: true };
     }
 
-    var currentStatus = null;
-    var renderOriginal = render;
-    render = function (data, force) {
-        currentStatus = data;
-        return renderOriginal(data, force);
-    };
-
     function search(group, key, query, results) {
         var clean = query.trim();
         if (!clean) {
@@ -392,7 +409,7 @@
         statusRequest = null;
         var previous = activeSearches.get(key);
         if (previous) previous.controller.abort();
-        var entry = { controller: new AbortController(), sequence: previous ? previous.sequence + 1 : 1 };
+        var entry = { controller: new AbortController(), results: results };
         activeSearches.set(key, entry);
         results.replaceChildren(node('p', 'Searching Jellyfin…', 'artwork-status'));
         var kind = group.kind === 'Episode' ? 'Series' : 'Movie';

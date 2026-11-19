@@ -135,7 +135,8 @@
 
             render(payload);
             upgradeReady.then(() => {
-                if (payload.auto_show && !wasSeen() && !dialog.open) {
+                if (payload.auto_show && !wasSeen() && !dialog.open
+                    && !document.querySelector('[data-history-library-upgrade][open]')) {
                     rememberSeen();
                     dialog.showModal();
                 }

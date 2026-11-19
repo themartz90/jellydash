@@ -111,9 +111,6 @@ final class SabnzbdProvider implements Provider
         try {
             $currentRows = $this->currentHistory($connection, $credentials, $deadline);
             $currentHistoryComplete = count($currentRows) <= self::MAX_BATCH_ROWS;
-            if (!$currentHistoryComplete) {
-                $currentHistoryError = 'response_too_large';
-            }
             foreach (array_slice($currentRows, 0, self::MAX_BATCH_ROWS) as $row) {
                 $item = $this->historyItem($row);
                 if ($item !== null && !in_array($item['state'], ['completed', 'failed'], true)

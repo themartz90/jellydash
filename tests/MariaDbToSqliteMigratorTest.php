@@ -233,6 +233,51 @@ final class MariaDbToSqliteMigratorTest extends TestCase
         $destination->getDibi()->disconnect();
     }
 
+    public function testMaximumCompletionTagsSurviveFreshStorageUpgradeAndMigration(): void
+    {
+        $store = new \Mk\Framework\Integrations\CredentialStore($this->destinationPath . '.key');
+        $connections = new \Mk\Framework\Integrations\ConnectionRepository($this->source, $store);
+        $repository = new \Mk\Framework\Downloads\DownloadRepository($this->source, $store);
+        try {
+            $connection = $connections->save(new \Mk\Framework\Integrations\Connection(
+                'migration-tags', 'sabnzbd', 'Migration Tags', 'https://downloads.example.test',
+            ), 'fixture-only');
+        } finally {
+            @unlink($this->destinationPath . '.key');
+            @unlink($this->destinationPath . '.key.lock');
+        }
+        $tags = array_map(static fn (int $i): string => str_repeat('🎬', 253) . sprintf('%03d', $i), range(1, 100));
+        $now = 1_800_000_000;
+        $ordinary = ['source_id' => 'ordinary', 'title' => 'Ordinary', 'tags' => ['one'], 'completed_at' => $now];
+        $large = ['source_id' => 'large', 'title' => 'Large', 'tags' => $tags, 'completed_at' => $now];
+        $collect = static function (\Mk\Framework\Downloads\DownloadRepository $repository, array $completions, int $at) use ($connection): void {
+            $token = $repository->claim($connection, $at);
+            self::assertNotNull($token);
+            self::assertTrue($repository->succeed($connection, $token,
+                new \Mk\Framework\Downloads\CollectionBatch(completions: $completions), $at));
+        };
+
+        $collect($repository, [$ordinary, $large], $now);
+        $this->sourceConnection->delete('download_completions')->where('source_id = %s', 'large')->execute();
+        $this->sourceConnection->query('ALTER TABLE `download_completions` MODIFY COLUMN `tags_json` TEXT NOT NULL');
+        $repository = new \Mk\Framework\Downloads\DownloadRepository($this->source, $store);
+        $collect($repository, [$ordinary, $large], $now + 16);
+        $collect($repository, [$ordinary, $large], $now + 32);
+        $expected = ['large' => $tags, 'ordinary' => ['one']];
+        $actual = array_column($repository->recent([$connection->id]), 'tags', 'source_id');
+        ksort($actual);
+        self::assertSame($expected, $actual);
+
+        DatabaseSchemaInitializer::initialize($this->source);
+        (new MariaDbToSqliteMigrator($this->source))->migrate($this->destinationPath);
+        $destination = Database::sqlite($this->destinationPath);
+        $migrated = new \Mk\Framework\Downloads\DownloadRepository($destination, $store);
+        $actual = array_column($migrated->recent([$connection->id]), 'tags', 'source_id');
+        ksort($actual);
+        self::assertSame($expected, $actual);
+        $destination->getDibi()->disconnect();
+    }
+
     public function testConsoleCommandRequiresStoppedConfirmation(): void
     {
         $result = $this->runConsoleMigration(false);

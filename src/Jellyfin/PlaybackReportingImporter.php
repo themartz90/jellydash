@@ -324,7 +324,7 @@ final class PlaybackReportingImporter
         if ($this->repository->hasIgnoredUsers()) {
             foreach ($named as $row) {
                 if (trim((string) ($row['user_name'] ?? '')) === '') {
-                    throw new \RuntimeException('Playback Reporting import stopped: user names could not be resolved while ignored users are configured. Check the Jellyfin /Users connection and retry.');
+                    throw new ImportValidationException('Playback Reporting import stopped: user names could not be resolved while ignored users are configured. Check the Jellyfin /Users connection and retry.');
                 }
             }
         }
@@ -582,7 +582,7 @@ final class PlaybackReportingImporter
     {
         $path = trim($path);
         if ($path === '' || !is_file($path) || !is_readable($path)) {
-            throw new \InvalidArgumentException('Playback Reporting file is not readable.');
+            throw new ImportValidationException('Playback Reporting file is not readable.');
         }
 
         return $path;

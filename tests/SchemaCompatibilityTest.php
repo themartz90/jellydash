@@ -89,6 +89,7 @@ final class SchemaCompatibilityTest extends TestCase
             'history_capture_receipts',
             'history_playback_sessions',
             'integration_connections',
+            'login_admissions',
             'login_attempts',
             'movie_identity_items',
             'movie_identity_state',

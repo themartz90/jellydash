@@ -70,6 +70,7 @@ final class ArtworkManager
         $source = $this->repository->source();
         $capacity = (int) $db->select('COUNT(*)')->from('artwork_posters')->where('source_key = %s AND last_error = %s AND suppressed = 0', $scope, 'capacity')->fetchSingle();
         return ['source' => ['blocked' => (bool) $source['blocked'], 'error' => $source['last_error'] ?? ($capacity > 0 ? 'capacity' : null),
+            'identity' => hash('sha256', $scope . ':' . $source['server_id']),
             'legacyConfirmed' => (bool) $source['legacy_confirmed'],
             'configured' => $this->client->baseUrl() !== '' && (string) Config::get('JELLYFIN_API_TOKEN', Config::get('JELLYFIN_API_KEY', '')) !== '',
             'otherSources' => (int) $db->select('COUNT(DISTINCT source_key)')->from('artwork_images')->where('source_key <> %s', $scope)->fetchSingle()],

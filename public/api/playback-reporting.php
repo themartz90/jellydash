@@ -6,6 +6,8 @@ use Dotenv\Dotenv;
 use Mk\Framework\Authorization;
 use Mk\Framework\Config;
 use Mk\Framework\Csrf;
+use Mk\Framework\Jellyfin\ImportFailure;
+use Mk\Framework\Jellyfin\ImportValidationException;
 use Mk\Framework\Jellyfin\PlaybackReportingClient;
 use Mk\Framework\Jellyfin\PlaybackReportingImporter;
 use Mk\Framework\Jellyfin\PlaybackReportingUpload;
@@ -55,26 +57,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             header('Content-Type: application/json; charset=utf-8');
             echo json_encode(previewImport(), JSON_THROW_ON_ERROR);
         }
-    } catch (\JsonException $e) {
-        header('Content-Type: application/json; charset=utf-8');
-        http_response_code(500);
-        echo json_encode([
-            'error' => 'Could not encode the import preview.',
-            'detail' => Config::isDebug() ? $e->getMessage() : null,
-        ]);
     } catch (\Throwable $e) {
-        Log::logException($e);
+        $message = ImportFailure::message($e);
         if ($commit && !$wantsStream) {
-            redirectImportError($e->getMessage());
+            redirectImportError($message);
         }
-        if (!$commit) {
-            header('Content-Type: application/json; charset=utf-8');
-            http_response_code(400);
-            echo json_encode([
-                'error' => mb_substr($e->getMessage(), 0, 180),
-                'detail' => Config::isDebug() ? $e->getMessage() : null,
-            ]);
-        }
+        header('Content-Type: application/json; charset=utf-8');
+        http_response_code($e instanceof ImportValidationException ? 400 : 500);
+        echo json_encode(['error' => $message]);
     }
 
     return;
@@ -169,7 +159,6 @@ function streamImport(): void
         ob_end_flush();
     }
 
-    $importer = new PlaybackReportingImporter();
     $source = (string) ($_POST['import_source'] ?? 'file');
     $emit = static function (array $payload): void {
         echo json_encode($payload, JSON_THROW_ON_ERROR) . "\n";
@@ -177,6 +166,7 @@ function streamImport(): void
     };
 
     try {
+        $importer = new PlaybackReportingImporter();
         if ($source === 'plugin') {
             $result = $importer->importFromPlugin(false, $emit);
         } else {
@@ -184,10 +174,9 @@ function streamImport(): void
             $result = $importer->importFile($tmp, false, $importer->detectKind($tmp), $emit);
         }
     } catch (\Throwable $e) {
-        Log::logException($e);
         $emit([
             'phase' => 'error',
-            'error' => mb_substr($e->getMessage(), 0, 180),
+            'error' => ImportFailure::message($e),
             'processed' => 0,
             'total' => 0,
             'inserted' => 0,

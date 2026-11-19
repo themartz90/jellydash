@@ -65,7 +65,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
     ];
 
     private const LONG_TEXT_COLUMNS = ['user_name', 'series_name', 'item_name', 'library', 'client', 'device'];
-    private const MAX_METADATA_CHARACTERS = 16_383;
+    public const MAX_METADATA_CHARACTERS = 16_383;
 
     /** @param (\Closure(array<string, mixed>): void)|null $beforeImportWrite */
     public function __construct(
@@ -318,7 +318,7 @@ final class PlayHistoryRepository implements LibraryHistorySource
         $existing = $this->activePlaySelection(
             $sessionKey,
             $itemId,
-            'id, watched_sec, watch_duration_sec, is_finished, last_sample_epoch, last_sample_position_sec, last_sample_paused, last_sample_rate, updated_at_epoch, artwork_observation, artwork_observed_at',
+            'id, watched_sec, watch_duration_sec, runtime_sec, is_finished, last_sample_epoch, last_sample_position_sec, last_sample_paused, last_sample_rate, updated_at_epoch, artwork_observation, artwork_observed_at',
         )->fetch();
 
         $previousObservation = $existing && is_string($existing['artwork_observation'] ?? null)
@@ -356,8 +356,13 @@ final class PlayHistoryRepository implements LibraryHistorySource
             // restart). A finished item still playing out (credits) is a
             // continuation; treating it as new would reset the row and
             // re-fire its alert on every poll until the session ends.
+            $shortRestart = $runtimeSec > 0 && $runtimeSec <= 60 && $runtimeSec === (int) $existing['runtime_sec']
+                && $previousSampleEpoch !== null && !$paused && $existing['last_sample_paused'] !== null
+                && (int) $existing['last_sample_paused'] === 0
+                && (int) $existing['last_sample_position_sec'] >= intdiv($runtimeSec * 95 + 99, 100)
+                && $position <= min(5, intdiv($runtimeSec, 10));
             $restarted = (bool) $existing['is_finished']
-                && $position + 60 < (int) $existing['watched_sec'];
+                && ($position + 60 < (int) $existing['watched_sec'] || $shortRestart);
 
             $isNewPlay = $restarted;
         }

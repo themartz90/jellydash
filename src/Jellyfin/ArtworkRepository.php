@@ -272,12 +272,16 @@ final class ArtworkRepository
                 $data = ['observed_at' => $observedAt];
                 if ($tag !== null && $tag !== $old['requested_tag']) {
                     $data += ['requested_tag' => $tag, 'revision' => (int) $old['revision'] + 1, 'next_attempt' => 0];
+                    if ($old['last_error'] === 'unsupported_format') {
+                        $data += ['last_error' => null, 'attempts' => 0];
+                    }
                 }
                 $this->db->update('artwork_posters', $data)->where('source_key = %s AND poster_id = %s', $this->scope, $id)->execute();
             } elseif ($observedAt === (int) $old['observed_at'] && $tag !== null && $tag !== $old['requested_tag']) {
                 // Conflicting observations cannot order opaque tags. Fetch fresh metadata.
                 $this->db->update('artwork_posters', ['requested_tag' => null,
-                    'revision' => (int) $old['revision'] + 1, 'next_attempt' => 0])
+                    'revision' => (int) $old['revision'] + 1, 'next_attempt' => 0]
+                    + ($old['last_error'] === 'unsupported_format' ? ['last_error' => null, 'attempts' => 0] : []))
                     ->where('source_key = %s AND poster_id = %s', $this->scope, $id)->execute();
             }
         });
@@ -981,12 +985,13 @@ final class ArtworkRepository
     /** Fresh ID-only metadata and validated bytes renew a shared external image together.
      * @param array<string, mixed> $job @param array<string, mixed> $candidate
      * @param array{body: string, contentType: string} $image
+     * @return 'saved'|'capacity'|'deferred'
      */
-    public function renewExternal(array $job, array $candidate, array $image, string $assetFingerprint, string $lease, int $now, int $budget = self::DEFAULT_BUDGET): bool
+    public function renewExternal(array $job, array $candidate, array $image, string $assetFingerprint, string $lease, int $now, int $budget = self::DEFAULT_BUDGET): string
     {
         $this->externalResolver();
         $image = ArtworkFetcher::validate($image['body'], $image['contentType']);
-        return $this->atomic(function () use ($job, $candidate, $image, $assetFingerprint, $lease, $now, $budget): bool {
+        return $this->atomic(function () use ($job, $candidate, $image, $assetFingerprint, $lease, $now, $budget): string {
             $current = $this->externalBinding((string) $job['item_id']);
             if (!$this->owns($lease, $now) || !$this->externalEnabled() || $this->externalBlocked() || $current === null
                 || (int) $current['revision'] !== (int) $job['revision'] || $current['context_key'] !== ($job['context_key'] ?? null)
@@ -996,19 +1001,19 @@ final class ArtworkRepository
                 || !is_string($candidate['path'] ?? null)
                 || ExternalPosterProvider::posterPath('https://image.tmdb.org/t/p/w342/' . $candidate['path']) !== $candidate['path']
                 || !hash_equals($this->externalAssetFingerprint($current['asset_key']), $assetFingerprint)) {
-                return false;
+                return 'deferred';
             }
             $oldKey = $current['asset_key'];
             $old = $this->externalAsset($oldKey);
             if ($old === null || $this->externalResolver()->jellyfinImage((string) $job['item_id'], $current['kind'] === 'Series') !== null) {
-                return false;
+                return 'deferred';
             }
             $newKey = hash('sha256', $current['kind'] . ':' . $current['tmdb_id'] . ':' . $candidate['path']);
             $other = $newKey !== $oldKey ? $this->db->select('body_size, revision')->from('artwork_external_assets')
                 ->where('source_key = %s AND asset_key = %s', $this->scope, $newKey)->fetch()?->toArray() : null;
             $used = (int) $this->source()['used_bytes'] - (int) $old['body_size'] - (int) ($other['body_size'] ?? 0) + strlen($image['body']);
             if ($used > $budget) {
-                return false;
+                return 'capacity';
             }
             $expires = min((int) ($candidate['expires_at'] ?? (time() + self::EXTERNAL_LIFETIME)), time() + self::EXTERNAL_LIFETIME);
             foreach (array_unique([$oldKey, $newKey]) as $key) {
@@ -1027,7 +1032,7 @@ final class ArtworkRepository
                 ->where('source_key = %s AND asset_key IN %in AND expires_at > %i', $this->scope, array_unique([$oldKey, $newKey]), time())->execute();
             $this->db->query("UPDATE artwork_external_bindings SET asset_key = %s, revision = revision + 1, state = CASE WHEN suppressed = 1 THEN 'suppressed' WHEN presence = 1 THEN 'present' ELSE 'saved' END WHERE source_key = %s AND asset_key IN %in AND expires_at > %i", $newKey, $this->scope, array_unique([$oldKey, $newKey]), time());
             $this->db->update('artwork_sources', ['used_bytes' => $used])->where('source_key = %s', $this->scope)->execute();
-            return true;
+            return 'saved';
         });
     }
 

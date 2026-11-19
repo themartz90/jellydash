@@ -2,6 +2,7 @@
 
 (() => {
     const OVERVIEW_URL = '/api/downloads/overview.php';
+    const OVERVIEW_READ_ERROR = 'The latest download update could not be read.';
     const CLIENTS_URL = '/api/downloads/clients.php';
     const PROVIDERS = {
         qbittorrent: { name: 'qBittorrent', mark: 'qB', icon: 'qbittorrent.svg' },
@@ -231,6 +232,29 @@
                 eta: null,
             })),
         };
+    }
+
+    function isRecord(value) {
+        return value !== null && typeof value === 'object' && !Array.isArray(value);
+    }
+
+    function validOverview(data) {
+        if (!isRecord(data) || typeof data.configured !== 'boolean') return false;
+
+        const hasId = (value) => typeof value === 'string' && value !== '';
+        const hasTextFields = (row, fields) => fields.every((field) => row[field] == null || typeof row[field] === 'string');
+        const validRows = (rows) => Array.isArray(rows) && rows.every((item) =>
+            isRecord(item) && hasId(item.connection_id) && hasId(item.source_id)
+            && hasTextFields(item, ['title', 'category', 'provider', 'connection_name', 'state', 'status'])
+            && (item.tags == null || (Array.isArray(item.tags) && item.tags.every((tag) => typeof tag === 'string'))));
+        const clientHistory = data.history_by_connection;
+        return Array.isArray(data.connections) && data.connections.every((client) =>
+            isRecord(client) && hasId(client.id) && hasTextFields(client, ['name', 'provider', 'status'])
+            && (client.history == null || isRecord(client.history)))
+            && [data.items, data.history].every((rows) => (rows === undefined && !data.configured) || validRows(rows))
+            // PHP can encode empty maps or sequential numeric client IDs as arrays.
+            && (clientHistory === undefined || ((isRecord(clientHistory) || Array.isArray(clientHistory))
+                && Object.values(clientHistory).every(validRows)));
     }
 
     function emptyOverviewMode(connections) {
@@ -588,6 +612,9 @@
         if (warning !== undefined) pageState.warning = warning;
         const focusKey = rememberFocus();
         const fragment = document.createDocumentFragment();
+        if (pageState.warning && (data?.feature_enabled === false || data?.configured !== true)) {
+            fragment.append(renderNotice('Updates are paused.', pageState.warning, true));
+        }
         if (data?.feature_enabled === false) {
             const panel = node('section', 'downloads-empty');
             panel.append(node('h2', '', 'Downloads are turned off'));
@@ -824,11 +851,19 @@
                 error.status = response.status;
                 throw error;
             }
-            const data = await response.json();
-            if (sequence !== polling.sequence || !data || typeof data !== 'object') return;
+            const data = await response.json().catch((error) => {
+                if (error?.name === 'AbortError') throw error;
+                throw new Error(OVERVIEW_READ_ERROR);
+            });
+            if (sequence !== polling.sequence) return;
+            if (!validOverview(data)) throw new Error(OVERVIEW_READ_ERROR);
+            try {
+                renderOverview(data, null);
+            } catch (error) {
+                throw new Error(OVERVIEW_READ_ERROR, { cause: error });
+            }
             pageState.overview = data;
             polling.failures = 0;
-            renderOverview(data, null);
             scheduleOverview(5000);
         } catch (error) {
             if (sequence !== polling.sequence || (error?.name === 'AbortError' && !timedOut)) return;
@@ -845,12 +880,14 @@
             }
             polling.failures += 1;
             const message = timedOut ? 'The latest download update timed out.' : error instanceof Error ? error.message : 'The latest download update could not be loaded.';
-            if (pageState.overview) {
-                pageState.overview = staleOverview(pageState.overview);
-                renderOverview(pageState.overview, message);
-            }
-            else if (root) root.replaceChildren(renderNotice('Downloads could not be loaded.', message, true));
             scheduleOverview(Math.min(60000, 5000 * (2 ** Math.min(polling.failures, 4))));
+            if (pageState.overview) {
+                const stale = staleOverview(pageState.overview);
+                renderOverview(stale, message);
+                pageState.overview = stale;
+            } else {
+                root.replaceChildren(renderNotice('Downloads could not be loaded.', message, true));
+            }
         } finally {
             window.clearTimeout(timeout);
             if (polling.controller === controller) polling.controller = null;

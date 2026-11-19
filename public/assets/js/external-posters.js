@@ -11,6 +11,7 @@
     var statusData = null;
     var busy = false;
     var stopped = false;
+    var authExpired = false;
     var statusSequence = 0;
     var statusController = null;
     var pollTimer = null;
@@ -67,7 +68,10 @@
             options.body = JSON.stringify(Object.assign({ action: action }, payload || {}));
         }
         return fetch(url, options).then(function (response) {
-            if (response.status === 401 || response.status === 403 || response.status === 419) stopped = true;
+            if (!signal.aborted && (response.status === 401 || response.status === 403 || response.status === 419)) {
+                authExpired = true;
+                stopped = true;
+            }
             return response.json().catch(function () { throw new Error('Online poster status could not be read.'); }).then(function (body) {
                 if (!response.ok) {
                     var error = new Error(errorMessage(body, 'The online poster request failed.'));
@@ -83,11 +87,41 @@
     }
 
     function validStatus(data) {
-        return data && typeof data === 'object'
+        function isRecord(value) {
+            return value !== null && typeof value === 'object' && !Array.isArray(value);
+        }
+        function hasId(value) {
+            return typeof value === 'string' && value !== '';
+        }
+        function hasTextFields(row, fields) {
+            return fields.every(function (field) { return row[field] == null || typeof row[field] === 'string'; });
+        }
+        function validSelection(entry) {
+            return isRecord(entry) && hasId(entry.fingerprint) && Array.isArray(entry.ids) && entry.ids.every(hasId);
+        }
+        return isRecord(data)
             && typeof data.enabled === 'boolean'
             && Number.isInteger(data.configRevision)
-            && data.source && typeof data.source === 'object'
-            && Array.isArray(data.review) && Array.isArray(data.jobs) && Array.isArray(data.assets)
+            && isRecord(data.source) && typeof data.source.blocked === 'boolean'
+            && typeof data.source.confirmed === 'boolean' && hasTextFields(data.source, ['error'])
+            && Number.isInteger(data.noticeCount)
+            && Array.isArray(data.review) && data.review.every(function (group) {
+                return validSelection(group) && hasId(group.key) && hasTextFields(group, ['title', 'library', 'kind', 'reason'])
+                    && Number.isInteger(group.count) && Number.isInteger(group.snoozedUntil)
+                    && Array.isArray(group.items) && group.items.every(function (item) {
+                        return isRecord(item) && hasId(item.id) && hasTextFields(item, ['title']);
+                    })
+                    && (group.discovery == null || (isRecord(group.discovery) && Number.isInteger(group.discovery.count)
+                        && typeof group.discovery.status === 'string'));
+            })
+            && Array.isArray(data.jobs) && data.jobs.every(function (job) {
+                return validSelection(job) && hasTextFields(job, ['title', 'selectedTitle', 'state', 'error']);
+            })
+            && Array.isArray(data.assets) && data.assets.every(function (asset) {
+                return isRecord(asset) && hasId(asset.key) && hasId(asset.fingerprint)
+                    && hasTextFields(asset, ['title', 'kind', 'providerId', 'imageUrl'])
+                    && Number.isInteger(asset.bodySize) && Number.isInteger(asset.refCount);
+            })
             && Number.isInteger(data.page) && Number.isInteger(data.pages);
     }
 
@@ -522,12 +556,15 @@
         var controller = statusController;
         var sequence = ++statusSequence;
         return request(endpoint + '?page=' + encodeURIComponent(String(nextPage || page)), null, null, controller.signal).then(function (data) {
-            if (sequence !== statusSequence || !validStatus(data)) return;
+            if (sequence !== statusSequence) return;
+            if (!validStatus(data)) throw new Error('Online poster status returned an incomplete response.');
             render(data, focusKey);
             displayError('');
         }).catch(function (error) {
-            if (error.name === 'AbortError') return;
+            if (sequence !== statusSequence || error.name === 'AbortError') return;
             displayError(error.message || 'Online poster status could not be loaded.');
+        }).finally(function () {
+            if (statusController === controller) statusController = null;
         });
     }
 
@@ -551,6 +588,8 @@
 
     function mutate(action, payload, focusKey) {
         if (busy || stopped) return Promise.resolve();
+        statusSequence += 1;
+        if (statusController) statusController.abort();
         setBusy(true);
         cancelSearches();
         displayError('');
@@ -779,7 +818,7 @@
         if (pollTimer !== null) window.clearTimeout(pollTimer);
     });
     window.addEventListener('pageshow', function (event) {
-        if (!event.persisted) return;
+        if (!event.persisted || authExpired) return;
         stopped = false;
         loadStatus(page).finally(schedulePoll);
     });

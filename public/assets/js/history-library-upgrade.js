@@ -50,11 +50,18 @@
     }
 
     function request(method) {
+        var controller = new AbortController();
+        var timedOut = false;
+        var timeout = window.setTimeout(function () {
+            timedOut = true;
+            controller.abort();
+        }, 15000);
         var options = {
             method: method,
             headers: { Accept: 'application/json' },
             credentials: 'same-origin',
             cache: 'no-store',
+            signal: controller.signal,
         };
         if (method === 'POST') {
             options.headers['X-CSRF-Token'] = csrfToken;
@@ -62,14 +69,17 @@
 
         return fetch('/api/history-library-upgrade.php', options).then(function (response) {
             return response.json().then(function (payload) {
-                if (!response.ok) {
+                if (!response.ok || !payload || typeof payload.required !== 'boolean') {
                     throw new Error(payload && payload.error ? payload.error : 'Jellydash could not continue the History update.');
                 }
                 return payload;
             }, function () {
                 throw new Error('Jellydash could not continue the History update.');
             });
-        });
+        }).catch(function (error) {
+            if (timedOut) throw new Error('The History update request timed out. Jellydash will check its progress before continuing.');
+            throw error;
+        }).finally(function () { window.clearTimeout(timeout); });
     }
 
     function progressLabel(processed, total) {
@@ -155,6 +165,11 @@
     function showStatus(payload) {
         stopPolling();
         if (!payload.required) {
+            if (dialog.open && payload.state === 'complete') {
+                finish(payload);
+                return;
+            }
+            if (dialog.open) dialog.close();
             reopenButton.hidden = true;
             settle();
             return;
@@ -181,21 +196,29 @@
         event.preventDefault();
         hideForNow();
     });
-    retry.addEventListener('click', function () {
-        stopPolling();
-        advance(pollGeneration);
-    });
     hideButton.addEventListener('click', hideForNow);
     continueButton.addEventListener('click', hideForNow);
-    reopenButton.addEventListener('click', function () {
-        request('GET').then(showStatus).catch(function (error) {
+    function reconcileStatus() {
+        stopPolling();
+        var generation = pollGeneration;
+        retry.disabled = true;
+        reopenButton.disabled = true;
+        request('GET').then(function (status) {
+            if (generation === pollGeneration) showStatus(status);
+        }).catch(function (error) {
+            if (generation !== pollGeneration) return;
             if (!dialog.open) {
                 dialog.showModal();
             }
             reopenButton.hidden = true;
             showError(error.message || 'Jellydash could not continue the History update.');
+        }).finally(function () {
+            retry.disabled = false;
+            reopenButton.disabled = false;
         });
-    });
+    }
+    retry.addEventListener('click', reconcileStatus);
+    reopenButton.addEventListener('click', reconcileStatus);
     closeButton.addEventListener('click', function () {
         stopPolling();
         if (dialog.open) {

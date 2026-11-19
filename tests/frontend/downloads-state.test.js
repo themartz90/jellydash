@@ -649,7 +649,10 @@ async function testOverviewFocusSurvivesQueueChanges() {
     function fixture() {
         const hooks = {};
         let payload;
-        const document = { hidden: true, addEventListener() {} };
+        let status = 200;
+        const timers = new Map();
+        let timerId = 0;
+        const document = { hidden: true, listeners: {}, addEventListener(type, callback) { this.listeners[type] = callback; } };
         function element(tag) {
             const result = { tag, children: [], attributes: {}, dataset: {}, style: {}, className: '', _text: '', listeners: {},
                 classList: { add() {} },
@@ -696,14 +699,26 @@ async function testOverviewFocusSurvivesQueueChanges() {
         document.createDocumentFragment = () => element('fragment');
         document.createTextNode = (text) => ({ textContent: text });
         run('public/assets/js/downloads.js', {
-            window: { JellydashDownloadsTestHooks: hooks, addEventListener() {}, setTimeout() {}, clearTimeout() {} },
+            window: {
+                JellydashDownloadsTestHooks: hooks, addEventListener() {},
+                setTimeout(callback, delay) { timers.set(++timerId, { callback, delay }); return timerId; },
+                clearTimeout(id) { timers.delete(id); },
+            },
             document, Number, Set, Error, FormData, AbortController,
-            fetch: async () => ({ ok: true, json: async () => payload }),
+            fetch: async () => ({ ok: status === 200, status, json: async () => payload }),
         });
-        return { root, document, outside,
+        return { root, document, outside, timers,
             key: () => document.activeElement.getAttribute('data-downloads-focus-key'),
             control: (key) => root.querySelector(`[data-downloads-focus-key="${key}"]`),
             async refresh(data) { payload = data; document.hidden = false; await hooks.refreshOverview(); document.hidden = true; },
+            async next(delay, data, httpStatus = 200) {
+                payload = data;
+                status = httpStatus;
+                document.hidden = false;
+                const timer = [...timers.values()].find((item) => item.delay === delay);
+                assert.ok(timer, 'A further poll must be scheduled.');
+                await timer.callback();
+            },
         };
     }
     const client = { id: 'sab', name: 'SABnzbd', provider: 'sabnzbd', enabled: true, status: 'connected', speed: 0 };
@@ -767,12 +782,80 @@ async function testOverviewFocusSurvivesQueueChanges() {
         assert.equal(page.document.activeElement, page.outside, 'polling must leave focus outside Downloads untouched');
     });
     await check('poll turns off feature or removes last client', async () => {
-        for (const data of [{ feature_enabled: false, configured: false }, { feature_enabled: true, configured: false }]) {
+        for (const data of [{ feature_enabled: false, configured: false, connections: [] }, { feature_enabled: true, configured: false, connections: [] }]) {
             const page = fixture(); await page.refresh(overview(4)); page.control('queue-more').focus();
             await page.refresh(data);
             assert.equal(page.document.activeElement.tag, 'h2', 'the new state heading receives focus when no filters remain');
             assert.equal(page.document.activeElement.getAttribute('tabindex'), '-1');
         }
+    });
+    await check('malformed current responses retry and keep the last snapshot until recovery', async () => {
+        const page = fixture();
+        await page.refresh(null);
+        assert.match(page.root.textContent, /Downloads could not be loaded/);
+        await page.next(10000, overview(4));
+        assert.match(page.root.textContent, /Queued job/);
+        await page.next(5000, { ...overview(4), connections: [null] });
+        assert.match(page.root.textContent, /Updates are paused/);
+        assert.match(page.root.textContent, /Queued job/);
+        page.document.hidden = true;
+        page.document.listeners.visibilitychange();
+        assert.equal(page.timers.size, 0);
+        await page.refresh(overview(1));
+        assert.doesNotMatch(page.root.textContent, /Updates are paused/);
+        await page.next(5000, null, 401);
+        assert.match(page.root.textContent, /Session expired/);
+        page.document.listeners.visibilitychange();
+        assert.equal(page.timers.size, 0);
+    });
+    for (const [name, overrides] of [
+        ['connections', { connections: [null] }],
+        ['items', { items: [false] }],
+        ['history', { history: [[]] }],
+        ['client history', { history_by_connection: { sab: [null] } }],
+        ['history map', { history_by_connection: { sab: 'invalid' } }],
+        ['unrenderable download', { items: [{ ...overview(1).items[0], title: { toString: null } }] }],
+    ]) {
+        await check(`malformed ${name} keeps usable downloads and retries`, async () => {
+            const page = fixture();
+            const invalid = { ...overview(1), ...overrides };
+            await page.refresh(invalid);
+            assert.match(page.root.textContent, /Downloads could not be loaded.*latest download update could not be read/i);
+            await page.next(10000, overview(4));
+            assert.ok(page.control('queue-more'), 'The last usable snapshot has four jobs.');
+            await page.next(5000, invalid);
+            assert.match(page.root.textContent, /Updates are paused.*latest download update could not be read/i);
+            assert.ok(page.control('queue-more'), 'The four-job snapshot is still available.');
+            await page.next(10000, overview(1));
+            assert.match(page.root.textContent, /Queued job 0/);
+            assert.equal(page.control('queue-more'), null);
+            assert.doesNotMatch(page.root.textContent, /Updates are paused/);
+        });
+    }
+    await check('failed rendering does not promote a new snapshot', async () => {
+        const page = fixture();
+        await page.refresh(overview(4));
+        const createFragment = page.document.createDocumentFragment;
+        page.document.createDocumentFragment = () => {
+            page.document.createDocumentFragment = createFragment;
+            throw new Error('Synthetic render failure');
+        };
+        await page.next(5000, overview(1));
+        assert.match(page.root.textContent, /Updates are paused.*latest download update could not be read/i);
+        assert.ok(page.control('queue-more'));
+        await page.next(10000, overview(1));
+        assert.equal(page.control('queue-more'), null);
+    });
+    await check('array-encoded client history remains usable for numeric client IDs', async () => {
+        const page = fixture();
+        const completion = { connection_id: '0', source_id: 'finished', title: 'Completed numeric client job' };
+        await page.refresh({
+            ...overview(0),
+            connections: [{ ...client, id: '0' }],
+            history_by_connection: [[completion]],
+        });
+        page.control('filter-0').click();
+        assert.match(page.root.textContent, /Completed numeric client job/);
     });
     assert.equal(failures.length, 0, failures.join('\n'));
 }

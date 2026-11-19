@@ -132,8 +132,10 @@ final class AuthIntegrationTest extends TestCase
     public function testResetAfterLoginCredentialReadCannotEstablishNewGeneration(): void
     {
         $interleaved = false;
-        $listener = function (\Dibi\Event $event) use (&$interleaved): void {
-            if (!$interleaved && preg_match('/DELETE FROM [`\[]login_attempts/', (string) $event->sql)) {
+        $credentialsRead = false;
+        $listener = function (\Dibi\Event $event) use (&$interleaved, &$credentialsRead): void {
+            $credentialsRead = $credentialsRead || preg_match('/SELECT .* FROM [`\[]users/', (string) $event->sql) === 1;
+            if (!$interleaved && $credentialsRead && $event->type === \Dibi\Event::COMMIT) {
                 $interleaved = true;
                 $this->db->setUserPassword(self::USERNAME, 'replacement-password-123');
             }

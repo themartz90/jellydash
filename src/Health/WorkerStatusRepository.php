@@ -139,6 +139,11 @@ final class WorkerStatusRepository
         $this->complete($component, $token, $source, 'success', null, $now);
     }
 
+    public function deferHistory(string $token, string $reason, string $source = 'default', ?int $now = null): void
+    {
+        $this->complete('history', $token, $source, 'deferred', $reason, $now);
+    }
+
     public function fail(string $component, string $token, string $errorCode = 'request_failed', string $source = 'default', ?int $now = null): void
     {
         $errorCode = in_array($errorCode, self::ERROR_CODES, true) ? $errorCode : 'request_failed';

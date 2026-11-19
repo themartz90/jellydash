@@ -191,31 +191,37 @@ class Authorization
         $username = trim(strtolower((string) $username));
         $ip = Log::userIP();
 
-        if ($this->loginThrottle->blocked($username, $ip)) {
+        $admission = $this->loginThrottle->admit($username, $ip);
+        if ($admission === null) {
             Log::logDebugMessage("Login blocked (throttled) -> {$username} / {$ip}", $this);
             return false;
         }
 
-        $row = $this->dibi->select('*')->from('users')
-            ->where('username = %s', $username)->limit(1)->fetch();
+        $outcome = null;
+        try {
+            $row = $this->dibi->select('*')->from('users')
+                ->where('username = %s', $username)->limit(1)->fetch();
 
-        if (!$row || !password_verify((string) $password, (string) $row['password'])) {
-            if (!$row) {
-                // Equalize timing against a dummy hash (user enumeration defense).
-                password_verify((string) $password, self::DUMMY_HASH);
+            // Use a dummy hash for missing users to avoid revealing their existence.
+            $verified = password_verify((string) $password, $row ? (string) $row['password'] : self::DUMMY_HASH);
+            if (!$row || !$verified) {
+                $outcome = false;
+                Log::logDebugMessage("Wrong password attempt -> {$ip}", $this);
+                return false;
             }
-            $this->loginThrottle->failure($username, $ip);
-            Log::logDebugMessage("Wrong password attempt -> {$ip}", $this);
-            return false;
+
+            if (!self::isValidRole((int) $row['role'])) {
+                Log::logErrorMessage('Login refused because the account role is invalid.', self::class);
+                return false;
+            }
+            $outcome = true;
+        } finally {
+            $finished = $this->loginThrottle->finish($username, $ip, $admission, $outcome);
         }
 
-        if (!self::isValidRole((int) $row['role'])) {
-            Log::logErrorMessage('Login refused because the account role is invalid.', self::class);
+        if (!$finished) {
             return false;
         }
-
-        // Success.
-        $this->loginThrottle->clearPair($username, $ip);
 
         // Transparently upgrade legacy hashes to the current algorithm.
         if (password_needs_rehash((string) $row['password'], PASSWORD_DEFAULT)) {

@@ -108,6 +108,23 @@ final class SystemStatusServiceTest extends TestCase
         self::assertSame('healthy', $this->history($this->success())['state']);
     }
 
+    public function testHistoryDeferralReportsEachKnownPhaseSeparately(): void
+    {
+        $row = ['status' => 'deferred', 'last_finished_at' => 990, 'last_success_at' => 700];
+        $drain = $this->history($row + ['error_code' => 'history_drain_deferred']);
+        self::assertSame('delayed', $drain['state']);
+        self::assertStringContainsString('was captured', $drain['message']);
+        self::assertSame(700, $drain['last_success_at']);
+        $capture = $this->history($row + ['error_code' => 'history_capture_busy']);
+        self::assertSame('delayed', $capture['state']);
+        self::assertStringContainsString('before this check could capture', $capture['message']);
+        $classification = $this->history($row + ['error_code' => 'history_classification_deferred']);
+        self::assertSame('delayed', $classification['state']);
+        self::assertSame('Playback was recorded in History. Theme classification was deferred.', $classification['message']);
+        $unknown = $this->history($row + ['error_code' => 'history_busy']);
+        self::assertSame('History was busy during the last check. The next check will try again.', $unknown['message']);
+    }
+
     public function testRetryBackoffAndExpiredClaimsAreVisible(): void
     {
         putenv('DISCORD_WEBHOOK_URL=https://private.invalid/secret');

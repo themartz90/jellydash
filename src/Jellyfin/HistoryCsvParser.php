@@ -35,19 +35,19 @@ final class HistoryCsvParser
     {
         $handle = fopen($path, 'rb');
         if ($handle === false) {
-            throw new \RuntimeException('Could not read the Jellydash History CSV.');
+            throw new ImportValidationException('Could not read the Jellydash History CSV.');
         }
 
         try {
             $header = fgetcsv($handle, null, ',', '"', '');
             if (!is_array($header)) {
-                throw new \InvalidArgumentException('The CSV does not contain a header row.');
+                throw new ImportValidationException('The CSV does not contain a header row.');
             }
             if (isset($header[0])) {
                 $header[0] = preg_replace('/^\xEF\xBB\xBF/', '', (string) $header[0]) ?? (string) $header[0];
             }
             if ($header !== HistoryCsvExporter::COLUMNS && $header !== HistoryCsvExporter::V1_COLUMNS) {
-                throw new \InvalidArgumentException('This is not a supported Jellydash History CSV.');
+                throw new ImportValidationException('This is not a supported Jellydash History CSV.');
             }
 
             $line = 1;
@@ -58,14 +58,14 @@ final class HistoryCsvParser
                     continue;
                 }
                 if (count($values) !== count($header)) {
-                    throw new \InvalidArgumentException('CSV row ' . $line . ' has the wrong number of columns.');
+                    throw new ImportValidationException('CSV row ' . $line . ' has the wrong number of columns.');
                 }
 
                 $record = array_combine($header, array_map(static fn (mixed $value): string => (string) $value, $values));
                 $row = $this->mapRow($record, $line, $header === HistoryCsvExporter::V1_COLUMNS ? '1' : '2');
                 $identity = (string) $row['session_key'] . "\0" . (string) $row['item_id'];
                 if (isset($seen[$identity])) {
-                    throw new \InvalidArgumentException('CSV row ' . $line . ' duplicates an earlier play.');
+                    throw new ImportValidationException('CSV row ' . $line . ' duplicates an earlier play.');
                 }
                 $seen[$identity] = true;
 
@@ -95,14 +95,14 @@ final class HistoryCsvParser
     private function mapRow(array $record, int $line, string $version): array
     {
         if (($record['jellydash_history_version'] ?? '') !== $version) {
-            throw new \InvalidArgumentException('CSV row ' . $line . ' uses an unsupported History format version.');
+            throw new ImportValidationException('CSV row ' . $line . ' uses an unsupported History format version.');
         }
 
         $timezoneName = trim($record['jellydash_timezone'] ?? '');
         try {
             $sourceTimezone = new \DateTimeZone($timezoneName);
         } catch (\Exception) {
-            throw new \InvalidArgumentException('CSV row ' . $line . ' has an invalid timezone.');
+            throw new ImportValidationException('CSV row ' . $line . ' has an invalid timezone.');
         }
         $targetTimezone = new \DateTimeZone(date_default_timezone_get());
 
@@ -110,7 +110,7 @@ final class HistoryCsvParser
         foreach (self::MAX_LENGTHS as $column => $maxLength) {
             $value = $this->restoreCell($record[$column] ?? '');
             if (mb_strlen($value) > $maxLength) {
-                throw new \InvalidArgumentException('CSV row ' . $line . ' has an overlong ' . $column . ' value.');
+                throw new ImportValidationException('CSV row ' . $line . ' has an overlong ' . $column . ' value.');
             }
             $row[$column] = $value === '' && !in_array($column, ['session_key', 'item_id', 'item_type', 'play_method'], true)
                 ? null
@@ -118,7 +118,7 @@ final class HistoryCsvParser
         }
 
         if ($row['session_key'] === '' || $row['item_id'] === '') {
-            throw new \InvalidArgumentException('CSV row ' . $line . ' is missing its play identity.');
+            throw new ImportValidationException('CSV row ' . $line . ' is missing its play identity.');
         }
 
         foreach (['started_at', 'updated_at', 'ended_at', 'library_resolved_at'] as $column) {
@@ -158,7 +158,7 @@ final class HistoryCsvParser
         $value = $this->restoreCell(trim($value));
         if ($value === '' && $nullable) {
             if ($epoch !== null) {
-                throw new \InvalidArgumentException('CSV row ' . $line . ' has an epoch without its ' . $column . ' value.');
+                throw new ImportValidationException('CSV row ' . $line . ' has an epoch without its ' . $column . ' value.');
             }
             return null;
         }
@@ -168,16 +168,16 @@ final class HistoryCsvParser
         if ($date === false || ($errors !== false && ($errors['warning_count'] > 0 || $errors['error_count'] > 0))
             || $date->format('Y-m-d H:i:s') !== $value
         ) {
-            throw new \InvalidArgumentException('CSV row ' . $line . ' has an invalid ' . $column . ' value.');
+            throw new ImportValidationException('CSV row ' . $line . ' has an invalid ' . $column . ' value.');
         }
 
         if ($epoch !== null) {
             $date = (new \DateTimeImmutable('@' . $epoch))->setTimezone($source);
             if ($date->format('Y-m-d H:i:s') !== $value) {
-                throw new \InvalidArgumentException('CSV row ' . $line . ' has an epoch that does not match ' . $column . '.');
+                throw new ImportValidationException('CSV row ' . $line . ' has an epoch that does not match ' . $column . '.');
             }
         } elseif ($source->getName() !== $target->getName() && $this->ambiguousLocalTime($value, $source)) {
-            throw new \InvalidArgumentException('CSV row ' . $line . ' has an ambiguous ' . $column . ' during a clock change. Restore using the source timezone; this older timestamp has no UTC offset.');
+            throw new ImportValidationException('CSV row ' . $line . ' has an ambiguous ' . $column . ' during a clock change. Restore using the source timezone; this older timestamp has no UTC offset.');
         }
 
         return $date->setTimezone($target)->format('Y-m-d H:i:s');
@@ -190,7 +190,7 @@ final class HistoryCsvParser
             return null;
         }
         if (preg_match('/^-?\d+$/D', $value) !== 1 || (float) $value < -62135596800 || (float) $value > 253402300799) {
-            throw new \InvalidArgumentException('CSV row ' . $line . ' has an invalid ' . $column . '_epoch value.');
+            throw new ImportValidationException('CSV row ' . $line . ' has an invalid ' . $column . '_epoch value.');
         }
         return (int) $value;
     }
@@ -215,7 +215,7 @@ final class HistoryCsvParser
     {
         $value = $this->restoreCell(trim($value));
         if (preg_match('/^\d+$/', $value) !== 1 || (float) $value > 2147483647) {
-            throw new \InvalidArgumentException('CSV row ' . $line . ' has an invalid ' . $column . ' value.');
+            throw new ImportValidationException('CSV row ' . $line . ' has an invalid ' . $column . ' value.');
         }
 
         return (int) $value;
@@ -235,7 +235,7 @@ final class HistoryCsvParser
     {
         $value = $this->restoreCell(trim($value));
         if (!in_array($value, ['0', '1'], true)) {
-            throw new \InvalidArgumentException('CSV row ' . $line . ' has an invalid ' . $column . ' value.');
+            throw new ImportValidationException('CSV row ' . $line . ' has an invalid ' . $column . ' value.');
         }
 
         return (int) $value;
@@ -251,14 +251,14 @@ final class HistoryCsvParser
         try {
             $reasons = json_decode($value, true, flags: JSON_THROW_ON_ERROR);
         } catch (\JsonException) {
-            throw new \InvalidArgumentException('CSV row ' . $line . ' has invalid transcode reasons.');
+            throw new ImportValidationException('CSV row ' . $line . ' has invalid transcode reasons.');
         }
         if (!is_array($reasons) || !array_is_list($reasons)) {
-            throw new \InvalidArgumentException('CSV row ' . $line . ' has invalid transcode reasons.');
+            throw new ImportValidationException('CSV row ' . $line . ' has invalid transcode reasons.');
         }
         foreach ($reasons as $reason) {
             if (!is_string($reason)) {
-                throw new \InvalidArgumentException('CSV row ' . $line . ' has invalid transcode reasons.');
+                throw new ImportValidationException('CSV row ' . $line . ' has invalid transcode reasons.');
             }
         }
 

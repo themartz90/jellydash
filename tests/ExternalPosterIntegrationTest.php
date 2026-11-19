@@ -151,7 +151,7 @@ final class ExternalPosterIntegrationTest extends TestCase
             $candidate['path'] = $path;
             $lease = $this->art->claim(time());
             self::assertNotNull($lease);
-            self::assertTrue($this->art->renewExternal($job, $candidate, $this->image(), $this->art->externalAssetFingerprint($job['asset_key']), $lease, time(), strlen($this->image()['body'])));
+            self::assertSame('saved', $this->art->renewExternal($job, $candidate, $this->image(), $this->art->externalAssetFingerprint($job['asset_key']), $lease, time(), strlen($this->image()['body'])));
             $this->art->release($lease);
             self::assertNull($this->art->externalImage($second));
             self::assertSame('manual', $this->art->externalBinding($second)['origin']);
@@ -233,7 +233,7 @@ final class ExternalPosterIntegrationTest extends TestCase
             $lease = $this->art->claim(time());
             self::assertNotNull($lease);
             self::assertFalse($this->art->publishExternal($pendingJob, $this->image(), $lease, time()));
-            self::assertFalse($this->art->renewExternal($savedJob, $this->candidate(), $this->image(), $assetFingerprint, $lease, time()));
+            self::assertSame('deferred', $this->art->renewExternal($savedJob, $this->candidate(), $this->image(), $assetFingerprint, $lease, time()));
             $this->art->release($lease);
         }
     }

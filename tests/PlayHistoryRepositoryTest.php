@@ -158,6 +158,37 @@ final class PlayHistoryRepositoryTest extends TestCase
         $this->assertCount(3, array_unique(array_map(static fn (\Dibi\Row $row): string => (string) $row['session_key'], $rows)));
     }
 
+    public function testShortReplaysNeedFreshUnpausedSamplesFromTheEndToTheBeginning(): void
+    {
+        $start = new DateTimeImmutable('2099-06-19 12:00:00');
+        $samples = [
+            'phpunit-session' => [[0, 39, false], [5, 44, false], [5, 1, false], [6, 4, false], [8, 6, false]],
+            'phpunit-boundary' => [[0, 43, false], [5, 5, false]],
+            'phpunit-credits' => [[0, 45, false], [5, 43, false]],
+            'phpunit-seek' => [[0, 44, false], [5, 12, false], [10, 1, false]],
+            'phpunit-paused' => [[0, 44, true], [5, 1, false]],
+            'phpunit-pause' => [[0, 44, false], [5, 1, true]],
+            'phpunit-unfinished' => [[0, 42, false], [5, 0, false]],
+        ];
+        foreach ($samples as $session => $steps) {
+            foreach ($steps as [$elapsed, $position, $paused]) {
+                $stream = $this->stream($position, 45);
+                $stream['id'] = $session;
+                $stream['isPaused'] = $paused;
+                $this->repository->logActiveStreams([$stream], $start->modify("+{$elapsed} seconds"));
+            }
+        }
+        $replays = $this->dibi->select('*')->from('play_history')
+            ->where('item_id = %s', 'phpunit-item')->orderBy('id')->fetchAll();
+        self::assertCount(8, $replays);
+        self::assertSame([44, 6, 43, 45, 44, 44, 44, 42], array_map(static fn ($row): int => (int) $row['watched_sec'], $replays));
+        self::assertSame(5, (int) $replays[0]['watch_duration_sec']);
+        self::assertSame(2, (int) $replays[1]['watch_duration_sec']);
+        self::assertSame(1, (int) $replays[0]['is_finished']);
+        self::assertSame(0, (int) $replays[1]['is_finished']);
+        self::assertSame(0, (int) $replays[1]['notified']);
+    }
+
     public function testLongLiveMetadataIsPreservedWithoutSkippingOtherStreams(): void
     {
         $stream = $this->stream(120, 3600);

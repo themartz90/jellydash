@@ -314,10 +314,10 @@ final class PlaybackReportingImporterTest extends TestCase
             $error = null;
             try {
                 (new PlaybackReportingImporter(null, $repository, $client))->importFile($path, false, 'tsv');
-            } catch (RuntimeException $exception) {
+            } catch (\Mk\Framework\Jellyfin\ImportValidationException $exception) {
                 $error = $exception;
             }
-            self::assertInstanceOf(RuntimeException::class, $error);
+            self::assertInstanceOf(\Mk\Framework\Jellyfin\ImportValidationException::class, $error);
             self::assertStringContainsString('user names could not be resolved', $error->getMessage());
 
             self::assertSame(0, (int) $database->getDibi()->select('COUNT(*)')->from('play_history')
@@ -344,10 +344,10 @@ final class PlaybackReportingImporterTest extends TestCase
             try {
                 (new PlaybackReportingImporter(null, $repository, $client, new FakePlaybackReportingPlugin($rows)))
                     ->importFromPlugin();
-            } catch (RuntimeException $exception) {
+            } catch (\Mk\Framework\Jellyfin\ImportValidationException $exception) {
                 $error = $exception;
             }
-            self::assertInstanceOf(RuntimeException::class, $error);
+            self::assertInstanceOf(\Mk\Framework\Jellyfin\ImportValidationException::class, $error);
             self::assertStringContainsString('user names could not be resolved', $error->getMessage());
 
             self::assertSame(0, (int) $database->getDibi()->select('COUNT(*)')->from('play_history')

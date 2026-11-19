@@ -267,7 +267,8 @@ try {
                     continue;
                 }
                 if ($channel === 'webpush') {
-                    echo str_pad($channel, 9) . " subscriptions={$r['subscriptions']} sent={$r['sent']} failed={$r['failed']}\n";
+                    echo str_pad($channel, 9) . " subscriptions={$r['subscriptions']} sent={$r['sent']} failed={$r['failed']}"
+                        . (isset($r['error']) ? " {$r['error']}" : '') . "\n";
                     continue;
                 }
                 echo str_pad($channel, 9) . ' ' . ($r['sent'] ? "sent\n" : "FAILED (see var/log for the reason)\n");

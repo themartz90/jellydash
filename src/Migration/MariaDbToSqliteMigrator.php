@@ -16,6 +16,7 @@ final class MariaDbToSqliteMigrator
     private const TABLES = [
         'users',
         'login_attempts',
+        'login_admissions',
         'auth_remember_tokens',
         'app_settings',
         'play_history',
@@ -53,6 +54,7 @@ final class MariaDbToSqliteMigrator
     private const REQUIRED_SOURCE_COLUMNS = [
         'users' => ['id', 'username', 'password', 'name', 'role'],
         'login_attempts' => ['id', 'identifier', 'attempts', 'locked_until', 'updated_at'],
+        'login_admissions' => ['token', 'source_key', 'pair_key', 'expires_at'],
         'auth_remember_tokens' => ['id', 'user_id', 'selector', 'validator_hash', 'expires_at', 'created_at', 'last_used_at'],
         'app_settings' => ['setting_key', 'setting_value', 'updated_at'],
         'play_history' => ['id', 'session_key', 'item_id', 'item_type', 'play_method', 'watched_sec', 'runtime_sec', 'started_at', 'updated_at', 'is_finished'],

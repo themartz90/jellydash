@@ -42,7 +42,7 @@ final class PlaybackReportingParser
     {
         $handle = fopen($path, 'rb');
         if ($handle === false) {
-            throw new \RuntimeException('Could not read the Playback Reporting file.');
+            throw new ImportValidationException('Could not read the Playback Reporting file.');
         }
 
         try {
@@ -69,11 +69,11 @@ final class PlaybackReportingParser
     public function iterateSqliteFile(string $path): \Generator
     {
         if (!class_exists(\SQLite3::class)) {
-            throw new \RuntimeException('The PHP sqlite3 extension is required to import a Playback Reporting database.');
+            throw new ImportValidationException('The PHP sqlite3 extension is required to import a Playback Reporting database.');
         }
 
         if (!is_file($path) || !is_readable($path)) {
-            throw new \InvalidArgumentException('Playback Reporting database file is not readable.');
+            throw new ImportValidationException('Playback Reporting database file is not readable.');
         }
 
         $sqlite = new \SQLite3($path, SQLITE3_OPEN_READONLY);
@@ -82,7 +82,7 @@ final class PlaybackReportingParser
         try {
             $table = $sqlite->querySingle("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'PlaybackActivity'");
             if ($table !== 'PlaybackActivity') {
-                throw new \RuntimeException('This SQLite file has no PlaybackActivity table.');
+                throw new ImportValidationException('This SQLite file has no PlaybackActivity table.');
             }
 
             $hasPauseDuration = false;
@@ -237,8 +237,8 @@ final class PlaybackReportingParser
             'library' => $this->library($itemType),
             'play_method' => $method['play_method'],
             'play_method_detail' => $method['play_method_detail'],
-            'client' => $this->nullable(trim($tokens[6])),
-            'device' => $this->nullable(trim($tokens[7])),
+            'client' => $this->metadata(trim($tokens[6]), 'client'),
+            'device' => $this->metadata(trim($tokens[7]), 'device'),
             'source_video_codec' => null,
             'source_audio_codec' => null,
             'source_container' => null,
@@ -325,15 +325,15 @@ final class PlaybackReportingParser
             $episode = trim($match[4]);
 
             return [
-                'series_name' => $series !== '' ? mb_substr($series, 0, 255) : null,
-                'item_name' => mb_substr($episode !== '' ? $episode : $itemName, 0, 255),
+                'series_name' => $this->metadata($series, 'series title'),
+                'item_name' => $this->metadata($episode !== '' ? $episode : $itemName, 'item title'),
                 'season_ep' => 'S' . (int) $match[2] . ' E' . (int) $match[3],
             ];
         }
 
         return [
             'series_name' => null,
-            'item_name' => mb_substr($itemName, 0, 255),
+            'item_name' => $this->metadata($itemName, 'item title'),
             'season_ep' => null,
         ];
     }
@@ -458,13 +458,18 @@ final class PlaybackReportingParser
         return $this->mapTokens(explode("\t", $line));
     }
 
-    private function nullable(string $value): ?string
+    private function metadata(string $value, string $field): ?string
     {
         if ($value === '') {
             return null;
         }
 
-        return mb_substr($value, 0, 64);
+        if (mb_strlen($value, 'UTF-8') > PlayHistoryRepository::MAX_METADATA_CHARACTERS) {
+            throw new ImportValidationException('A Playback Reporting ' . $field . ' exceeds the History limit of '
+                . PlayHistoryRepository::MAX_METADATA_CHARACTERS . ' characters.');
+        }
+
+        return $value;
     }
 
     private function stripBom(string $contents): string

@@ -79,6 +79,27 @@ final class RecentlyAddedServiceTest extends TestCase
         $this->assertSame('New series · 2 episodes', $cards[0]['meta']);
     }
 
+    public function testEpisodeWithoutSeriesIdUsesOnlyAnUnambiguousName(): void
+    {
+        $first = ['Id' => 'series-1', 'Name' => 'Example Show', 'Type' => 'Series', 'DateCreated' => '2026-08-18T09:00:00Z'];
+        $second = array_replace($first, ['Id' => 'series-2']);
+        $episode = $this->episode('episode-unassigned', 'Local episode', '2026-08-18T08:00:00Z', 1);
+        $exact = $episode;
+        unset($episode['SeriesId']);
+        foreach ([[$first, $second], [$second, $first]] as $series) {
+            $cards = $this->cards([...$series, $episode]);
+            self::assertCount(3, $cards);
+            self::assertSame(2, count(array_keys(array_column($cards, 'meta'), 'New series', true)));
+            self::assertStringContainsString('Local episode', $cards[2]['meta']);
+            $cards = $this->cards([...$series, $exact]);
+            self::assertCount(2, $cards);
+            foreach ($cards as $card) {
+                self::assertSame(str_contains($card['jellyfinUrl'], 'id=series-1') ? 'New series · 1 episode' : 'New series', $card['meta']);
+            }
+        }
+        self::assertSame(['New series · 1 episode'], array_column($this->cards([$second, $episode]), 'meta'));
+    }
+
     public function testSeveralLibrariesShareTheShelfBeforeOneCanDominateIt(): void
     {
         $items = [];

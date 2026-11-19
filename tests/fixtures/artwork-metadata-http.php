@@ -9,7 +9,36 @@ if (!is_resource($server)) {
     exit(1);
 }
 
-file_put_contents($directory . '/ready', stream_socket_get_name($server, false));
+file_put_contents($directory . '/ready-tmp', stream_socket_get_name($server, false));
+rename($directory . '/ready-tmp', $directory . '/ready');
+if (in_array($mode, ['avif-jpg', 'avif-unchanged'], true)) {
+    $avif = base64_decode('AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUIAAADybWV0YQAAAAAAAAAoaGRscgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAGxpYmF2aWYAAAAADnBpdG0AAAAAAAEAAAAeaWxvYwAAAABEAAABAAEAAAABAAABGgAAABsAAAAoaWluZgAAAAAAAQAAABppbmZlAgAAAAABAABhdjAxQ29sb3IAAAAAamlwcnAAAABLaXBjbwAAABRpc3BlAAAAAAAAABAAAAAQAAAAEHBpeGkAAAAAAwgICAAAAAxhdjFDgQAMAAAAABNjb2xybmNseAABAA0AAYAAAAAXaXBtYQAAAAAAAAABAAEEAQKDBAAAACNtZGF0EgAKCRgM/9ogIaAwgDIMF4AAAEgAAAB4nXHQ', true);
+    for ($i = 0; $i < 2; ++$i) {
+        $connection = stream_socket_accept($server, 5);
+        if (!is_resource($connection)) {
+            exit(2);
+        }
+        stream_set_timeout($connection, 5);
+        $requestLine = trim((string) fgets($connection));
+        while (($line = fgets($connection)) !== false && trim($line) !== '') {
+        }
+        file_put_contents($directory . '/image-requests', $requestLine . "\n", FILE_APPEND);
+        $mime = 'image/avif';
+        $response = $avif;
+        if ($mode === 'avif-jpg' && str_contains($requestLine, '&format=Jpg ')) {
+            $image = imagecreatetruecolor(16, 16);
+            ob_start();
+            imagejpeg($image);
+            $response = ob_get_clean();
+            imagedestroy($image);
+            $mime = 'image/jpeg';
+        }
+        fwrite($connection, "HTTP/1.1 200 OK\r\nContent-Type: $mime\r\nContent-Length: " . strlen($response) . "\r\nConnection: close\r\n\r\n" . $response);
+        fclose($connection);
+    }
+    fclose($server);
+    exit;
+}
 $connection = stream_socket_accept($server, 5);
 if (!is_resource($connection)) {
     fclose($server);

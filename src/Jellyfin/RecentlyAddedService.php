@@ -260,7 +260,8 @@ final class RecentlyAddedService
 
             if ($type === 'Series') {
                 $seriesIndexes[mb_strtolower($id)] = count($regular);
-                $seriesIndexes['name:' . mb_strtolower($title)] = count($regular);
+                $nameKey = 'name:' . mb_strtolower($title);
+                $seriesIndexes[$nameKey] = array_key_exists($nameKey, $seriesIndexes) ? null : count($regular);
             }
             $regular[] = $card;
         }

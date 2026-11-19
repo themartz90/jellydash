@@ -158,7 +158,7 @@ final class HistoryCsvImporter
     {
         $path = trim($path);
         if ($path === '' || !is_file($path) || !is_readable($path)) {
-            throw new \InvalidArgumentException('Jellydash History CSV is not readable.');
+            throw new ImportValidationException('Jellydash History CSV is not readable.');
         }
 
         return $path;

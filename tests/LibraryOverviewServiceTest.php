@@ -76,6 +76,10 @@ final class LibraryOverviewServiceTest extends TestCase
 
         $this->assertSame('1 minute ago', $relativeTime->invoke($service, new \DateTimeImmutable('@' . (time() - 60))));
         $this->assertSame('2 minutes ago', $relativeTime->invoke($service, new \DateTimeImmutable('@' . (time() - 120))));
+        $this->assertSame('1 hour ago', $relativeTime->invoke($service, new \DateTimeImmutable('@' . (time() - 3600))));
+        $this->assertSame('2 hours ago', $relativeTime->invoke($service, new \DateTimeImmutable('@' . (time() - 7200))));
+        $this->assertSame('1 day ago', $relativeTime->invoke($service, new \DateTimeImmutable('@' . (time() - 86400))));
+        $this->assertSame('2 days ago', $relativeTime->invoke($service, new \DateTimeImmutable('@' . (time() - 172800))));
     }
 
     public function testLargeLibrariesUseCountsWithoutEnumeratingEveryItem(): void

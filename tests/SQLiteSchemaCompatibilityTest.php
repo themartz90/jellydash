@@ -60,6 +60,7 @@ final class SQLiteSchemaCompatibilityTest extends TestCase
             'history_capture_receipts',
             'history_playback_sessions',
             'integration_connections',
+            'login_admissions',
             'login_attempts',
             'movie_identity_items',
             'movie_identity_state',
@@ -80,6 +81,7 @@ final class SQLiteSchemaCompatibilityTest extends TestCase
         ], $this->namedIndexes('play_history'));
         $this->assertSame(['idx_requested_at'], $this->namedIndexes('seerr_requests'));
         $this->assertSame(['idx_auth_remember_user'], $this->namedIndexes('auth_remember_tokens'));
+        $this->assertSame(['idx_login_admissions_expiry', 'idx_login_admissions_source'], $this->namedIndexes('login_admissions'));
         $this->assertSame(['idx_theme_retry'], $this->namedIndexes('theme_item_classifications'));
         $this->assertSame(['idx_movie_replacement_target'], $this->namedIndexes('movie_replacements'));
         $this->assertSame(['idx_integration_connection_enabled'], $this->namedIndexes('integration_connections'));

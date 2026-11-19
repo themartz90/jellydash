@@ -43,20 +43,20 @@ async function testHistoryStreams() {
     });
 
     const complete = await hooks.readImportNdjson(stream([
-        '{"phase":"importing","processed":1,"total":1}\n',
-        '{"phase":"done","inserted":1,"skipped":0}\n',
+        '{"phase":"importing","processed":1,"total":1,"inserted":1,"skipped":0}\n',
+        '{"phase":"done","processed":1,"total":1,"inserted":1,"skipped":0}\n',
     ]));
     assert.equal(complete.phase, 'done');
 
     await assert.rejects(
-        hooks.readImportNdjson(stream(['{"phase":"importing","processed":1,"total":2}\n'])),
-        /stopped before it finished/,
+        hooks.readImportNdjson(stream(['{"phase":"importing","processed":1,"total":2,"inserted":1,"skipped":0}\n'])),
+        /Import progress was interrupted/,
     );
     await assert.rejects(
         hooks.readImportNdjson(stream(['{"phase":"importing"'])),
-        /JSON|property value/,
+        /Import progress was interrupted/,
     );
-    await assert.rejects(hooks.readImportNdjson(stream([])), /stopped before it finished/);
+    await assert.rejects(hooks.readImportNdjson(stream([])), /Import progress was interrupted/);
     await assert.rejects(
         hooks.readImportNdjson(stream(['{"phase":"error","error":"Database write failed"}\n'])),
         /Database write failed/,

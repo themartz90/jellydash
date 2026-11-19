@@ -15,6 +15,9 @@ final class SabnzbdActivityTest extends TestCase
     /** @var array<string,mixed> */
     private array $queue;
     private bool $historyFails = false;
+    private bool $processingTooLarge = false;
+    /** @var list<array<string,mixed>>|null */
+    private ?array $processingRows = null;
     /** @var list<array<string,mixed>> */
     private array $historyRows = [];
     private SabnzbdProvider $provider;
@@ -31,9 +34,13 @@ final class SabnzbdActivityTest extends TestCase
                     'noofslots' => count($this->queue['slots']),
                 ]], JSON_THROW_ON_ERROR));
             }
+            if (isset($query['status']) && $this->processingTooLarge) {
+                throw new \Mk\Framework\Downloads\ProviderException('response_too_large');
+            }
+            $rows = isset($query['status']) ? ($this->processingRows ?? $this->historyRows) : $this->historyRows;
             return $this->historyFails ? new HttpResponse(503, '{}')
                 : new HttpResponse(200, json_encode(['history' => [
-                    'slots' => $this->historyRows, 'noofslots' => count($this->historyRows),
+                    'slots' => $rows, 'noofslots' => count($rows),
                 ]], JSON_THROW_ON_ERROR));
         };
         $transport = new class ($respond) implements DownloaderTransport {
@@ -174,6 +181,33 @@ final class SabnzbdActivityTest extends TestCase
         $this->queue['slots'] = [];
         $this->historyRows = [['nzo_id' => 'par2', 'name' => 'Repair data', 'status' => 'Fetching']];
         self::assertSame(['unknown'], array_column($this->collect()->items, 'state'));
+    }
+
+    public function testProcessingRowCapDoesNotBlockRecentHistoryButTransportOverflowIsReported(): void
+    {
+        $this->queue['slots'] = [];
+        $this->historyRows = [['nzo_id' => 'recent', 'name' => 'Recent', 'status' => 'Completed', 'completed' => time() - 2]];
+        $this->processingRows = array_map(static fn (int $id): array => [
+            'nzo_id' => 'processing-' . $id, 'name' => 'Processing', 'status' => 'Repairing',
+        ], range(1, 1000));
+        $full = $this->collect();
+        self::assertTrue($full->complete);
+        self::assertCount(1000, $full->items);
+        self::assertSame(['recent'], array_column($full->completions, 'source_id'));
+
+        $this->processingRows[] = ['nzo_id' => 'extra', 'name' => 'Extra processing', 'status' => 'Repairing'];
+        $this->queue['slots'] = [$this->job('queued-download', '90')];
+        $partial = $this->collect();
+        self::assertFalse($partial->complete);
+        self::assertNull($partial->history['error']);
+        self::assertSame('queued-download', $partial->items[0]['source_id']);
+        self::assertSame(['recent'], array_column($partial->completions, 'source_id'));
+
+        $this->processingTooLarge = true;
+        $overflow = $this->collect();
+        self::assertFalse($overflow->complete);
+        self::assertSame('response_too_large', $overflow->history['error']);
+        self::assertSame(['queued-download'], array_column($overflow->items, 'source_id'));
     }
 
     public function testRemovedJobsAreDroppedAndQueueSamplesFitTheStorageBound(): void

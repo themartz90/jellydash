@@ -84,6 +84,26 @@ final class JellyfinClientTest extends TestCase
         }
     }
 
+    public function testArtworkRequestsSupportedRenditionWhenServerReturnsAvif(): void
+    {
+        $fetcher = new \Mk\Framework\Jellyfin\ArtworkFetcher($this->startHttpFixture('avif-jpg'), 'fixture-token');
+        $image = $fetcher->fetch('avif-poster', 'original-tag');
+        self::assertSame('image/jpeg', $image['contentType']);
+        self::assertSame(16, getimagesizefromstring($image['body'])[0]);
+        $requests = file($this->httpDirectory . '/image-requests', FILE_IGNORE_NEW_LINES);
+        self::assertCount(2, $requests);
+        self::assertStringEndsWith('&tag=original-tag HTTP/1.1', $requests[0]);
+        self::assertStringEndsWith('&tag=original-tag&format=Jpg HTTP/1.1', $requests[1]);
+    }
+
+    public function testArtworkNamesUnchangedAvifAsUnsupported(): void
+    {
+        $fetcher = new \Mk\Framework\Jellyfin\ArtworkFetcher($this->startHttpFixture('avif-unchanged'), 'fixture-token');
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('unsupported_format');
+        $fetcher->fetch('avif-poster');
+    }
+
     private function startHttpFixture(string $mode): string
     {
         $this->httpProcess = proc_open([PHP_BINARY, ROOT_DIR . '/tests/fixtures/artwork-metadata-http.php', $this->httpDirectory, $mode], [

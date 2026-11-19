@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Mk\Framework\Health;
 
+use Mk\Framework\Jellyfin\HistoryPollDeferredException;
+use Mk\Framework\Jellyfin\HistoryWriteBusyException;
 use Mk\Framework\Log;
 
 final class WorkerMonitor
@@ -22,6 +24,18 @@ final class WorkerMonitor
         $token = $this->safeStart($component, $source);
         try {
             $result = $worker();
+        } catch (HistoryWriteBusyException $error) {
+            if ($component === 'history' && $token !== null) {
+                try {
+                    $reason = $error instanceof HistoryPollDeferredException ? $error->reason : 'history_busy';
+                    $this->repository?->deferHistory($token, $reason, $source);
+                } catch (\Throwable $statusError) {
+                    $this->safeLog($statusError);
+                }
+            } else {
+                $this->safeFail($component, $token, $this->errorCode($error), $source);
+            }
+            throw $error;
         } catch (\Throwable $error) {
             $this->safeFail($component, $token, $this->errorCode($error), $source);
             throw $error;

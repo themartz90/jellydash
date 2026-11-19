@@ -27,7 +27,27 @@ final class ArtworkFetcher
         if ($tag !== null && preg_match('/^[A-Za-z0-9._-]{1,255}$/D', $tag)) {
             $query .= '&tag=' . rawurlencode($tag);
         }
-        $handle = curl_init($base . '/Items/' . rawurlencode($id) . '/Images/Primary?' . $query);
+        $url = $base . '/Items/' . rawurlencode($id) . '/Images/Primary?' . $query;
+        $started = hrtime(true);
+        [$body, $type] = $this->fetchRendition($url, $token, 5000);
+        if (ImageContentType::normalize($type) === 'image/avif') {
+            $remaining = 5000 - (int) ((hrtime(true) - $started) / 1_000_000);
+            if ($remaining <= 0) {
+                throw new \RuntimeException('request_failed');
+            }
+            [$body, $type] = $this->fetchRendition($url . '&format=Jpg', $token, $remaining, true);
+            if (ImageContentType::normalize($type) === 'image/avif') {
+                throw new \RuntimeException('unsupported_format');
+            }
+        }
+
+        return self::validate($body, $type);
+    }
+
+    /** @return array{string, string} */
+    private function fetchRendition(string $url, string $token, int $timeoutMs, bool $converted = false): array
+    {
+        $handle = curl_init($url);
         if ($handle === false) {
             throw new \RuntimeException('request_failed');
         }
@@ -36,7 +56,7 @@ final class ArtworkFetcher
         $verify = Config::bool('JELLYFIN_VERIFY_SSL', true);
         curl_setopt_array($handle, [
             CURLOPT_HTTPHEADER => ['Authorization: MediaBrowser Token="' . $token . '"'],
-            CURLOPT_CONNECTTIMEOUT => 2, CURLOPT_TIMEOUT => 5, CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_CONNECTTIMEOUT_MS => min(2000, $timeoutMs), CURLOPT_TIMEOUT_MS => $timeoutMs, CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_SSL_VERIFYPEER => $verify, CURLOPT_SSL_VERIFYHOST => $verify ? 2 : 0,
             CURLOPT_WRITEFUNCTION => static function ($curl, string $chunk) use (&$body, &$tooLarge): int {
                 if (strlen($body) + strlen($chunk) > ArtworkRepository::MAX_IMAGE_BYTES) {
@@ -57,6 +77,9 @@ final class ArtworkFetcher
         if (in_array($status, [401, 403], true)) {
             throw new \RuntimeException('authentication');
         }
+        if ($converted && in_array($status, [400, 404, 415, 422, 501], true)) {
+            throw new \RuntimeException('unsupported_format');
+        }
         if ($status === 404) {
             throw new \RuntimeException('missing_image');
         }
@@ -66,7 +89,7 @@ final class ArtworkFetcher
         if ($success === false || $status !== 200) {
             throw new \RuntimeException('request_failed');
         }
-        return self::validate($body, $type);
+        return [$body, $type];
     }
 
     /** @return array{body: string, contentType: string} */

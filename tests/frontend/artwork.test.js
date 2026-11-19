@@ -256,12 +256,95 @@ async function groupLabelsDescribeMediaItemsAndBoundPrefilledSearch() {
     assert.match(ui.nodes.get('notices').textContent, /storage limit prevented new saves\. existing saved posters are kept/i);
 }
 
+async function statusPollRetainsSearchForTheSameMembershipAcrossReordering() {
+    const first = status().groups[0];
+    const second = { ...first, title: 'Other', ids: ['other'], count: 1, fingerprint: 'other' };
+    let groups = [first, second];
+    const ui = harness((request) => {
+        if (request.url.includes('search=')) {
+            return Promise.resolve(response({ candidates: [{ id: 'candidate', title: 'Found title' }] }));
+        }
+        return Promise.resolve(response(status({ groups })));
+    });
+    const card = (index) => ui.nodes.get('groups').children[index];
+    const form = (index) => card(index).children.find((child) => child.tagName === 'FORM');
+    const input = (index) => form(index).querySelector('input[name="search"]');
+    const poll = async () => {
+        [...ui.timers.values()].find(({ delay }) => delay === 30000).callback();
+        await settle();
+    };
+    await settle();
+    input(0).value = 'Edited title';
+    input(1).value = 'Unsubmitted title';
+    ui.submit(form(0));
+    await settle();
+    groups = [second, first];
+    await poll();
+    assert.equal(input(0).value, 'Unsubmitted title');
+    assert.equal(input(1).value, 'Edited title');
+    assert.match(card(1).textContent, /Found title/);
+    ui.click(ui.button('link'));
+    assert.deepEqual(ui.requests.at(-1).body, {
+        action: 'link', ids: first.ids, fingerprint: first.fingerprint, targetId: 'candidate',
+    });
+    await settle();
+    ui.document.activeElement = null;
+    groups = [second, { ...first, ids: ['new-member'], count: 1, fingerprint: 'changed' }];
+    await poll();
+    assert.equal(input(1).value, first.title);
+    assert.equal(ui.button('link'), undefined);
+}
+
+async function inFlightSearchSurvivesARefreshAndCannotCrossSourceChanges() {
+    const firstSearch = deferred();
+    const secondSearch = deferred();
+    let searches = 0;
+    let identity = 'source-one';
+    const ui = harness((request) => {
+        if (request.url.includes('search=')) return (++searches === 1 ? firstSearch : secondSearch).promise;
+        return Promise.resolve(response(status({ source: { ...status().source, identity } })));
+    });
+    const input = () => ui.panel.querySelectorAll('input')[0];
+    await settle();
+    input().focus();
+    const focused = input();
+    const timer = () => [...ui.timers.values()].find(({ delay }) => delay === 30000);
+    timer().callback();
+    await settle();
+    assert.equal(ui.document.activeElement, focused);
+    assert.equal(ui.requests.length, 1);
+
+    input().value = 'First search';
+    ui.submit(input().closest('form[data-artwork-search]'));
+    const firstSignal = ui.requests.at(-1).options.signal;
+    ui.click(ui.button('refresh'));
+    await settle();
+    assert.equal(firstSignal.aborted, false);
+    firstSearch.resolve(response({ candidates: [{ id: 'first', title: 'First choice' }] }));
+    await settle();
+    assert.match(ui.nodes.get('groups').textContent, /First choice/);
+
+    input().value = 'Second search';
+    ui.submit(input().closest('form[data-artwork-search]'));
+    const secondSignal = ui.requests.at(-1).options.signal;
+    identity = 'source-two';
+    ui.click(ui.button('refresh'));
+    await settle();
+    assert.equal(secondSignal.aborted, true);
+    secondSearch.resolve(response({ candidates: [{ id: 'stale', title: 'Stale choice' }] }));
+    await settle();
+    assert.equal(input().value, status().groups[0].title);
+    assert.equal(ui.button('link'), undefined);
+}
+
 (async () => {
     await searchAndLinkSendScopedPayloadWithCsrf();
     await staleSearchRepliesCannotReplaceTheCurrentCandidates();
     await actionErrorsAreShownAndControlsRecover();
     await submittingSearchDuringMutationPreventsNavigationAndDoesNotFetch();
     await groupLabelsDescribeMediaItemsAndBoundPrefilledSearch();
+    await statusPollRetainsSearchForTheSameMembershipAcrossReordering();
+    await inFlightSearchSurvivesARefreshAndCannotCrossSourceChanges();
     process.stdout.write('Artwork frontend behavior tests passed.\n');
 })().catch((error) => {
     process.stderr.write(error.stack + '\n');

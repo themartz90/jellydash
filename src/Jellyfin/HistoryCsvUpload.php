@@ -14,12 +14,12 @@ final class HistoryCsvUpload
         $file = $_FILES['jellydash_history'] ?? null;
         $error = is_array($file) ? (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE) : UPLOAD_ERR_NO_FILE;
         if ($error !== UPLOAD_ERR_OK || !is_array($file) || !is_uploaded_file((string) ($file['tmp_name'] ?? ''))) {
-            throw new \RuntimeException('Choose a Jellydash History CSV first.');
+            throw new ImportValidationException('Choose a Jellydash History CSV first.');
         }
 
         $size = (int) ($file['size'] ?? 0);
         if ($size <= 0 || $size > self::MAX_BYTES) {
-            throw new \RuntimeException('The CSV is empty or larger than 20 MB.');
+            throw new ImportValidationException('The CSV is empty or larger than 20 MB.');
         }
 
         return (string) $file['tmp_name'];

@@ -84,10 +84,11 @@ final class ExternalPosterCollector
                         $fingerprint = $this->art->externalAssetFingerprint((string) $job['asset_key']);
                         $candidate = $this->provider->byId((string) $job['kind'], (string) $job['tmdb_id']);
                         $image = ($this->fetcher)($candidate['path']);
-                        if ($this->art->renewExternal($job, $candidate, $image, $fingerprint, $lease, $now, ArtworkRepository::budget())) {
+                        $renewal = $this->art->renewExternal($job, $candidate, $image, $fingerprint, $lease, $now, ArtworkRepository::budget());
+                        if ($renewal === 'saved') {
                             ++$result['saved'];
                         } else {
-                            $this->art->retryExternal($job, 'capacity', $lease, $now, 3600);
+                            $this->art->retryExternal($job, $renewal === 'capacity' ? 'capacity' : null, $lease, $now, 3600);
                         }
                         continue;
                     }

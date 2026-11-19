@@ -126,7 +126,7 @@ final class ExternalPosterExpiryTest extends TestCase
         self::assertNotNull($lease);
         $freshImage = $this->image('renewed body');
         $freshCandidate = $this->candidate('101', 'renewed.jpg', 'Fresh title');
-        self::assertTrue($this->art->renewExternal(
+        self::assertSame('saved', $this->art->renewExternal(
             $oldJob,
             $freshCandidate,
             $freshImage,
@@ -157,7 +157,7 @@ final class ExternalPosterExpiryTest extends TestCase
         $lease = $this->art->claim(time());
         self::assertNotNull($lease);
 
-        self::assertFalse($this->art->renewExternal(
+        self::assertSame('deferred', $this->art->renewExternal(
             $job,
             $this->candidate('999', 'wrong.jpg'),
             $this->image('bad renewal'),
@@ -165,7 +165,13 @@ final class ExternalPosterExpiryTest extends TestCase
             $lease,
             time()
         ));
+        self::assertSame('capacity', $this->art->renewExternal(
+            $job, $this->candidate(), $this->image('new body'),
+            $this->art->externalAssetFingerprint($key), $lease, time(), 1
+        ));
         $this->art->release($lease);
+        $this->art->retryExternal($job, 'capacity', $lease, time(), 10);
+        self::assertNull($this->art->externalBinding('movie-stale')['last_error']);
         self::assertSame($deadline, (int) Container::db()->getDibi()->select('expires_at')->from('artwork_external_assets')
             ->where('source_key = %s AND asset_key = %s', $this->art->scope, $key)->fetchSingle());
 
@@ -176,7 +182,7 @@ final class ExternalPosterExpiryTest extends TestCase
             ->where('source_key = %s AND asset_key = %s', $this->art->scope, $key)->execute();
         $lease = $this->art->claim(time());
         self::assertNotNull($lease);
-        self::assertFalse($this->art->renewExternal(
+        self::assertSame('deferred', $this->art->renewExternal(
             $job,
             $this->candidate(),
             $this->image('expired renewal'),

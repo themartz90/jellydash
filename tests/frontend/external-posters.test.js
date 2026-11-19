@@ -185,6 +185,77 @@ async function settle() {
     for (let index = 0; index < 8; index += 1) await new Promise((resolve) => setImmediate(resolve));
 }
 
+async function malformedStatusIsVisibleAndPollingRecoversUntilSessionEnds() {
+    const replies = [
+        response(null), response(status()), response({ enabled: true }),
+        response(status({ review: [] })), response({}, 403),
+    ];
+    const ui = harness(() => Promise.resolve(replies.shift()));
+    await settle();
+    assert.match(ui.fixed.get('error').textContent, /incomplete response/);
+    ui.poll();
+    await settle();
+    assert.equal(ui.fixed.get('error').hidden, true);
+    const review = ui.fixed.get('review').textContent;
+    ui.poll();
+    await settle();
+    assert.equal(ui.fixed.get('review').textContent, review);
+    assert.equal(ui.fixed.get('error').hidden, false);
+    ui.document.hidden = true;
+    ui.document.listeners.visibilitychange();
+    ui.document.hidden = false;
+    ui.document.listeners.visibilitychange();
+    ui.poll();
+    await settle();
+    assert.equal(ui.fixed.get('error').hidden, true);
+    ui.poll();
+    await settle();
+    ui.window.listeners.pagehide();
+    ui.window.listeners.pageshow({ persisted: true });
+    ui.document.listeners.visibilitychange();
+    assert.equal(ui.requests.length, 5);
+    assert.equal(ui.timers.size, 0);
+}
+
+async function malformedStatusEntriesKeepAllPartsOfTheLastUsableStatus() {
+    const good = status({
+        jobs: [{ ids: ['movie-1'], fingerprint: 'job-fp', title: 'Saved match', state: 'saved' }],
+        assets: [{ key: 'poster-1', fingerprint: 'asset-fp', title: 'Saved asset', bodySize: 1000, refCount: 1 }],
+    });
+    for (const overrides of [
+        { source: [] },
+        { review: [null] },
+        { review: [group({ items: [null] })] },
+        { review: [group({ ids: { length: 1 } })] },
+        { jobs: [null] },
+        { jobs: [{ ...good.jobs[0], state: 'suppressed', ids: null }] },
+        { assets: [false] },
+        { assets: [{ ...good.assets[0], title: { toString: null } }] },
+    ]) {
+        const invalid = status({ ...good, enabled: false, page: 2, pages: 2, ...overrides });
+        const replies = [invalid, good, invalid, status({ review: [] })];
+        const ui = harness(() => Promise.resolve(response(replies.shift())));
+        await settle();
+        assert.match(ui.fixed.get('error').textContent, /incomplete response/);
+        ui.poll();
+        await settle();
+        assert.equal(ui.fixed.get('error').hidden, true);
+        const sections = ['review', 'jobs', 'assets'].map((key) => ui.fixed.get(key));
+        const rendered = sections.map((section) => section.children[0]);
+        assert.ok(rendered.every(Boolean));
+        ui.poll();
+        await settle();
+        assert.match(ui.fixed.get('error').textContent, /incomplete response/);
+        assert.equal(ui.fixed.get('enabled').checked, true);
+        sections.forEach((section, index) => assert.equal(section.children[0], rendered[index]));
+        ui.poll();
+        await settle();
+        assert.match(ui.requests.at(-1).url, /\?page=1$/);
+        assert.equal(ui.fixed.get('error').hidden, true);
+        assert.ok(sections.every((section) => section.children.length === 0));
+    }
+}
+
 async function searchAndSelectAreExplicitScopedAndStartPending() {
     let searchCount = 0;
     let selected = false;
@@ -386,7 +457,7 @@ async function automaticSuggestionsAreLocalScopedAndUnselected() {
         if (request.body && request.body.action === 'select') {
             assert.deepEqual(request.body.ids, ['episode-1']);
             selected = true;
-            return Promise.resolve(response(status({ review: [], noticeCount: 0, jobs: [{ ids: ['episode-1'], title: '進撃の巨人', selectedTitle: '進撃の巨人', state: 'pending' }] })));
+            return Promise.resolve(response(status({ review: [], noticeCount: 0, jobs: [{ ids: ['episode-1'], fingerprint: 'fingerprint-1', title: '進撃の巨人', selectedTitle: '進撃の巨人', state: 'pending' }] })));
         }
         return Promise.resolve(response(status({ review: [group({ discovery: { status: 'ready', count: 1 } })] })));
     });
@@ -431,6 +502,8 @@ async function nativeQueriesPassThroughAndManualEntriesDoNotPromiseAutomaticWork
 (async () => {
     await searchAndSelectAreExplicitScopedAndStartPending();
     await staleSearchRepliesDoNotReplaceNewQueryResults();
+    await malformedStatusIsVisibleAndPollingRecoversUntilSessionEnds();
+    await malformedStatusEntriesKeepAllPartsOfTheLastUsableStatus();
     await aSingleKnownHistoryItemStartsSelected();
     await snoozeKeepsTheReviewGroupVisible();
     await rejectedConfigurationRestoresThePreviousToggle();

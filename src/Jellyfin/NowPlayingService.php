@@ -97,13 +97,25 @@ final class NowPlayingService
         $client = $this->client ?? new JellyfinClient();
         $mapper = $this->mapper ?? new JellyfinSessionMapper($client->baseUrl());
         $history = $this->history ?? new PlayHistoryRepository();
-        $observation = $this->observe($client, $mapper, $history, false);
+        try {
+            $observation = $this->observe($client, $mapper, $history, false);
+        } catch (HistoryWriteBusyException $error) {
+            throw new HistoryPollDeferredException(HistoryPollDeferredException::CAPTURE, $error);
+        }
         $sessions = $observation['sessions'];
         $this->captureMovieIdentities($sessions, $client);
         /** @var array<int, array<string, mixed>> $streams */
         $streams = $observation['mapped']['streams'];
-        $history->drainSnapshots(fn (array $pending): array => $this->enrichCaptured($pending, $client, $history));
-        $history->themePlaybackExclusions()->classifyHistoryBatch($client);
+        try {
+            $history->drainSnapshots(fn (array $pending): array => $this->enrichCaptured($pending, $client, $history));
+        } catch (HistoryWriteBusyException $error) {
+            throw new HistoryPollDeferredException(HistoryPollDeferredException::DRAIN, $error);
+        }
+        try {
+            $history->themePlaybackExclusions()->classifyHistoryBatch($client);
+        } catch (HistoryWriteBusyException $error) {
+            throw new HistoryPollDeferredException(HistoryPollDeferredException::CLASSIFICATION, $error);
+        }
 
         return count($streams);
     }

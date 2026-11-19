@@ -6,6 +6,7 @@ namespace Mk\Framework\Health;
 
 use Mk\Framework\Config;
 use Mk\Framework\Downloads\Feature;
+use Mk\Framework\Jellyfin\HistoryPollDeferredException;
 use Mk\Framework\Notifications\DiscordChannel;
 use Mk\Framework\Notifications\GotifyChannel;
 use Mk\Framework\Notifications\NotificationEndpoint;
@@ -243,6 +244,14 @@ final class StatusService
         } elseif ($finished !== null && $now - $finished > $delayAfter) {
             $state = 'delayed';
             $message = 'No recent background check. Check that the worker is running on schedule.';
+        } elseif (($row['status'] ?? null) === 'deferred') {
+            $state = 'delayed';
+            $message = match ($row['error_code'] ?? null) {
+                HistoryPollDeferredException::CAPTURE => 'History was busy before this check could capture playback. The next check will try again.',
+                HistoryPollDeferredException::DRAIN => 'Playback was captured and is waiting to be recorded in History.',
+                HistoryPollDeferredException::CLASSIFICATION => 'Playback was recorded in History. Theme classification was deferred.',
+                default => 'History was busy during the last check. The next check will try again.',
+            };
         } elseif (($row['status'] ?? null) === 'success' && $finished !== null && $success !== null) {
             $state = 'healthy';
             $message = $id === 'history' ? 'Jellyfin was reached and collection completed, including when nothing was playing.' : 'The last background check completed successfully.';

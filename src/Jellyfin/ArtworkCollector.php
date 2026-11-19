@@ -82,7 +82,7 @@ final class ArtworkCollector
                     }
                 } catch (\Throwable $error) {
                     $reason = self::reason($error);
-                    $delay = in_array($reason, ['missing_item', 'missing_image', 'metadata'], true)
+                    $delay = in_array($reason, ['missing_item', 'missing_image', 'metadata', 'unsupported_format'], true)
                         ? 86400 : min(21600, 60 * (2 ** min(8, (int) $job['attempts'])));
                     $this->repository->retry($job, $reason, $lease, $now, $delay);
                     if (in_array($reason, ['authentication', 'throttled', 'decoder_missing'], true)) {
@@ -233,6 +233,10 @@ final class ArtworkCollector
             return false;
         }
         $job = $current;
+        if ($tag !== null && $current['last_error'] === 'unsupported_format') {
+            $this->repository->retry($current, 'unsupported_format', $lease, $now, 86400);
+            return false;
+        }
         $old = $this->repository->image((string) $job['poster_id']);
         if ($tag !== null && $old !== null && $tag === $old['tag']) {
             $this->repository->retry($current, null, $lease, $now, 86400);
@@ -283,6 +287,6 @@ final class ArtworkCollector
             return 'missing_item';
         }
         return in_array($error->getMessage(), ['configuration', 'decoder_missing', 'authentication', 'throttled', 'missing_item',
-            'missing_image', 'metadata', 'server_changed', 'oversized', 'invalid_image'], true) ? $error->getMessage() : 'request_failed';
+            'missing_image', 'metadata', 'server_changed', 'oversized', 'invalid_image', 'unsupported_format'], true) ? $error->getMessage() : 'request_failed';
     }
 }

@@ -855,10 +855,12 @@ final class LibraryOverviewService
             return $minutes . ' minute' . ($minutes === 1 ? '' : 's') . ' ago';
         }
         if ($diff < 86400) {
-            return intdiv($diff, 3600) . ' hours ago';
+            $hours = intdiv($diff, 3600);
+            return $hours . ($hours === 1 ? ' hour ago' : ' hours ago');
         }
 
-        return intdiv($diff, 86400) . ' days ago';
+        $days = intdiv($diff, 86400);
+        return $days . ($days === 1 ? ' day ago' : ' days ago');
     }
 
     private function alpha(string $hex, float $alpha): string

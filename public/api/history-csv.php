@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 use Dotenv\Dotenv;
 use Mk\Framework\Authorization;
-use Mk\Framework\Config;
 use Mk\Framework\Csrf;
+use Mk\Framework\Jellyfin\ImportFailure;
+use Mk\Framework\Jellyfin\ImportValidationException;
 use Mk\Framework\Jellyfin\HistoryCsvImporter;
 use Mk\Framework\Jellyfin\HistoryCsvUpload;
-use Mk\Framework\Log;
 
 define('ROOT_DIR', dirname(__DIR__, 2));
 
@@ -62,26 +62,14 @@ try {
     }
 
     redirectImport((new HistoryCsvImporter())->importFile(HistoryCsvUpload::path()));
-} catch (\JsonException $e) {
-    header('Content-Type: application/json; charset=utf-8');
-    http_response_code(500);
-    echo json_encode([
-        'error' => 'Could not encode the import preview.',
-        'detail' => Config::isDebug() ? $e->getMessage() : null,
-    ]);
 } catch (\Throwable $e) {
-    Log::logException($e);
+    $message = ImportFailure::message($e);
     if ($commit && !$wantsStream) {
-        redirectImportError($e->getMessage());
+        redirectImportError($message);
     }
-    if (!$commit) {
-        header('Content-Type: application/json; charset=utf-8');
-        http_response_code(400);
-        echo json_encode([
-            'error' => mb_substr($e->getMessage(), 0, 180),
-            'detail' => Config::isDebug() ? $e->getMessage() : null,
-        ]);
-    }
+    header('Content-Type: application/json; charset=utf-8');
+    http_response_code($e instanceof ImportValidationException ? 400 : 500);
+    echo json_encode(['error' => $message]);
 }
 
 function streamImport(): void
@@ -101,10 +89,9 @@ function streamImport(): void
     try {
         $result = (new HistoryCsvImporter())->importFile(HistoryCsvUpload::path(), $emit);
     } catch (\Throwable $e) {
-        Log::logException($e);
         $emit([
             'phase' => 'error',
-            'error' => mb_substr($e->getMessage(), 0, 180),
+            'error' => ImportFailure::message($e),
             'processed' => 0,
             'total' => 0,
             'inserted' => 0,

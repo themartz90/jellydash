@@ -197,6 +197,40 @@ final class ArtworkCollectorRegressionTest extends TestCase
         self::assertContains('refresh-due', array_column($jobs, 'poster_id'));
     }
 
+    public function testUnsupportedArtworkWaitsForChangedTagOrExplicitRetryAndRechecksTaglessArt(): void
+    {
+        $this->repository->anchor('server-art-regression');
+        $this->repository->cursor(PHP_INT_MAX);
+        $this->repository->enqueue('tagged-format', 'Series', 'first-tag', 100);
+        $this->repository->enqueue('tagless-format', 'Series', null, 100);
+        $this->metadata['tagged-format'] = ['Id' => 'tagged-format', 'Type' => 'Series', 'ImageTags' => ['Primary' => 'first-tag']];
+        $this->metadata['tagless-format'] = ['Id' => 'tagless-format', 'Type' => 'Series'];
+        $requests = [];
+        $collector = $this->collector(fetcher: function (string $id, ?string $tag) use (&$requests): array {
+            $requests[] = [$id, $tag];
+            if ($tag !== 'new-tag') {
+                throw new RuntimeException('unsupported_format');
+            }
+            return ['body' => $this->gif(), 'contentType' => 'image/gif'];
+        });
+        $collector->runBatch(100);
+        self::assertSame('unsupported_format', $this->repository->poster('tagged-format')['last_error']);
+        self::assertSame('unsupported_format', $this->repository->poster('tagless-format')['last_error']);
+        self::assertCount(2, $requests);
+        $collector->runBatch(86_499);
+        self::assertCount(2, $requests);
+        $collector->runBatch(86_500);
+        self::assertSame(['tagless-format', null], $requests[2]);
+        self::assertCount(3, $requests);
+        $this->repository->retryAll();
+        $collector->runBatch(86_501);
+        self::assertContains(['tagged-format', 'first-tag'], array_slice($requests, 3));
+        $this->metadata['tagged-format']['ImageTags']['Primary'] = 'new-tag';
+        $this->repository->enqueue('tagged-format', 'Series', 'new-tag', (int) (microtime(true) * 1_000_000) + 1);
+        $collector->runBatch(86_502);
+        self::assertSame('new-tag', $this->repository->image('tagged-format')['tag']);
+    }
+
     /** @param (\Closure(string, ?string): array{body: string, contentType: string})|null $fetcher */
     private function collector(?\Closure $fetcher = null, ?MonitoringExclusions $exclusions = null): ArtworkCollector
     {

@@ -87,6 +87,54 @@ final class LoginThrottleTest extends TestCase
         self::assertSame(1, (int) $this->dibi->select('COUNT(*)')->from('login_attempts')->fetchSingle());
     }
 
+    public function testAdmissionAccountsForPendingAndFinishedAttemptsAcrossConnections(): void
+    {
+        $sqlite = \Mk\Framework\DatabasePlatform::isSqliteDriver(DATABASE_DRIVER_DIBI);
+        $firstDb = $sqlite ? Database::sqlite($this->path) : new Database();
+        $secondDb = $sqlite ? Database::sqlite($this->path) : new Database();
+        $first = new LoginThrottle($firstDb, fn (): int => $this->now);
+        $second = new LoginThrottle($secondDb, fn (): int => $this->now);
+        $ip = '2001:db8::' . bin2hex(random_bytes(2)) . ':' . bin2hex(random_bytes(2));
+        $otherIp = '2001:db8:1::' . bin2hex(random_bytes(2));
+        $tokens = [];
+        for ($i = 0; $i < 5; ++$i) {
+            $tokens[] = $first->admit('viewer', $ip);
+            self::assertNotNull($tokens[$i]);
+        }
+        self::assertNull($second->admit('viewer', $ip));
+        self::assertFalse($second->finish('different-user', $ip, $tokens[0], true));
+        for ($i = 0; $i < 24; ++$i) {
+            $user = 'other-' . $i;
+            $token = $second->admit($user, $ip);
+            self::assertNotNull($token);
+            self::assertTrue($second->finish($user, $ip, $token, false));
+        }
+        $last = $second->admit('last', $ip);
+        self::assertNotNull($last);
+        self::assertNull($first->admit('next', $ip));
+        self::assertTrue($second->finish('viewer', $ip, $tokens[0], true));
+        self::assertFalse($second->finish('viewer', $ip, $tokens[0], false));
+        $replacement = $second->admit('viewer', $ip);
+        self::assertNotNull($replacement);
+        self::assertNull($first->admit('next', $ip));
+        foreach ([...array_slice($tokens, 1), $replacement] as $token) {
+            self::assertTrue($second->finish('viewer', $ip, $token, false));
+        }
+        self::assertNull($first->admit('viewer', $ip));
+        self::assertFalse($first->blocked('next', $ip));
+        self::assertTrue($first->finish('last', $ip, $last, false));
+        self::assertTrue($second->blocked('next', $ip));
+
+        $abandoned = $first->admit('viewer', $otherIp);
+        self::assertNotNull($abandoned);
+        $this->now += 900;
+        self::assertFalse($second->finish('viewer', $otherIp, $abandoned, false));
+        self::assertNotNull($second->admit('viewer', $otherIp));
+        self::assertNotNull($first->admit('viewer', $ip));
+        $firstDb->getDibi()->disconnect();
+        $secondDb->getDibi()->disconnect();
+    }
+
     /** @return array<string, mixed> */
     private function row(string $identifier): array
     {

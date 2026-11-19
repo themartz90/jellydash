@@ -44,6 +44,10 @@ function harness(onFetch) {
     const timers = new Map();
     let nextTimer = 1;
     const requests = [];
+    const window = {
+        setTimeout(callback, delay) { const id = nextTimer++; timers.set(id, { callback, delay }); return id; },
+        clearTimeout(id) { timers.delete(id); },
+    };
     vm.runInNewContext(script, {
         document: {
             querySelector(selector) {
@@ -53,13 +57,10 @@ function harness(onFetch) {
                 return null;
             },
         },
-        window: {
-            setTimeout(callback) { const id = nextTimer++; timers.set(id, callback); return id; },
-            clearTimeout(id) { timers.delete(id); },
-        },
+        window, AbortController,
         fetch: (url, options) => {
             requests.push(options.method);
-            return onFetch(options.method, requests.length);
+            return onFetch(options.method, requests.length, options.signal);
         },
         Promise,
         Number,
@@ -69,15 +70,44 @@ function harness(onFetch) {
     }, { filename: 'public/assets/js/history-library-upgrade.js' });
 
     return {
-        dialog, reopen, requests,
-        get timerCount() { return timers.size; },
+        dialog, reopen, requests, ready: window.jellydashUpgradeReady, child,
+        get timerCount() { return [...timers.values()].filter(({ delay }) => delay < 15000).length; },
         hide() { child('[data-history-library-upgrade-hide]').click(); },
-        tick() {
-            const callbacks = Array.from(timers.values());
-            timers.clear();
-            callbacks.forEach((callback) => callback());
+        tick(timeout = false) {
+            for (const [id, { callback, delay }] of [...timers.entries()]) {
+                if ((delay === 15000) !== timeout) continue;
+                timers.delete(id);
+                callback();
+            }
         },
     };
+}
+
+async function testHungRequestsAreBoundedAndRetryChecksStatusBeforeWriting() {
+    const hang = (signal) => new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+    const stalledStatus = harness((method, count, signal) => hang(signal));
+    stalledStatus.tick(true);
+    await stalledStatus.ready;
+    assert.equal(stalledStatus.dialog.open, false);
+
+    const ui = harness((method, count, signal) => {
+        if (count === 1) return Promise.resolve(response(pending));
+        if (method === 'POST') return hang(signal);
+        return Promise.resolve(response({ ...running, required: false, state: 'complete' }));
+    });
+    await settle();
+    ui.tick();
+    assert.deepEqual(ui.requests, ['GET', 'POST']);
+    ui.tick(true);
+    await settle();
+    assert.match(ui.child('[data-history-library-upgrade-summary]').textContent, /timed out/);
+    ui.child('[data-history-library-upgrade-retry]').click();
+    await settle();
+    assert.deepEqual(ui.requests, ['GET', 'POST', 'GET']);
+    assert.equal(ui.child('[data-history-library-upgrade-title]').textContent, 'History update complete');
+    assert.equal(ui.timerCount, 0);
 }
 
 function response(payload) {
@@ -150,6 +180,7 @@ async function testOverlappingOldResponseCannotStartAnotherLoopAfterReopen() {
 (async () => {
     await testHiddenDialogDoesNotContinuePostingAfterPendingResponse();
     await testOverlappingOldResponseCannotStartAnotherLoopAfterReopen();
+    await testHungRequestsAreBoundedAndRetryChecksStatusBeforeWriting();
     process.stdout.write('History upgrade state tests passed.\n');
 })().catch((error) => {
     console.error(error);

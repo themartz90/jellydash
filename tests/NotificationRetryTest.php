@@ -258,6 +258,53 @@ final class NotificationRetryTest extends TestCase
         self::assertTrue($logs->hasErrorRecords());
     }
 
+    public function testTestNotificationReportsAWebPushReadFailureAndRunsOtherChannels(): void
+    {
+        $subscriptions = new PushSubscriptionRepository($this->database);
+        $this->database->getDibi()->query('DROP TABLE push_subscriptions');
+        $logs = new TestHandler();
+        Container::set('logger', new Logger('test', [$logs]));
+        $transport = new CurrentDeviceRecordingTransport();
+        $success = new CountingSuccessChannel();
+        $failure = new CountingFailureChannel();
+        $dispatcher = new NotificationDispatcher(new WebPushSender($transport, 'public-key', 'private-key'),
+            $subscriptions, [$success, $failure]);
+
+        $result = $dispatcher->test(['title' => 'Test']);
+
+        self::assertSame('Web Push test could not finish. Check the application log for details.', $result['webpush']['error']);
+        self::assertSame([], $transport->subscriptions);
+        self::assertSame(['configured' => true, 'sent' => true], $result[$success->name()]);
+        self::assertSame(['configured' => true, 'sent' => false], $result[$failure->name()]);
+        self::assertTrue($logs->hasErrorRecords());
+    }
+
+    public function testWebPushRepositoryInitializationFailureIsReportedDuringTestDelivery(): void
+    {
+        $logs = new TestHandler();
+        Container::set('logger', new Logger('test', [$logs]));
+        $channel = new CountingSuccessChannel();
+        $transport = new CurrentDeviceRecordingTransport();
+        $dibi = $this->database->getDibi();
+        $listener = static function (\Dibi\Event $event): void {
+            if (preg_match('/CREATE TABLE IF NOT EXISTS .?push_subscriptions\b/i', (string) $event->sql)) {
+                throw new RuntimeException('Synthetic subscription initialization failure.');
+            }
+        };
+        $dibi->onEvent[] = $listener;
+        try {
+            $dispatcher = new NotificationDispatcher(new WebPushSender($transport, 'public-key', 'private-key'),
+                channels: [$channel]);
+            $result = $dispatcher->test(['title' => 'Test']);
+            self::assertArrayHasKey('error', $result['webpush']);
+            self::assertTrue($result[$channel->name()]['sent']);
+            self::assertSame([], $transport->subscriptions);
+            self::assertTrue($logs->hasError('Synthetic subscription initialization failure.'));
+        } finally {
+            array_pop($dibi->onEvent);
+        }
+    }
+
     public function testSelfHostedRequestDeliveryPreservesAggregateRetryContract(): void
     {
         $values = ['NTFY_URL' => 'http://ntfy.invalid', 'NTFY_TOPIC' => 'test', 'NTFY_TOKEN' => '', 'GOTIFY_URL' => 'http://gotify.invalid', 'GOTIFY_APP_TOKEN' => 'test-token'];

@@ -82,7 +82,7 @@ final class DownloadRepository
                 `source_id` varchar(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
                 `title` varchar(1024) NOT NULL,
                 `category` varchar(256) NOT NULL DEFAULT \'\',
-                `tags_json` text NOT NULL,
+                `tags_json` mediumtext NOT NULL,
                 `size_bytes` bigint DEFAULT NULL,
                 `status` varchar(16) NOT NULL DEFAULT \'completed\',
                 `completed_at` bigint DEFAULT NULL,
@@ -129,6 +129,17 @@ final class DownloadRepository
                 }
             }
         }
+        if (!$platform->isSqlite() && self::completionTagsNeedUpgrade($database)) {
+            try {
+                $database->getDibi()->query(
+                    'ALTER TABLE `download_completions` MODIFY COLUMN `tags_json` mediumtext NOT NULL'
+                );
+            } catch (\Dibi\Exception $e) {
+                if (self::completionTagsNeedUpgrade($database)) {
+                    throw $e;
+                }
+            }
+        }
         $database->getPlatform()->createSqliteIndex(
             'idx_download_completion_recent',
             'download_completions',
@@ -144,6 +155,16 @@ final class DownloadRepository
             . 'WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s',
             'download_completions', 'category',
         )->fetchSingle();
+    }
+
+    /** @phpstan-impure */
+    private static function completionTagsNeedUpgrade(Database $database): bool
+    {
+        return $database->getDibi()->query(
+            'SELECT DATA_TYPE FROM information_schema.COLUMNS '
+            . 'WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s',
+            'download_completions', 'tags_json',
+        )->fetchSingle() === 'text';
     }
 
     /** @return array<string,mixed>|null */

@@ -54,15 +54,80 @@ final class LoginThrottle
 
     public function failure(string $username, string $ip): void
     {
-        $this->increment(self::pairIdentifier($username, $ip), self::PAIR_MAX_ATTEMPTS);
-        $this->increment(self::sourceIdentifier($ip), self::SOURCE_MAX_ATTEMPTS);
-
-        if (random_int(1, 100) === 1) {
-            $this->pruneExpired();
-        }
+        $source = self::sourceIdentifier($ip);
+        $this->withSourceLock($source, function () use ($username, $ip, $source): void {
+            $this->increment(self::pairIdentifier($username, $ip), self::PAIR_MAX_ATTEMPTS);
+            $this->increment($source, self::SOURCE_MAX_ATTEMPTS);
+        });
     }
 
     public function clearPair(string $username, string $ip): void
+    {
+        $this->withSourceLock(self::sourceIdentifier($ip), fn () => $this->deletePair($username, $ip));
+    }
+
+    public function admit(string $username, string $ip): ?string
+    {
+        if (random_int(1, 100) === 1) {
+            $this->pruneExpired();
+            $expired = $this->dibi->select('token')->from('login_admissions')
+                ->where('expires_at <= %i', $this->now())->orderBy('expires_at')->limit(50)->fetchPairs(null, 'token');
+            if ($expired !== []) {
+                $this->dibi->delete('login_admissions')->where('token IN %in', array_values($expired))->execute();
+            }
+        }
+
+        $pair = self::pairIdentifier($username, $ip);
+        $source = self::sourceIdentifier($ip);
+
+        return $this->withSourceLock($source, function () use ($username, $ip, $pair, $source): ?string {
+            if ($this->blocked($username, $ip)) {
+                return null;
+            }
+
+            $now = $this->now();
+            $pending = $this->dibi->select('pair_key')->from('login_admissions')
+                ->where('source_key = %s AND expires_at > %i', $source, $now)->fetchPairs(null, 'pair_key');
+            $pairPending = count(array_keys($pending, $pair, true));
+            if ($this->recentFailures($pair, $now) + $pairPending >= self::PAIR_MAX_ATTEMPTS
+                || $this->recentFailures($source, $now) + count($pending) >= self::SOURCE_MAX_ATTEMPTS) {
+                return null;
+            }
+
+            $token = bin2hex(random_bytes(32));
+            $this->dibi->insert('login_admissions', [
+                'token' => $token, 'source_key' => $source, 'pair_key' => $pair, 'expires_at' => $now + self::WINDOW_SECONDS,
+            ])->execute();
+
+            return $token;
+        });
+    }
+
+    /** A neutral outcome releases admission without changing either failure count. */
+    public function finish(string $username, string $ip, string $token, ?bool $success): bool
+    {
+        $pair = self::pairIdentifier($username, $ip);
+        $source = self::sourceIdentifier($ip);
+
+        return $this->withSourceLock($source, function () use ($username, $ip, $token, $success, $pair, $source): bool {
+            $this->dibi->delete('login_admissions')
+                ->where('token = %s AND source_key = %s AND pair_key = %s AND expires_at > %i',
+                    $token, $source, $pair, $this->now())->execute();
+            if ($this->dibi->getAffectedRows() !== 1) {
+                return false;
+            }
+            if ($success === true) {
+                $this->deletePair($username, $ip);
+            } elseif ($success === false) {
+                $this->increment($pair, self::PAIR_MAX_ATTEMPTS);
+                $this->increment($source, self::SOURCE_MAX_ATTEMPTS);
+            }
+
+            return true;
+        });
+    }
+
+    private function deletePair(string $username, string $ip): void
     {
         $this->dibi->delete('login_attempts')->where('identifier IN %in', [
             self::pairIdentifier($username, $ip),
@@ -83,7 +148,10 @@ final class LoginThrottle
             return 0;
         }
 
-        $this->dibi->delete('login_attempts')->where('identifier IN %in', array_values($identifiers))->execute();
+        $this->dibi->delete('login_attempts')->where('identifier IN %in', array_values($identifiers))
+            ->where('updated_at < %s', $cutoff)
+            ->where('(locked_until IS NULL OR locked_until <= %s)', $now)
+            ->execute();
 
         return $this->dibi->getAffectedRows();
     }
@@ -101,6 +169,45 @@ final class LoginThrottle
     private static function legacyIdentifier(string $username, string $ip): string
     {
         return substr(strtolower(trim($username)) . '|' . trim($ip), 0, 190);
+    }
+
+    /**
+     * @template T
+     * @param \Closure(): T $operation
+     * @return T
+     */
+    private function withSourceLock(string $source, \Closure $operation): mixed
+    {
+        $sqlite = $this->database->getPlatform()->isSqlite();
+        if ($sqlite) {
+            $this->dibi->query('BEGIN IMMEDIATE');
+        } else {
+            $this->dibi->begin();
+        }
+        try {
+            // Serialize reservations and outcomes for this source. The password
+            // check takes place between these short transactions.
+            $this->dibi->query(
+                'INSERT INTO `login_attempts` (`identifier`, `updated_at`) VALUES (%s, %s) '
+                . ($sqlite ? 'ON CONFLICT(identifier) DO NOTHING' : 'ON DUPLICATE KEY UPDATE identifier = VALUES(identifier)'),
+                $source,
+                $this->date($this->now()),
+            );
+            $result = $operation();
+            $this->dibi->commit();
+
+            return $result;
+        } catch (\Throwable $e) {
+            $this->dibi->rollback();
+            throw $e;
+        }
+    }
+
+    private function recentFailures(string $identifier, int $now): int
+    {
+        return (int) $this->dibi->select('attempts')->from('login_attempts')
+            ->where('identifier = %s AND window_started_at > %s', $identifier, $this->date($now - self::WINDOW_SECONDS))
+            ->fetchSingle();
     }
 
     private function increment(string $identifier, int $limit): void

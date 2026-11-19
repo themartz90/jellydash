@@ -21,7 +21,7 @@ final class NotificationDispatcher
     private array $channels;
 
     private WebPushSender $webPush;
-    private PushSubscriptionRepository $subscriptions;
+    private ?PushSubscriptionRepository $subscriptions;
 
     /**
      * @param array<int, NotificationChannel>|null $channels
@@ -32,7 +32,7 @@ final class NotificationDispatcher
         ?array $channels = null,
     ) {
         $this->webPush = $webPush ?? new WebPushSender();
-        $this->subscriptions = $subscriptions ?? new PushSubscriptionRepository();
+        $this->subscriptions = $subscriptions;
         $this->channels = $channels ?? [
             new TelegramChannel(),
             new PushoverChannel(),
@@ -74,7 +74,7 @@ final class NotificationDispatcher
 
         if ($this->webPush->isConfigured()) {
             try {
-                $subs = $this->subscriptions->deliverySubscriptions(Config::bool('AUTH_ENABLED', false));
+                $subs = $this->subscriptions()->deliverySubscriptions(Config::bool('AUTH_ENABLED', false));
                 if ($subs !== []) {
                     $result = $this->webPush->send($subs, $notification);
                     if ($result['sent'] > 0) {
@@ -117,22 +117,27 @@ final class NotificationDispatcher
         $notification = $this->withAbsoluteUrl($notification);
         $report = [];
 
-        $subs = $this->webPush->isConfigured()
-            ? $this->subscriptions->deliverySubscriptions(Config::bool('AUTH_ENABLED', false))
-            : [];
-        $webPushResult = ['sent' => 0, 'failed' => 0, 'expired' => [], 'ineligible' => 0,
-            'succeeded' => [], 'failed_endpoints' => [], 'ineligible_endpoints' => []];
-        if ($this->webPush->isConfigured() && $subs !== []) {
-            $webPushResult = $this->webPush->send($subs, $notification);
-            $this->recordWebPushOutcome($webPushResult);
-        }
-        $report['webpush'] = [
+        $webPush = [
             'configured' => $this->webPush->isConfigured(),
-            'subscriptions' => count($subs),
-            'sent' => $webPushResult['sent'],
-            'failed' => $webPushResult['failed'],
-            'ineligible' => $webPushResult['ineligible'],
+            'subscriptions' => 0, 'sent' => 0, 'failed' => 0, 'ineligible' => 0,
         ];
+        if ($webPush['configured']) {
+            try {
+                $subs = $this->subscriptions()->deliverySubscriptions(Config::bool('AUTH_ENABLED', false));
+                $webPush['subscriptions'] = count($subs);
+                if ($subs !== []) {
+                    $result = $this->webPush->send($subs, $notification);
+                    foreach (['sent', 'failed', 'ineligible'] as $field) {
+                        $webPush[$field] = $result[$field];
+                    }
+                    $this->recordWebPushOutcome($result);
+                }
+            } catch (\Throwable $e) {
+                Log::logException($e);
+                $webPush['error'] = 'Web Push test could not finish. Check the application log for details.';
+            }
+        }
+        $report['webpush'] = $webPush;
 
         foreach ($this->channels as $channel) {
             $entry = ['configured' => $channel->isConfigured(), 'sent' => false];
@@ -179,14 +184,19 @@ final class NotificationDispatcher
     private function recordWebPushOutcome(array $result): void
     {
         foreach ($result['succeeded'] as $endpoint) {
-            $this->subscriptions->markSuccess($endpoint);
+            $this->subscriptions()->markSuccess($endpoint);
         }
         foreach ($result['failed_endpoints'] as $endpoint) {
-            $this->subscriptions->markFailure($endpoint);
+            $this->subscriptions()->markFailure($endpoint);
         }
         foreach (array_merge($result['expired'], $result['ineligible_endpoints']) as $endpoint) {
-            $this->subscriptions->delete($endpoint);
+            $this->subscriptions()->delete($endpoint);
         }
+    }
+
+    private function subscriptions(): PushSubscriptionRepository
+    {
+        return $this->subscriptions ??= new PushSubscriptionRepository();
     }
 
     /**

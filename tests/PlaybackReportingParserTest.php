@@ -173,6 +173,58 @@ final class PlaybackReportingParserTest extends TestCase
         $this->assertSame($first[0]['session_key'], $second[0]['session_key']);
     }
 
+    public function testHistoryMetadataAndIdentityAgreeAcrossAllImportSources(): void
+    {
+        $title = str_repeat('🎬', 16_383);
+        $client = str_repeat('界', 90);
+        $device = str_repeat('ž', 85);
+        $row = ['2024-01-01 12:00:00', '412', '314', 'Movie', $title, 'DirectPlay', $client, $device, '45'];
+        $columns = ['DateCreated', 'UserId', 'ItemId', 'ItemType', 'ItemName', 'PlaybackMethod', 'ClientName', 'DeviceName', 'PlayDuration'];
+        $path = tempnam(sys_get_temp_dir(), 'jd-history-meta-');
+        self::assertNotFalse($path);
+        $db = new SQLite3($path);
+        try {
+            $db->exec('CREATE TABLE PlaybackActivity (' . implode(' TEXT, ', $columns) . ' TEXT)');
+            foreach (['accepted' => $row, 'overlong' => array_replace($row, [4 => $title . 'x'])] as $case => $input) {
+                $db->exec('DELETE FROM PlaybackActivity');
+                $insert = $db->prepare('INSERT INTO PlaybackActivity VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+                foreach ($input as $index => $value) {
+                    $insert->bindValue($index + 1, $value, SQLITE3_TEXT);
+                }
+                $insert->execute()->finalize();
+                $insert->close();
+                $parsed = [
+                    fn () => $this->parser->parseTsv(implode("\t", $input)),
+                    fn () => $this->parser->parseApiResults($columns, [$input]),
+                    fn () => $this->parser->parseSqliteFile($path),
+                ];
+                $keys = [];
+                foreach ($parsed as $parse) {
+                    if ($case === 'overlong') {
+                        try {
+                            $parse();
+                            self::fail('An overlong title was accepted.');
+                        } catch (\Mk\Framework\Jellyfin\ImportValidationException $error) {
+                            self::assertStringContainsString('item title exceeds the History limit', $error->getMessage());
+                        }
+                        continue;
+                    }
+                    [$play] = $parse();
+                    self::assertSame($title, $play['item_name']);
+                    self::assertSame($client, $play['client']);
+                    self::assertSame($device, $play['device']);
+                    $keys[] = $play['session_key'];
+                }
+                if ($case === 'accepted') {
+                    self::assertCount(1, array_unique($keys));
+                }
+            }
+        } finally {
+            $db->close();
+            unlink($path);
+        }
+    }
+
     public function testParseTsvKeepsShortAndLongPlayDurations(): void
     {
         $zero = "2024-01-01 12:00:00.1234567\t0e394f8a9bc64abeba29f63cdc7a12a0\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tMovie\tDune\tDirectPlay\tWeb\tChrome\t0";

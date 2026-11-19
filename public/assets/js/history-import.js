@@ -41,28 +41,39 @@
 
     function readNdjson(stream, onProgress) {
         var reader = stream.getReader();
-        var decoder = new TextDecoder();
+        var decoder = new TextDecoder('utf-8', { fatal: true });
         var buffer = '';
         var last = null;
+
+        function interrupted() {
+            return new Error('Import progress was interrupted. Check History before trying again.');
+        }
 
         function consume(chunk, done) {
             buffer += chunk;
             var lines = buffer.split('\n');
             buffer = done ? '' : lines.pop() || '';
-            if (done && buffer.trim() !== '') {
-                lines.push(buffer);
-                buffer = '';
-            }
             lines.forEach(function (line) {
                 line = line.trim();
                 if (!line) {
                     return;
                 }
-                var payload = JSON.parse(line);
-                last = payload;
-                if (payload.phase === 'error') {
-                    throw new Error(payload.error || 'Could not import.');
+                var payload;
+                try {
+                    payload = JSON.parse(line);
+                } catch (error) {
+                    throw interrupted();
                 }
+                if (!payload || !['preparing', 'importing', 'done', 'error'].includes(payload.phase)
+                    || (last && last.phase === 'done')) throw interrupted();
+                if (payload.phase === 'error') {
+                    if (typeof payload.error !== 'string' || !payload.error.trim()) throw interrupted();
+                    throw new Error(payload.error);
+                }
+                if (!['processed', 'total', 'inserted', 'skipped'].every(function (field) {
+                    return Number.isSafeInteger(payload[field]) && payload[field] >= 0;
+                })) throw interrupted();
+                last = payload;
                 if (typeof onProgress === 'function') {
                     onProgress(payload);
                 }
@@ -71,18 +82,27 @@
 
         function pump() {
             return reader.read().then(function (result) {
-                consume(decoder.decode(result.value || new Uint8Array(), { stream: !result.done }), result.done);
+                var chunk;
+                try {
+                    chunk = decoder.decode(result.value, { stream: !result.done });
+                } catch (error) {
+                    throw interrupted();
+                }
+                consume(chunk, result.done);
                 if (result.done) {
                     if (!last || last.phase !== 'done') {
-                        throw new Error('The import stopped before it finished. Please try again.');
+                        throw interrupted();
                     }
                     return last;
                 }
                 return pump();
-            });
+            }, function () { throw interrupted(); });
         }
 
-        return pump();
+        return pump().catch(function (error) {
+            reader.cancel().catch(function () {});
+            throw error;
+        }).finally(function () { reader.releaseLock(); });
     }
 
     function commit(body, onProgress, endpoint) {

@@ -113,6 +113,25 @@ class Database
         $this->platform->createIndexIfMissing('idx_login_attempts_updated', 'login_attempts', ['updated_at']);
 
         $this->platform->createTable(
+            'CREATE TABLE IF NOT EXISTS `login_admissions` (
+                `token` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
+                `source_key` varchar(71) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `pair_key` varchar(69) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `expires_at` bigint NOT NULL,
+                KEY `idx_login_admissions_source` (`source_key`, `expires_at`),
+                KEY `idx_login_admissions_expiry` (`expires_at`)
+            ) ENGINE=InnoDB',
+            'CREATE TABLE IF NOT EXISTS `login_admissions` (
+                `token` TEXT NOT NULL PRIMARY KEY,
+                `source_key` TEXT NOT NULL,
+                `pair_key` TEXT NOT NULL,
+                `expires_at` INTEGER NOT NULL
+            )'
+        );
+        $this->platform->createSqliteIndex('idx_login_admissions_source', 'login_admissions', ['source_key', 'expires_at']);
+        $this->platform->createSqliteIndex('idx_login_admissions_expiry', 'login_admissions', ['expires_at']);
+
+        $this->platform->createTable(
             'CREATE TABLE IF NOT EXISTS `auth_remember_tokens` (
                 `id` bigint NOT NULL AUTO_INCREMENT,
                 `user_id` mediumint(9) NOT NULL,
