@@ -1,0 +1,22 @@
+{
+  "version": "1.18.0",
+  "auto_show": true,
+  "title": "Manage Seerr requests in Jellydash",
+  "summary": "Browse the full request queue and open the exact request from a notification.",
+  "highlights": [
+    "Use the All requests, Pending approval and Failed tabs. Open a poster to see who requested it, the edition and the selected seasons.",
+    "Managers can approve, decline, retry or delete a request, and edit supported choices while it's pending. Deleting a request keeps its library files.",
+    "With login on, owners and admins can manage requests by default. With login off, the queue starts view-only. Library file removal is a separate opt-in and is off by default.",
+    "History handles short replays, Saved posters keeps your search during a refresh, and Downloads keeps the last usable results when a reply is invalid."
+  ],
+  "links": [
+    {
+      "label": "Seerr setup and permissions",
+      "url": "https://github.com/themartz90/jellydash/blob/v1.18.0/README.md#seerr-requests"
+    },
+    {
+      "label": "Full release notes",
+      "url": "https://github.com/themartz90/jellydash/releases/tag/v1.18.0"
+    }
+  ]
+}
