@@ -2,8 +2,12 @@
 
 declare(strict_types=1);
 
+use Mk\Framework\AppSettings;
 use Mk\Framework\Authorization;
+use Mk\Framework\Config;
 use Mk\Framework\Csrf;
+use Mk\Framework\Jellyseerr\JellyseerrClient;
+use Mk\Framework\Jellyseerr\RequestLink;
 use Mk\Framework\Main;
 use Mk\Framework\Pager;
 use Mk\Framework\Pages\LoginController;
@@ -31,7 +35,7 @@ use Mk\Framework\View;
         $remember = isset($_POST['remember_me']) && $_POST['remember_me'] === '1';
 
         if ($auth_class->userLogin($username, $password, $remember)) {
-            Pager::homePage();
+            Pager::afterLogin(RequestLink::id($_POST['seerr_request'] ?? null));
         }
 
         // Bad credentials -> generic message (DB errors propagate to ErrorHandler).
@@ -70,6 +74,38 @@ use Mk\Framework\View;
             exit('Forbidden');
         }
 
+        $seerrManagement = null;
+        $seerrFileRemoval = null;
+        $authEnabled = Config::bool('AUTH_ENABLED', false);
+        if (array_key_exists('seerr_management_mode', $_POST)) {
+            $mode = $authEnabled ? 'authenticated' : 'open';
+            if ($_POST['seerr_management_mode'] !== $mode || !(new JellyseerrClient())->isConfigured()) {
+                http_response_code(409);
+                exit('Seerr settings changed. Reload Settings and try again.');
+            }
+            if (AppSettings::seerrRequestManagement($authEnabled) === null) {
+                http_response_code(503);
+                exit('Seerr settings are unavailable. Try again later.');
+            }
+            if (array_key_exists('seerr_management_enabled', $_POST) && $_POST['seerr_management_enabled'] !== '1') {
+                http_response_code(400);
+                exit('Invalid Seerr management setting.');
+            }
+            $seerrManagement = isset($_POST['seerr_management_enabled']) ? '1' : '0';
+            if (array_key_exists('seerr_file_removal_present', $_POST)) {
+                if ($_POST['seerr_file_removal_present'] !== '1'
+                    || (array_key_exists('seerr_file_removal_enabled', $_POST) && $_POST['seerr_file_removal_enabled'] !== '1')) {
+                    http_response_code(400);
+                    exit('Invalid Seerr file removal setting.');
+                }
+                if (AppSettings::seerrFileRemoval($authEnabled) === null) {
+                    http_response_code(503);
+                    exit('Seerr settings are unavailable. Try again later.');
+                }
+                $seerrFileRemoval = isset($_POST['seerr_file_removal_enabled']) ? '1' : '0';
+            }
+        }
+
         $minimumViewingSeconds = null;
         if (array_key_exists('minimum_viewing_seconds', $_POST)) {
             $minimumViewingSeconds = \Mk\Framework\Jellyfin\MinimumViewingTime::parse($_POST['minimum_viewing_seconds']);
@@ -106,6 +142,12 @@ use Mk\Framework\View;
         \Mk\Framework\AppSettings::set('show_recently_added', isset($_POST['show_recently_added']) ? '1' : '0');
         if (($_POST['downloads_settings_present'] ?? null) === '1') {
             \Mk\Framework\AppSettings::set('downloads_enabled', isset($_POST['downloads_enabled']) ? '1' : '0');
+        }
+        if ($seerrManagement !== null) {
+            AppSettings::set(AppSettings::seerrRequestManagementKey($authEnabled), $seerrManagement);
+        }
+        if ($seerrFileRemoval !== null) {
+            AppSettings::set(AppSettings::seerrFileRemovalKey($authEnabled), $seerrFileRemoval);
         }
         \Mk\Framework\AppSettings::set('trending_exclude_libraries', $csv($exclude, 'trending_exclude_extra'));
         \Mk\Framework\AppSettings::set('push_ignore_users', $csv($ignore, 'push_ignore_extra'));

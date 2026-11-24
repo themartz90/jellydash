@@ -91,6 +91,49 @@
             </div>
         </section>
 
+        {% if seerr_configured %}
+        <section class="settings-card" aria-labelledby="seerr-settings-title">
+            <header class="settings-card-head">
+                <span class="settings-card-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" focusable="false"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"></path></svg>
+                </span>
+                <span class="settings-card-copy">
+                    <strong id="seerr-settings-title">Seerr</strong>
+                </span>
+            </header>
+            {% if seerr_management is not null %}
+                <input type="hidden" name="seerr_management_mode" value="{{ seerr_auth_enabled ? 'authenticated' : 'open' }}">
+            {% endif %}
+            <label class="settings-check settings-check-toggle">
+                <input type="checkbox" name="seerr_management_enabled" value="1" aria-describedby="seerr-management-help"
+                    {{ seerr_management ? 'checked' : '' }} {{ seerr_management is null ? 'disabled' : '' }}>
+                <span>{{ seerr_auth_enabled ? 'Allow owners and admins to manage requests' : 'Allow management on this open dashboard' }}</span>
+            </label>
+            <p class="settings-note" id="seerr-management-help">
+                {% if seerr_management is null %}
+                    Seerr settings are unavailable. Reload this page to try again.
+                {% elseif seerr_auth_enabled %}
+                    Turn this off to keep requests view-only for everyone.
+                {% else %}
+                    Anyone with access to this dashboard can manage requests when this is enabled.
+                {% endif %}
+            </p>
+            {% if seerr_management is not null and seerr_file_removal is not null %}
+                <input type="hidden" name="seerr_file_removal_present" value="1">
+            {% endif %}
+            <label class="settings-check settings-check-toggle">
+                <input type="checkbox" name="seerr_file_removal_enabled" value="1" aria-describedby="seerr-file-removal-help"
+                    {{ seerr_file_removal ? 'checked' : '' }} {{ seerr_management is null or seerr_file_removal is null ? 'disabled' : '' }}>
+                <span>Allow library file removal</span>
+            </label>
+            <p class="settings-note" id="seerr-file-removal-help">
+                {% if seerr_auth_enabled %}Owners and admins can remove library files while request management is enabled.
+                {% else %}Anyone who can reach this open dashboard can remove library files while request management is enabled.{% endif %}
+                Removal applies to the whole movie or series edition.
+            </p>
+        </section>
+        {% endif %}
+
         <section class="settings-card">
             <header class="settings-card-head">
                 <span class="settings-card-mark" aria-hidden="true">

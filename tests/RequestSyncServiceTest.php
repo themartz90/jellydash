@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Mk\Framework\Database;
 use Mk\Framework\DatabasePlatform;
 use Mk\Framework\Jellyseerr\JellyseerrClient;
+use Mk\Framework\Jellyseerr\RequestBrowser;
 use Mk\Framework\Jellyseerr\RequestSyncService;
 use Mk\Framework\Jellyseerr\SeerrRequestRepository;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -58,6 +59,38 @@ final class RequestSyncServiceTest extends TestCase
         $this->assertSame([0], $client->requestedSkips);
         $this->assertSame(40, $this->repository->count());
         $this->assertSame(40, (int) $this->database->getDibi()->select('COUNT(*)')->from('seerr_requests')->where('notified = 1')->fetchSingle());
+    }
+
+    public function testBrowsingKeepsUnseenRequestsEligibleForThePollerAndNeverClaimsOldOnes(): void
+    {
+        $this->insertKnown(100, 1);
+        $now = time();
+        $client = new FakePagedJellyseerrClient([
+            0 => $this->requests(101, 100, gmdate('c', $now - 15)),
+            96 => $this->requests(5, 3, gmdate('c', $now - 86400)),
+        ]);
+        $root = sys_get_temp_dir() . '/jellydash-seerr-poll-isolation-' . bin2hex(random_bytes(8));
+        try {
+            $browser = new RequestBrowser($client, $root, mirror: $this->repository);
+            self::assertSame(101, $browser->detail(101)['request']['requestId']);
+            self::assertSame([5, 4, 3], array_column($browser->page(5, 'all')['requests'], 'requestId'));
+            $browser->enrich(5, 'all');
+            self::assertSame([], $client->requestedSkips);
+            self::assertSame(1, $this->repository->count());
+            self::assertSame([], $this->repository->claimUnnotified($now));
+
+            self::assertSame(1, (new RequestSyncService($client, $this->repository))->sync());
+            self::assertSame([0], $client->requestedSkips);
+            self::assertSame([101], array_map(static fn (\Dibi\Row $row): int => (int) $row['request_id'], $this->repository->claimUnnotified($now)));
+            self::assertSame([], $this->repository->knownIds([3, 4, 5]));
+        } finally {
+            foreach (glob($root . '/*') ?: [] as $file) {
+                unlink($file);
+            }
+            if (is_dir($root)) {
+                rmdir($root);
+            }
+        }
     }
 
     public function testFailedDetailsRecoverAfterBackoffEvenOutsideTheCurrentPage(): void
@@ -514,6 +547,24 @@ final class FakePagedJellyseerrClient extends JellyseerrClient
         }
 
         return $this->pages[$skip] ?? [];
+    }
+
+    public function requestPageWithMetadata(int $page, string $filter = 'all', int $pageSize = 24): array
+    {
+        return ['pageInfo' => ['page' => $page, 'pages' => 5, 'pageSize' => $pageSize, 'results' => 99],
+            'results' => $this->pages[($page - 1) * $pageSize] ?? []];
+    }
+
+    public function requestDetail(int $requestId): array
+    {
+        foreach ($this->pages as $page) {
+            foreach ($page as $request) {
+                if ($request['id'] === $requestId) {
+                    return $request;
+                }
+            }
+        }
+        throw new RuntimeException('Synthetic request not found.');
     }
 
     public function movie(int $tmdbId): array

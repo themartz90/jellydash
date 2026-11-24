@@ -1,97 +1,74 @@
 {% extends "_shell.twig" %}
+{% set layout = layout|merge({header_class: 'dashboard-header-now-playing'}) %}
+
+{% block page_styles %}
+    <link rel="stylesheet" href="/assets/css/recap.css?v={{ asset_revision }}">
+    {% if configured %}<link rel="stylesheet" href="/assets/css/downloads.css?v={{ asset_revision }}-compact-widget-1">{% endif %}
+    <link rel="stylesheet" href="/assets/css/seerr-requests.css?v={{ asset_revision }}-file-removal-footer">
+{% endblock %}
 
 {% block dashboard_header %}
     <div class="header-copy">
-        <h1>Jellyseerr</h1>
-        <p>Latest requests from your users</p>
+        <h1>Seerr</h1>
+        <p>Media requests{% if configured %} <span data-seerr-stat-scope hidden><span aria-hidden="true">·</span> <span id="seerr-stat-scope">On this page</span></span>{% endif %}</p>
     </div>
+    {% if configured %}
+        {% embed "_header_metrics.twig" with {two_metrics: true} %}
+            {% block metrics_attributes %}data-seerr-stats aria-labelledby="seerr-stat-scope" hidden{% endblock %}
+            {% block metrics %}
+                <div class="now-playing-metric">
+                    <dt><i class="dot-green" aria-hidden="true"></i>Available</dt>
+                    <dd><span data-seerr-available></span><small data-seerr-partial hidden></small></dd>
+                </div>
+                <div class="now-playing-metric">
+                    <dt><i class="dot-blue" aria-hidden="true"></i>Requested</dt>
+                    <dd data-seerr-requested></dd>
+                </div>
+            {% endblock %}
+        {% endembed %}
+    {% endif %}
 {% endblock %}
 
 {% block dashboard_content %}
-    {% if not configured %}
-        <div class="empty-state">
-            <div class="empty-orbit" aria-hidden="true">
-                <span></span>
-                <svg class="icon-filled" viewBox="0 0 24 24" role="img" focusable="false">
-                    <path d="M8.243 7.34l-6.38 .925l-.113 .023a1 1 0 0 0 -.44 1.684l4.622 4.499l-1.09 6.355l-.013 .11a1 1 0 0 0 1.464 .944l5.706 -3l5.693 3l.1 .046a1 1 0 0 0 1.352 -1.1l-1.091 -6.355l4.624 -4.5l.078 -.085a1 1 0 0 0 -.633 -1.62l-6.38 -.926l-2.852 -5.78a1 1 0 0 0 -1.794 0l-2.853 5.78z"></path>
-                </svg>
+    {% if configured %}
+        <div class="seerr-workspace" data-seerr-workspace data-queue-url="{{ queue_url }}" data-seerr-filter="{{ filter }}">
+            <div class="seerr-toolbar">
+                <nav class="statistics-view-nav seerr-views" aria-label="Request views">
+                    {% for key, view in views %}
+                        <a href="{{ view.url }}"{% if filter == key %} aria-current="page"{% endif %}>
+                            {{ view.label }} <span class="seerr-view-count" data-seerr-count="{{ key }}" hidden></span>
+                        </a>
+                    {% endfor %}
+                </nav>
+                <p class="seerr-range" data-seerr-range hidden></p>
             </div>
-            <h2>Jellyseerr isn't connected</h2>
-            <p>Set <code>JELLYSEER_URL</code> and <code>JELLYSEER_API_TOKEN</code> in your environment to see requests here.</p>
+            <p class="seerr-announcement" data-seerr-announcement role="status" aria-atomic="true"></p>
+            <section data-seerr-queue aria-label="Requests" aria-busy="true">
+                <p class="seerr-loading" data-seerr-loading>Loading requests…</p>
+                <noscript><p>Enable JavaScript to browse requests.</p></noscript>
+            </section>
         </div>
-    {% elseif error %}
-        <div class="empty-state">
-            <div class="empty-orbit" aria-hidden="true">
-                <span></span>
-                <svg class="icon-filled" viewBox="0 0 24 24" role="img" focusable="false">
-                    <path d="M12 1.67c.955 0 1.845 .467 2.39 1.247l.105 .16l8.114 13.548a2.914 2.914 0 0 1 -2.307 4.363l-.195 .008h-16.225a2.914 2.914 0 0 1 -2.582 -4.2l.099 -.185l8.11 -13.538a2.914 2.914 0 0 1 2.491 -1.403zm.01 13.33l-.127 .007a1 1 0 0 0 0 1.986l.117 .007l.127 -.007a1 1 0 0 0 0 -1.986l-.117 -.007zm-.01 -7a1 1 0 0 0 -.993 .883l-.007 .117v4l.007 .117a1 1 0 0 0 1.986 0l.007 -.117v-4l-.007 -.117a1 1 0 0 0 -.993 -.883z"></path>
-                </svg>
+        <dialog class="seerr-dialog" aria-labelledby="seerr-detail-heading" data-seerr-dialog>
+            <div class="seerr-dialog-frame">
+                <header>
+                    <h2 id="seerr-detail-heading">Request details</h2>
+                    <button class="release-dialog-close" type="button" data-seerr-close aria-label="Close request details" autofocus>
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18 6l-12 12"></path><path d="M6 6l12 12"></path></svg>
+                    </button>
+                </header>
+                <div data-seerr-detail aria-live="polite"></div>
+                <p class="seerr-detail-feedback" data-seerr-detail-feedback role="status" aria-atomic="true" hidden></p>
             </div>
-            <h2>Could not load requests</h2>
-            <p>{{ error }}</p>
-        </div>
-    {% elseif requests is empty %}
-        <div class="empty-state">
-            <div class="empty-orbit" aria-hidden="true">
-                <span></span>
-                <svg class="icon-filled" viewBox="0 0 24 24" role="img" focusable="false">
-                    <path d="M8.243 7.34l-6.38 .925l-.113 .023a1 1 0 0 0 -.44 1.684l4.622 4.499l-1.09 6.355l-.013 .11a1 1 0 0 0 1.464 .944l5.706 -3l5.693 3l.1 .046a1 1 0 0 0 1.352 -1.1l-1.091 -6.355l4.624 -4.5l.078 -.085a1 1 0 0 0 -.633 -1.62l-6.38 -.926l-2.852 -5.78a1 1 0 0 0 -1.794 0l-2.853 5.78z"></path>
-                </svg>
-            </div>
-            <h2>No requests to show</h2>
-            <p>New Jellyseerr requests will appear here. Alerts are available when request notifications are configured.</p>
-        </div>
+        </dialog>
+        <div class="downloads-toast" data-seerr-action-status role="status" aria-live="polite" aria-atomic="true" hidden></div>
     {% else %}
-        <div class="seerr-grid">
-            {% for request in requests %}
-                <article class="seerr-card">
-                    <div class="seerr-poster">
-                        {% if request.poster %}
-                            <img src="{{ request.poster }}" alt="" loading="lazy" decoding="async">
-                        {% else %}
-                            <span class="seerr-poster-fallback" aria-hidden="true">
-                                <svg class="icon-filled" viewBox="0 0 24 24" role="img" focusable="false">
-                                    <path d="M8.813 11.612c.457 -.38 .918 -.38 1.386 .011l.108 .098l4.986 4.986l.094 .083a1 1 0 0 0 1.403 -1.403l-.083 -.094l-1.292 -1.293l.292 -.293l.106 -.095c.457 -.38 .918 -.38 1.386 .011l.108 .098l4.674 4.675a4 4 0 0 1 -3.775 3.599l-.206 .005h-12a4 4 0 0 1 -3.98 -3.603l6.687 -6.69l.106 -.095zm9.187 -9.612a4 4 0 0 1 3.995 3.8l.005 .2v9.585l-3.293 -3.292l-.15 -.137c-1.256 -1.095 -2.85 -1.097 -4.096 -.017l-.154 .14l-.307 .306l-2.293 -2.292l-.15 -.137c-1.256 -1.095 -2.85 -1.097 -4.096 -.017l-.154 .14l-5.307 5.306v-9.585a4 4 0 0 1 3.8 -3.995l.2 -.005h12zm-2.99 5l-.127 .007a1 1 0 0 0 0 1.986l.117 .007l.127 -.007a1 1 0 0 0 0 -1.986l-.117 -.007z"></path>
-                                </svg>
-                            </span>
-                        {% endif %}
-                        <span class="seerr-status is-{{ request.status_kind }}">{{ request.status_label }}</span>
-                        {% if request.is_4k %}<span class="seerr-4k">4K</span>{% endif %}
-                    </div>
-
-                    <div class="seerr-body">
-                        <strong class="seerr-title" title="{{ request.title }}">{{ request.title }}</strong>
-                        <span class="seerr-meta">
-                            {{ request.type_label }}{% if request.year %} · {{ request.year }}{% endif %}{% if request.seasons %} · {{ request.seasons }} season{{ request.seasons > 1 ? 's' : '' }}{% endif %}
-                        </span>
-
-                        <div class="seerr-foot">
-                            <span class="seerr-avatar" aria-hidden="true">{{ request.initials }}</span>
-                            <span class="seerr-user" title="{{ request.requester }}">{{ request.requester }}</span>
-                            <span class="seerr-time">{{ request.requested_ago }}</span>
-                        </div>
-                    </div>
-                </article>
-            {% endfor %}
+        <div class="empty-state">
+            <h2>Seerr isn't connected</h2>
+            <p>Set <code>JELLYSEER_URL</code> and <code>JELLYSEER_API_TOKEN</code> to see requests here.</p>
         </div>
     {% endif %}
 {% endblock %}
 
-{% block dashboard_footer %}
-    <div class="stat-cell">
-        <span><i class="dot-purple"></i>Showing</span>
-        <strong>{{ summary.total }}</strong>
-    </div>
-    <div class="stat-cell">
-        <span><i class="dot-green"></i>Available</span>
-        <strong>{{ summary.available ?: 'None' }}</strong>
-    </div>
-    <div class="stat-cell">
-        <span><i class="dot-blue"></i>Requested</span>
-        <strong>{{ summary.requested ?: 'None' }}</strong>
-    </div>
-    <div class="stat-cell">
-        <span><i class="dot-amber"></i>Awaiting approval</span>
-        <strong>{{ summary.pending ?: 'None' }}</strong>
-    </div>
+{% block page_scripts %}
+    {% if configured %}<script src="/assets/js/seerr-requests.js?v={{ asset_revision }}-file-removal-footer"></script>{% endif %}
 {% endblock %}

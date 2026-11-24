@@ -4,7 +4,7 @@
 //   1. Its presence (with a fetch handler) lets Android install Jellydash as a
 //      real standalone PWA (a WebAPK) with its own window, no browser UI,
 //      and a maskable icon, instead of a plain browser shortcut.
-//   2. It receives Web Push messages (playback alerts) and shows them, even
+//   2. It receives Web Push messages and shows them, even
 //      when the app is closed.
 // It deliberately does NOT pre-cache anything: the dashboard is live data and
 // assets are already cache-busted, so there is nothing to go stale.
@@ -25,7 +25,6 @@ self.addEventListener('fetch', () => {
     // every request directly, exactly as before install.
 });
 
-// A playback alert arrived. The payload is JSON built by PlaybackNotifier.
 self.addEventListener('push', (event) => {
     let data = {};
     try {
@@ -47,6 +46,33 @@ self.addEventListener('push', (event) => {
     event.waitUntil(self.registration.showNotification(title, options));
 });
 
+function seerrRequestId(url) {
+    const ids = url.searchParams.getAll('request');
+    if (url.pathname !== '/jellyseerr' || url.searchParams.has('fragment') || ids.length !== 1) return null;
+    const [id] = ids;
+    return /^[1-9]\d{0,15}$/.test(id) && Number.isSafeInteger(Number(id)) ? id : null;
+}
+
+function showsSeerrRequest(client, id) {
+    return new Promise((resolve) => {
+        const channel = new MessageChannel();
+        const finish = (matches) => {
+            clearTimeout(timeout);
+            channel.port1.close();
+            resolve(matches);
+        };
+        // Client.url can predate a request opened or closed with pushState.
+        const timeout = setTimeout(() => finish(false), 200);
+        channel.port1.onmessage = (event) => finish(event.data === id);
+        try {
+            client.postMessage({ type: 'jellydash:current-seerr-request' }, [channel.port2]);
+        } catch (error) {
+            channel.port2.close();
+            finish(false);
+        }
+    });
+}
+
 // Tapping a notification keeps unrelated open pages in place.
 self.addEventListener('notificationclick', (event) => {
     event.notification.close();
@@ -62,21 +88,37 @@ self.addEventListener('notificationclick', (event) => {
         if (targetUrl.origin !== self.location.origin) {
             targetUrl = new URL('/now-playing', self.location.origin);
         }
+        const id = seerrRequestId(targetUrl);
+        const requestPath = id !== null && targetUrl.search === '?request=' + id && !targetUrl.hash
+            ? '/jellyseerr?request=' + id
+            : null;
+        if (targetUrl.pathname === '/jellyseerr') {
+            targetUrl = new URL(requestPath ?? '/jellyseerr', self.location.origin);
+        }
 
         const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-        for (const client of clientList) {
-            if (client.url === targetUrl.href && 'focus' in client) {
-                await client.focus();
-                return;
-            }
+        const appWindows = clientList.filter((client) => new URL(client.url).origin === self.location.origin && 'focus' in client);
+        let exact;
+        if (requestPath) {
+            const seerrWindows = appWindows.filter((client) => new URL(client.url).pathname === '/jellyseerr');
+            const matches = await Promise.all(seerrWindows.map((client) => showsSeerrRequest(client, id)));
+            exact = seerrWindows[matches.indexOf(true)];
+        } else {
+            exact = appWindows.find((client) => client.url === targetUrl.href);
+        }
+        if (exact) {
+            await exact.focus();
+            return;
         }
         // openWindow can reuse an installed app window and discard its edits.
         // Keep an existing Jellydash page in place when the target is not open.
-        for (const client of clientList) {
-            if (new URL(client.url).origin === self.location.origin && 'focus' in client) {
-                await client.focus();
-                return;
+        const existing = appWindows[0];
+        if (existing) {
+            if (requestPath) {
+                existing.postMessage({ type: 'jellydash:seerr-request', url: requestPath });
             }
+            await existing.focus();
+            return;
         }
         if (self.clients.openWindow) {
             await self.clients.openWindow(targetUrl.href);

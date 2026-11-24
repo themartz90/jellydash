@@ -1,0 +1,9 @@
+<div data-seerr-file-result{% if target %} data-file-token="{{ target.token }}"{% endif %}>
+    <h4 id="seerr-file-heading" tabindex="-1">{% if target %}Remove files for “{{ target.title }}”?{% else %}Library file removal unavailable{% endif %}</h4>
+    {% if target %}
+        <p id="seerr-file-scope">This removes the {{ target.is4k ? '4K' : 'Standard' }} edition of the {{ target.type == 'tv' ? 'whole series, including every season,' : 'whole movie' }} from {{ target.type == 'tv' ? 'Sonarr' : 'Radarr' }} ({{ target.service }}), including its library files and service entry.</p>
+        <p>Other requests may share these files. Seerr keeps the request records and the service can add this title again later.</p>
+    {% else %}
+        <p>Jellydash could not verify the library target. Review it in Seerr.</p>
+    {% endif %}
+</div>

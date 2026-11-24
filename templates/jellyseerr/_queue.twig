@@ -1,0 +1,62 @@
+<div data-seerr-page data-url="{{ queue_url }}" data-state="{{ state }}" data-total="{{ total ?? '' }}"
+    data-first="{{ first }}" data-last="{{ last }}" data-available="{{ available }}" data-partial="{{ partial }}" data-requested="{{ requested }}"
+    data-page="{{ pager.page }}" data-pages="{{ pager.pages }}" data-enrich="{{ state == 'current' and (requests|filter(r => r.metadataPending)|length > 0) ? '1' : '0' }}">
+    {% if state == 'cached' %}
+        <p class="seerr-notice" role="status">Seerr is unavailable. Showing a saved copy of this page. <button type="button" class="history-pager-btn" data-seerr-retry>Try again</button></p>
+    {% endif %}
+    {% if can_manage and filter == 'all' %}
+        <p class="seerr-manage-hint">Select a request to view details and manage it.</p>
+    {% endif %}
+    {% if state == 'unavailable' %}
+        <div class="empty-state">
+            <h2>Could not load requests</h2>
+            <p>Seerr is unavailable or refused the request.</p>
+            <button type="button" class="history-pager-btn" data-seerr-retry>Try again</button>
+        </div>
+    {% elseif requests is empty %}
+        <div class="empty-state">
+            <h2>{{ filter == 'pending' ? 'No requests pending approval' : (filter == 'failed' ? 'No failed requests' : 'No requests yet') }}</h2>
+        </div>
+    {% else %}
+        <div class="seerr-grid{{ can_manage and filter != 'all' ? ' seerr-grid-managed' : '' }}">
+            {% for request in requests %}
+                {% set quick_action = can_manage and request.managementVersion and ((filter == 'pending' and request.statusKind == 'pending') or (filter == 'failed' and request.statusKind == 'failed')) %}
+                <article class="seerr-card"{% if quick_action %} data-seerr-action-request="{{ request.requestId }}" data-seerr-version="{{ request.managementVersion }}"{% endif %}>
+                    <a href="{{ request.url }}" class="seerr-card-link" data-seerr-request="{{ request.requestId }}" aria-labelledby="seerr-title-{{ request.requestId }}" aria-describedby="seerr-status-{{ request.requestId }}">
+                        <div class="seerr-poster" data-seerr-poster>
+                            {% if request.posterUrl %}<img src="{{ request.posterUrl }}" alt="" loading="lazy" decoding="async">{% endif %}
+                            <span class="seerr-poster-fallback" aria-hidden="true"{{ request.posterUrl ? ' hidden' : '' }}>
+                                <svg viewBox="0 0 24 24" focusable="false"><path d="M4 5h16v14H4zM4 15l4-4l4 4l3-3l5 5M15 9h.01"></path></svg>
+                            </span>
+                            <span class="seerr-status is-{{ request.statusKind }}" id="seerr-status-{{ request.requestId }}">{{ request.statusLabel }}</span>
+                            {% if request.is4k %}<span class="seerr-4k">4K</span>{% endif %}
+                        </div>
+                        <div class="seerr-body">
+                            <strong class="seerr-title" id="seerr-title-{{ request.requestId }}" title="{{ request.title }}" data-seerr-title>{{ request.title }}</strong>
+                            <span class="seerr-meta">
+                                {{ request.mediaType == 'tv' ? 'Series' : (request.mediaType == 'movie' ? 'Movie' : 'Media') }}<span data-seerr-year>{% if request.year %} · {{ request.year }}{% endif %}</span>
+                            </span>
+                            {% if request.seasonNumbers %}<span class="seerr-meta seerr-card-seasons">{{ request.seasonNumbers|length == 1 ? 'Season ' : 'Seasons ' }}{{ request.seasonNumbers|join(', ') }}</span>{% endif %}
+                            <div class="seerr-foot">
+                                <span class="seerr-avatar" aria-hidden="true">{{ request.initials }}</span>
+                                <span class="seerr-user" title="{{ request.requester }}">{{ request.requester }}</span>
+                                <span class="seerr-time">{{ request.requestedAgo }}</span>
+                            </div>
+                        </div>
+                    </a>
+                    {% if quick_action %}
+                        <div class="seerr-primary-actions">
+                            {% if request.statusKind == 'pending' %}
+                                <button class="downloads-button downloads-button-primary" type="button" data-seerr-action="approve" aria-describedby="seerr-title-{{ request.requestId }}">Approve</button>
+                                <button class="downloads-button" type="button" data-seerr-action="decline" aria-describedby="seerr-title-{{ request.requestId }}">Decline</button>
+                            {% else %}
+                                <button class="downloads-button" type="button" data-seerr-action="retry" aria-describedby="seerr-title-{{ request.requestId }}">Retry</button>
+                            {% endif %}
+                        </div>
+                    {% endif %}
+                </article>
+            {% endfor %}
+        </div>
+    {% endif %}
+    {% if state != 'unavailable' %}{% include "history/_pager.twig" with { pager: pager, pager_label: 'Request pages' } %}{% endif %}
+</div>

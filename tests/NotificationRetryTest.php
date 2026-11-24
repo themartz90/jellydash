@@ -13,10 +13,13 @@ use Mk\Framework\Jellyfin\PlayHistoryRepository;
 use Mk\Framework\Jellyseerr\RequestNotifier;
 use Mk\Framework\Jellyseerr\SeerrRequestRepository;
 use Mk\Framework\Notifications\ClaimedNotificationDelivery;
+use Mk\Framework\Notifications\DiscordChannel;
 use Mk\Framework\Notifications\GotifyChannel;
 use Mk\Framework\Notifications\NotificationChannel;
 use Mk\Framework\Notifications\NotificationDispatcher;
 use Mk\Framework\Notifications\NtfyChannel;
+use Mk\Framework\Notifications\PushoverChannel;
+use Mk\Framework\Notifications\TelegramChannel;
 use Mk\Framework\Push\NotificationLibraryExclusions;
 use Mk\Framework\Push\PlaybackNotifier;
 use Mk\Framework\Push\PushSubscriptionRepository;
@@ -164,6 +167,61 @@ final class NotificationRetryTest extends TestCase
         self::assertSame(1, $channel->calls);
         self::assertSame(1, (int) $this->database->getDibi()->select('notified')
             ->from('seerr_requests')->where('request_id = %i', 902)->fetchSingle());
+    }
+
+    public function testRequestNotifierSendsTheUpstreamRequestIdThroughEveryChannel(): void
+    {
+        $environment = [
+            'AUTH_ENABLED' => 'false', 'APP_URL' => 'https://dash.example.test',
+            'TELEGRAM_BOT_TOKEN' => 'fixture-bot', 'TELEGRAM_CHAT_ID' => 'fixture-chat',
+            'PUSHOVER_APP_TOKEN' => 'fixture-app', 'PUSHOVER_USER_KEY' => 'fixture-user',
+            'DISCORD_WEBHOOK_URL' => 'https://discord.example.test/webhook',
+            'NTFY_URL' => 'https://ntfy.example.test', 'NTFY_TOPIC' => 'fixture', 'NTFY_TOKEN' => '',
+            'GOTIFY_URL' => 'https://gotify.example.test', 'GOTIFY_APP_TOKEN' => 'fixture-app',
+        ];
+        $previous = [];
+        foreach ($environment as $key => $value) {
+            $previous[$key] = getenv($key);
+            putenv($key . '=' . $value);
+        }
+
+        try {
+            $subscriptions = new PushSubscriptionRepository($this->database);
+            $endpoint = 'https://updates.push.services.mozilla.com/wpush/v2/fixture-notification-link';
+            $subscriptions->save($endpoint, rtrim(base64_encode(str_repeat('a', 65)), '='), rtrim(base64_encode(str_repeat('b', 16)), '='), null);
+            $transport = new CurrentDeviceRecordingTransport();
+            $captured = [];
+            $sink = static function (string $channel, string $body = '', int $status = 200) use (&$captured): Closure {
+                return static function (string $url, array $payload) use (&$captured, $channel, $body, $status): array {
+                    $captured[$channel] = $payload;
+                    return ['status' => $status, 'body' => $body];
+                };
+            };
+            $dispatcher = new NotificationDispatcher(
+                new WebPushSender($transport, 'public-key', 'private-key'),
+                $subscriptions,
+                [
+                    new TelegramChannel($sink('telegram')),
+                    new PushoverChannel($sink('pushover')),
+                    new DiscordChannel($sink('discord', status: 204)),
+                    new NtfyChannel($sink('ntfy', '{"id":"fixture","event":"message"}')),
+                    new GotifyChannel($sink('gotify', '{"id":1}')),
+                ],
+            );
+            self::assertSame(1, (new RequestNotifier($this->repository, $dispatcher))->dispatch());
+            $path = '/jellyseerr?request=901';
+            $absolute = 'https://dash.example.test' . $path;
+            self::assertSame($path, $transport->payload['url'] ?? null);
+            self::assertStringEndsWith("\n" . $absolute, $captured['telegram']['text']);
+            self::assertSame($absolute, $captured['pushover']['url']);
+            self::assertSame($absolute, $captured['discord']['embeds'][0]['url']);
+            self::assertSame($absolute, $captured['ntfy']['click']);
+            self::assertSame($absolute, $captured['gotify']['extras']['client::notification']['click']['url']);
+        } finally {
+            foreach ($previous as $key => $value) {
+                putenv($value === false ? $key : $key . '=' . $value);
+            }
+        }
     }
 
     public function testCurrentDeviceConfirmationUsesOnlyTheSuppliedWebPushSubscription(): void
@@ -630,10 +688,12 @@ final class CurrentDeviceRecordingTransport implements WebPushTransport
 {
     /** @var list<array{endpoint: string, p256dh: string, auth: string}> */
     public array $subscriptions = [];
+    public array $payload = [];
 
     public function send(array $subscriptions, ?string $payload): iterable
     {
         $this->subscriptions = $subscriptions;
+        $this->payload = json_decode($payload ?? '{}', true, flags: JSON_THROW_ON_ERROR);
         foreach ($subscriptions as $subscription) {
             yield [
                 'endpoint' => $subscription['endpoint'],

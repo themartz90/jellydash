@@ -9,7 +9,7 @@
     <link rel="apple-touch-icon" href="/assets/img/apple-touch-icon.png">
     <meta name="theme-color" content="#0a0910">
 
-    <link rel="stylesheet" href="/assets/css/dashboard.css?v={{ asset_revision }}">
+    <link rel="stylesheet" href="/assets/css/dashboard.css?v={{ asset_revision }}-seerr-notifications">
 </head>
 <body class="login-body">
 <main class="login-card">
@@ -35,6 +35,7 @@
 
     <form action="?auth=login" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {% if seerr_request is not null %}<input type="hidden" name="seerr_request" value="{{ seerr_request }}">{% endif %}
         <label class="settings-field">
             <span>Username</span>
             <input type="text" name="username" autocomplete="username" autofocus required>
@@ -53,5 +54,7 @@
         <button type="submit" class="settings-save-btn login-submit">Sign in</button>
     </form>
 </main>
+{% include "_seerr_notification.twig" %}
+<script src="/assets/js/pwa.js?v={{ asset_revision }}-seerr-notifications"></script>
 </body>
 </html>

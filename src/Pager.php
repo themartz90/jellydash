@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Mk\Framework;
 
+use Mk\Framework\Jellyseerr\RequestLink;
+
 class Pager
 {
 
@@ -24,12 +26,21 @@ class Pager
         exit();
     }
 
-    public static function login(): never
+    public static function login(?int $seerrRequestId = null): never
     {
-        header('Location: /' . LOGIN_PAGE);
+        $query = $seerrRequestId !== null ? '?seerr_request=' . $seerrRequestId : '';
+        header('Location: /' . LOGIN_PAGE . $query);
         exit();
     }
 
+    public static function afterLogin(?int $seerrRequestId): never
+    {
+        if ($seerrRequestId !== null) {
+            header('Location: ' . RequestLink::path($seerrRequestId));
+            exit();
+        }
+        self::homePage();
+    }
 
 
 

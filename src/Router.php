@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mk\Framework;
 
+use Mk\Framework\Jellyseerr\RequestLink;
 use Mk\Framework\Pages\HistoryController;
 use Mk\Framework\Pages\DownloadsController;
 use Mk\Framework\Pages\HomeController;
@@ -54,7 +55,10 @@ final class Router
             && $key !== LOGIN_PAGE
             && !(new Authorization())->isUserLoggedIn()
         ) {
-            Pager::login();
+            $requestId = $key === 'jellyseerr' && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET' && !isset($_GET['fragment'])
+                ? RequestLink::id($_GET['request'] ?? null)
+                : null;
+            Pager::login($requestId);
         }
 
         // Core routes win; modules extend the table (see Modules).

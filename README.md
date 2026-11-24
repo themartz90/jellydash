@@ -87,7 +87,7 @@ The project is still young and under active development.
 
 - **Monitoring exclusions.** Hide selected Jellyfin users from Now Playing, History, Statistics, and history exports, and stop collecting new activity for them. Existing rows are kept. See [Monitoring exclusions](docs/MONITORING_EXCLUSIONS.md) before enabling this setting.
 
-- **Jellyseerr requests** (optional). The latest requests with their current status, plus a push notification when a new request comes in. The page only appears once you connect your Jellyseerr instance.
+- **Seerr requests** (optional). Browse the request queue, open request details, and manage requests if your dashboard allows it. [Setup and permissions](#seerr-requests)
 
 - **Downloads** (optional). Follow SABnzbd, qBittorrent, Transmission, Deluge and NZBGet clients on one page. See current jobs and up to 20 recent matching results. Jellydash only reads their status; queue changes still happen in the downloader. See [Downloads setup](docs/DOWNLOADS.md).
 
@@ -229,9 +229,28 @@ Open the Downloads card in Settings, then select **Manage clients** to add a cli
 
 The Docker app already runs the Downloads collector. Saved clients use your existing Jellydash database and survive normal Docker and Unraid updates without extra volume mappings or environment variables. If you run Jellydash locally without Docker, schedule `php bin/console.php downloads:poll` yourself. See [Downloads setup](docs/DOWNLOADS.md) for client-specific settings, filters, credential storage and the monitor's limits.
 
+## Seerr requests
+
+Set `JELLYSEER_URL` and `JELLYSEER_API_TOKEN` in `.env` to connect Seerr or Jellyseerr. Jellydash keeps the existing variable names and uses the key on the server. The integration was checked against the request API shapes of Seerr 3.5.2 and Jellyseerr 2.7.3.
+
+Open **Seerr** in the sidebar. **All requests**, **Pending approval**, and **Failed** show the queue. Select a poster to see who requested that item, which edition they asked for, and the seasons for a series. Use **Pending approval** for quick approvals and declines, or **Failed** to retry a request. These actions are also available in the request details when they apply. **Delete request** removes that record from Seerr and leaves library files in place.
+
+- With login on, Jellydash owners and admins can manage requests by default. Turn off **Allow owners and admins to manage requests** under **Settings > Seerr** to make the queue view-only for everyone.
+- With login off, the queue is view-only by default. Enable **Allow management on this open dashboard** only if you trust everyone who can reach it. That setting lets any visitor manage requests. Jellydash saves the two preferences separately.
+
+New request alerts link to the exact request. Sign in if prompted, then Jellydash opens the request. If a Web Push alert brings an existing Jellydash page forward, use **Open request** to leave that page when you're ready. A link only opens details. If Seerr is temporarily unavailable, Jellydash may show saved details with management disabled. Use **Try again** once Seerr is back.
+
+For a pending request, **Edit request** shows the seasons, destination, and quality profile choices Jellydash can verify. Saving keeps the request pending approval. Some requests only support a subset of those changes.
+
+**Allow library file removal** under **Settings > Seerr** is off by default. It also requires request management and has a separate preference for each login mode. On an open dashboard, enabling both settings gives every visitor access to file removal.
+
+Use **Review library file removal** in request details to check the edition and the Radarr or Sonarr instance. Confirming removes the whole movie or series edition, including its files and the service entry. This can affect other requests that share those files. Seerr keeps the request records, and the service can add the title again later. The review requires Jellydash to reach the configured library service and verify the entry. Seerr 3.5.2 supports verified Standard and 4K targets. Jellyseerr 2.7.3 supports verified Standard targets and can still show **Available** after removal.
+
+Keep Standard and 4K libraries in separate directories. Jellydash compares the paths the services report, and differently named Docker mounts or filesystem aliases can point to the same directory.
+
 ## Notifications
 
-Jellydash can ping you when someone starts playing and when a new Jellyseerr request comes in. Pick whichever channels you already use.
+Jellydash can ping you when someone starts playing and when a new Seerr request comes in. Pick whichever channels you already use.
 
 Jellydash sends each alert through every configured channel. If any channel accepts it, the alert is marked as delivered, and failed channels aren't retried separately. If all channels fail, the alert goes into the retry queue.
 
@@ -243,7 +262,7 @@ If you are upgrading an existing MariaDB install, update its Compose file to inc
 
 Two things that apply to all channels:
 
-- Set `APP_URL=https://your-dashboard.example.com` if you want alerts to link back to your dashboard.
+- Set `APP_URL=https://your-dashboard.example.com` to include dashboard links in Telegram, Pushover, Discord, ntfy and Gotify alerts. Web Push links use the dashboard that enrolled the browser.
 - You can exclude users from triggering alerts (usually yourself) in the Settings page inside the app.
 
 Run this to test your setup. It reports each channel separately:

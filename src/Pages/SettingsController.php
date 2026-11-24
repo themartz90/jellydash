@@ -12,6 +12,7 @@ use Mk\Framework\Downloads\Feature;
 use Mk\Framework\Jellyfin\JellyfinClient;
 use Mk\Framework\Jellyfin\MinimumViewingTime;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
+use Mk\Framework\Jellyseerr\JellyseerrClient;
 use Mk\Framework\Log;
 use Mk\Framework\Main;
 use Mk\Framework\Push\NotificationLibraryExclusions;
@@ -33,6 +34,9 @@ final class SettingsController extends Controller
         $canManageGlobal = $authorization->can(Authorization::CAPABILITY_MANAGE_GLOBAL);
         $canManagePush = $authorization->can(Authorization::CAPABILITY_MANAGE_OWN_PUSH);
         $canManageAllPush = $authorization->can(Authorization::CAPABILITY_MANAGE_ALL_PUSH);
+        $seerrConfigured = $canManageGlobal && (new JellyseerrClient())->isConfigured();
+        $seerrManagement = $seerrConfigured ? AppSettings::seerrRequestManagement($authEnabled) : null;
+        $seerrFileRemoval = $seerrConfigured ? AppSettings::seerrFileRemoval($authEnabled) : null;
 
         // Library names for the trending-exclusion checkboxes. A Jellyfin
         // outage degrades to a free-text field instead of an error page.
@@ -125,6 +129,10 @@ final class SettingsController extends Controller
             'show_recently_added' => AppSettings::bool('show_recently_added', true),
             'minimum_viewing_seconds' => MinimumViewingTime::seconds(),
             'downloads_enabled' => Feature::enabled(),
+            'seerr_configured' => $seerrConfigured,
+            'seerr_management' => $seerrManagement,
+            'seerr_file_removal' => $seerrFileRemoval,
+            'seerr_auth_enabled' => $authEnabled,
             'libraries' => $libraries,
             'excluded' => $excluded,
             'extra_excluded' => implode(', ', $extraExcluded),

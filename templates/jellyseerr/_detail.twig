@@ -1,0 +1,85 @@
+{% set manageable = request and can_manage and request.managementVersion %}
+<div data-seerr-detail-result{% if manageable %} data-seerr-action-request="{{ request.requestId }}" data-seerr-version="{{ request.managementVersion }}"{% endif %}>
+    {% if state == 'cached' %}
+        <p class="seerr-notice">Seerr is unavailable. Showing saved details. <button type="button" class="history-pager-btn" data-seerr-retry-detail>Try again</button></p>
+    {% endif %}
+    {% if request %}
+        <div class="seerr-detail-content">
+            {% if request.posterUrl %}<img class="seerr-detail-poster" src="{{ request.posterUrl }}" alt="" width="120" height="180">{% endif %}
+            <div>
+                <div class="seerr-detail-heading">
+                    <h3>{{ request.title }}</h3>
+                    <p class="seerr-detail-meta">{{ request.mediaType == 'tv' ? 'Series' : (request.mediaType == 'movie' ? 'Movie' : 'Media') }}{% if request.year %} · {{ request.year }}{% endif %}</p>
+                    {% if manageable and request.statusKind == 'pending' %}
+                        <button class="downloads-button seerr-edit-entry" type="button" data-seerr-edit-start>Edit Request</button>
+                    {% endif %}
+                </div>
+                <dl class="seerr-detail-fields">
+                    <div><dt>Status</dt><dd><span class="seerr-status is-{{ request.statusKind }}">{{ request.statusLabel }}</span></dd></div>
+                    <div><dt>Requested by</dt><dd>{{ request.requester }}</dd></div>
+                    {% if request.is4k is not null %}<div><dt>Edition</dt><dd>{{ request.is4k ? '4K' : 'Standard' }}</dd></div>{% endif %}
+                    {% if request.mediaType == 'tv' and request.seasonNumbers %}
+                        <div><dt>Seasons</dt><dd>{{ request.seasonNumbers|join(', ') }}</dd></div>
+                    {% endif %}
+                    {% if request.requestedAt %}
+                        <div><dt>Requested</dt><dd><time datetime="{{ request.requestedAt }}">{{ request.requestedAt|date('j M Y, H:i') }}</time></dd></div>
+                    {% endif %}
+                    <div><dt>Request ID</dt><dd>#{{ request.requestId }}</dd></div>
+                </dl>
+            </div>
+        </div>
+        {% if manageable %}
+            <div class="seerr-detail-actions">
+                {% if request.statusKind == 'pending' %}
+                    <section class="seerr-editor" data-seerr-editor aria-label="Edit request" hidden>
+                        <div data-seerr-edit-content></div>
+                        <div class="seerr-detail-buttons">
+                            <button class="downloads-button" type="button" data-seerr-edit-cancel>Cancel</button>
+                            <button class="downloads-button downloads-button-primary" type="submit" form="seerr-edit-form" data-seerr-save-edit disabled hidden>Save changes</button>
+                        </div>
+                    </section>
+                {% endif %}
+                <div class="seerr-detail-footer" data-seerr-detail-controls>
+                    {% if request.statusKind in ['pending', 'failed'] %}
+                        <div class="seerr-detail-buttons">
+                            {% if request.statusKind == 'pending' %}
+                                <button class="downloads-button downloads-button-primary" type="button" data-seerr-action="approve">Approve</button>
+                                <button class="downloads-button" type="button" data-seerr-action="decline">Decline</button>
+                            {% else %}
+                                <button class="downloads-button" type="button" data-seerr-action="retry">Retry</button>
+                            {% endif %}
+                        </div>
+                    {% endif %}
+                    <div class="seerr-detail-buttons seerr-detail-removal-buttons">
+                        {% if can_remove_files %}
+                            <button class="downloads-button seerr-detail-file-review" type="button" data-seerr-file-start>Review library file removal</button>
+                        {% endif %}
+                        <button class="downloads-button downloads-button-danger seerr-detail-delete" type="button" data-seerr-delete-start>Delete request</button>
+                    </div>
+                </div>
+                <div class="seerr-detail-confirm" data-seerr-delete-confirmation hidden>
+                    <h4 id="seerr-delete-heading">{% if request.title == 'Unknown title' %}Delete request #{{ request.requestId }}?{% else %}Delete request for “{{ request.title }}”?{% endif %}</h4>
+                    <p id="seerr-delete-copy">This removes the request from Seerr. Library files will be kept.</p>
+                    <div class="seerr-detail-buttons">
+                        <button class="downloads-button" type="button" data-seerr-delete-cancel aria-describedby="seerr-delete-heading seerr-delete-copy">Cancel</button>
+                        <button class="downloads-button downloads-button-danger" type="button" data-seerr-action="delete" aria-describedby="seerr-delete-heading seerr-delete-copy">Delete request</button>
+                    </div>
+                </div>
+                {% if can_remove_files %}
+                    <section class="seerr-detail-confirm" data-seerr-file-panel aria-label="Remove library files" hidden>
+                        <div data-seerr-file-content></div>
+                        <div class="seerr-detail-buttons">
+                            <button class="downloads-button" type="button" data-seerr-file-cancel>Cancel</button>
+                            <button class="downloads-button downloads-button-danger" type="button" data-seerr-action="remove-files" aria-describedby="seerr-file-heading seerr-file-scope" hidden>Remove library files</button>
+                        </div>
+                    </section>
+                {% endif %}
+            </div>
+        {% endif %}
+    {% elseif state == 'missing' %}
+        <p>This request could not be found.</p>
+    {% else %}
+        <p>Could not load this request from Seerr.</p>
+        <button type="button" class="history-pager-btn" data-seerr-retry-detail>Try again</button>
+    {% endif %}
+</div>

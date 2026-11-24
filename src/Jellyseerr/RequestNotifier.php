@@ -81,6 +81,7 @@ final class RequestNotifier
         $title = trim((string) ($request['title'] ?? '')) ?: 'Unknown title';
         $year = trim((string) ($request['year'] ?? ''));
         $isTv = (string) ($request['media_type'] ?? '') === 'tv';
+        $requestId = RequestLink::id($request['request_id'] ?? null);
 
         $line = $year !== '' ? $title . ' (' . $year . ')' : $title;
         $kind = $isTv ? 'Series' : 'Movie';
@@ -92,7 +93,7 @@ final class RequestNotifier
             'title' => '🎬 New request from ' . $who,
             'body' => $line . "\n" . $kind,
             'tag' => 'jellydash-seerr-' . (string) ($request['request_id'] ?? ''),
-            'url' => '/jellyseerr',
+            'url' => $requestId !== null ? RequestLink::path($requestId) : '/jellyseerr',
         ];
     }
 }

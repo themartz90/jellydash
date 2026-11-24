@@ -49,6 +49,7 @@
     --color-green: #34d8a6;
     --color-green-text: #46e0b0;
     --color-amber: #f7b955;
+    --color-red: #ff6b6b;
     --font-ui: Barlow, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     --font-mono: "JetBrains Mono", "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
 }
@@ -2089,7 +2090,7 @@ svg.icon-filled {
 
 .now-playing-telemetry {
     display: grid;
-    grid-template-columns: repeat(3, minmax(128px, auto));
+    grid-template-columns: repeat(var(--header-metric-columns, 3), minmax(128px, auto));
     margin: 0 0 0 auto;
     padding: 4px;
     border: 1px solid rgba(137, 117, 255, .16);
@@ -2097,6 +2098,9 @@ svg.icon-filled {
     background: rgba(16, 14, 25, .62);
     box-shadow: inset 0 1px rgba(255, 255, 255, .025), 0 12px 30px -26px rgba(90, 74, 190, .85);
 }
+
+.now-playing-telemetry[hidden] { display: none; }
+.header-metrics-two { --header-metric-columns: 2; }
 
 .now-playing-metric {
     display: grid;
@@ -4435,12 +4439,6 @@ a.trending-card:hover .trending-poster {
     border: 1px solid var(--color-border);
     border-radius: 14px;
     box-shadow: 0 18px 34px -24px rgba(0, 0, 0, .9);
-    transition: transform .18s ease, box-shadow .18s ease;
-}
-
-.seerr-card:hover .seerr-poster {
-    transform: translateY(-3px);
-    box-shadow: 0 22px 40px -22px rgba(0, 0, 0, .95);
 }
 
 .seerr-poster img {
@@ -4529,7 +4527,8 @@ a.trending-card:hover .trending-poster {
     background: rgba(247, 185, 85, .26);
 }
 
-.seerr-status.is-declined {
+.seerr-status.is-declined,
+.seerr-status.is-failed {
     color: #ffdcdc;
     border-color: rgba(255, 107, 107, .5);
     background: rgba(255, 107, 107, .3);
@@ -4762,6 +4761,53 @@ a.trending-card:hover .trending-poster {
 
 .stats-devices-manage[hidden] {
     display: none;
+}
+
+.seerr-notification:not([hidden]) {
+    position: fixed;
+    z-index: 100;
+    inset-inline: 0;
+    bottom: max(25px, env(safe-area-inset-bottom));
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 8px 12px;
+    width: max-content;
+    max-width: calc(100% - 24px);
+    margin-inline: auto;
+    padding: 10px 14px;
+    color: var(--color-text);
+    font-size: 13px;
+    background: #302740;
+    border: 1px solid #75618e;
+    border-radius: 9px;
+    box-shadow: 0 5px 40px rgba(0, 0, 0, .55);
+}
+
+.seerr-notification > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.seerr-notification :focus-visible {
+    outline: 2px solid var(--color-purple-soft);
+    outline-offset: 2px;
+}
+
+dialog:modal > [data-seerr-notification-host] {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flow-root;
+}
+
+dialog:modal .seerr-notification:not([hidden]) {
+    position: static;
+    width: auto;
+    max-width: none;
+    margin: 8px;
 }
 
 .visually-hidden {
@@ -6155,7 +6201,7 @@ a.trending-card:hover .trending-poster {
     }
 
     .now-playing-telemetry {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(var(--header-metric-columns, 3), minmax(0, 1fr));
         width: 100%;
         margin-left: 0;
     }

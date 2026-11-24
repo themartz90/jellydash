@@ -1,5 +1,5 @@
 {% if pager.pages > 1 %}
-    <nav class="history-pager" aria-label="History pages">
+    <nav class="history-pager" aria-label="{{ pager_label|default('History pages') }}">
         {% if pager.prev_url %}
             <a class="history-pager-btn" href="{{ pager.prev_url }}">Previous</a>
         {% else %}

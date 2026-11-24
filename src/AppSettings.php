@@ -80,6 +80,37 @@ final class AppSettings
         return $value === null ? $default : filter_var($value, FILTER_VALIDATE_BOOL);
     }
 
+    public static function seerrRequestManagementKey(bool $authEnabled): string
+    {
+        return $authEnabled ? 'seerr_manage_requests_authenticated' : 'seerr_manage_requests_open';
+    }
+
+    /** Null means the preference could not be read. */
+    public static function seerrRequestManagement(bool $authEnabled): ?bool
+    {
+        try {
+            $value = self::getFresh(self::seerrRequestManagementKey($authEnabled), requireAvailable: true);
+        } catch (\RuntimeException) {
+            return null;
+        }
+
+        return $value === null ? $authEnabled : $value === '1';
+    }
+
+    public static function seerrFileRemovalKey(bool $authEnabled): string
+    {
+        return $authEnabled ? 'seerr_remove_files_authenticated' : 'seerr_remove_files_open';
+    }
+
+    public static function seerrFileRemoval(bool $authEnabled): ?bool
+    {
+        try {
+            return self::getFresh(self::seerrFileRemovalKey($authEnabled), requireAvailable: true) === '1';
+        } catch (\RuntimeException) {
+            return null;
+        }
+    }
+
     /**
      * @return array<string, string>
      */

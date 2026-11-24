@@ -12,10 +12,8 @@ use Mk\Framework\DatabasePlatform;
 /**
  * Local mirror of Jellyseerr requests.
  *
- * Titles and posters never change, so each request is looked up once and stored;
- * only the two status fields are refreshed from the request list. That
- * makes the Requests page a plain SELECT: no API calls in the request path, and
- * it keeps working when Jellyseerr is unreachable.
+ * The poller owns mirror membership and notification state. The requests page
+ * can reuse title and poster metadata from matching rows.
  */
 final class SeerrRequestRepository
 {
@@ -172,6 +170,22 @@ final class SeerrRequestRepository
             ->orderBy('request_id')->desc()
             ->limit(max(1, $limit))
             ->fetchAll();
+    }
+
+    /**
+     * @param list<int> $ids
+     * @return array<int, \Dibi\Row>
+     */
+    public function displayMetadata(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+
+        return $this->db->select('request_id, media_type, tmdb_id, title, year, poster_path, metadata_pending')
+            ->from('seerr_requests')
+            ->where('request_id IN %in', $ids)
+            ->fetchAssoc('request_id');
     }
 
     /** A disabled notification switch makes already-mirrored requests a baseline. */

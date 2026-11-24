@@ -24,7 +24,7 @@
 
     <link rel="preload" href="/assets/fonts/barlow/Barlow-Regular.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="/assets/fonts/barlow/Barlow-Bold.woff2" as="font" type="font/woff2" crossorigin>
-    <link rel="stylesheet" href="/assets/css/dashboard.css?v={{ asset_revision }}">
+    <link rel="stylesheet" href="/assets/css/dashboard.css?v={{ asset_revision }}-seerr-notifications">
     {% if movie_recovery_allowed|default(false) and layout.page in ['settings', 'history', 'statistics', 'now-playing'] %}
         <link rel="stylesheet" href="/assets/css/movie-recovery.css?v={{ asset_revision }}">
     {% endif %}
@@ -91,9 +91,10 @@
 
 {% include "_history_library_upgrade_dialog.twig" %}
 {% include "_release_dialog.twig" %}
+{% include "_seerr_notification.twig" %}
 
 {% block page_scripts %}{% endblock %}
-<script src="/assets/js/pwa.js?v=20260624-pwa"></script>
+<script src="/assets/js/pwa.js?v={{ asset_revision }}-seerr-notifications"></script>
 <script src="/assets/js/push.js?v={{ asset_revision }}"></script>
 <script src="/assets/js/nav.js?v={{ asset_revision }}"></script>
 <script src="/assets/js/dashboard-scroll.js?v=20260910-scroll-restore"></script>

@@ -90,7 +90,7 @@ final class AtomicJsonFile
      * @param callable(): T $callback
      * @return T
      */
-    public function withExclusiveLock(callable $callback): mixed
+    public function withExclusiveLock(callable $callback, bool $blocking = true): mixed
     {
         $this->ensureDirectory();
         $lock = @fopen($this->path . '.lock', 'c+');
@@ -100,7 +100,7 @@ final class AtomicJsonFile
 
         try {
             @chmod($this->path . '.lock', 0666);
-            if (!@flock($lock, LOCK_EX)) {
+            if (!@flock($lock, $blocking ? LOCK_EX : LOCK_EX | LOCK_NB)) {
                 throw new \RuntimeException('Could not acquire the cache lock.');
             }
 

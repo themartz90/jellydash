@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mk\Framework;
 
+use Mk\Framework\Jellyseerr\JellyseerrClient;
 use Mk\Framework\Push\PushDeviceCapability;
 use Mk\Framework\Push\PushSubscriptionRepository;
 
@@ -135,6 +136,19 @@ class Authorization
             self::CAPABILITY_MANAGE_OWN_PUSH => $role <= self::ROLE_USER,
             default => false,
         };
+    }
+
+    public function canManageSeerrRequests(?JellyseerrClient $client = null): bool
+    {
+        return ($client ?? new JellyseerrClient())->isConfigured()
+            && $this->can(self::CAPABILITY_MANAGE_GLOBAL)
+            && AppSettings::seerrRequestManagement(Config::bool('AUTH_ENABLED', false)) === true;
+    }
+
+    public function canRemoveSeerrFiles(?JellyseerrClient $client = null): bool
+    {
+        return $this->canManageSeerrRequests($client)
+            && AppSettings::seerrFileRemoval(Config::bool('AUTH_ENABLED', false)) === true;
     }
 
     public function canSendGlobalNotificationTest(): bool

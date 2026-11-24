@@ -1,0 +1,51 @@
+<div data-seerr-editor-result>
+    <h4 tabindex="-1">Edit pending request</h4>
+    {% if options and (options.canSeasons or options.routes) %}
+        <p>Saving changes keeps this request pending approval.</p>
+        <form id="seerr-edit-form" data-seerr-edit-form data-version="{{ version }}" data-options-version="{{ options.version }}" data-base-version="{{ options.baseVersion }}">
+            {% if options.canSeasons %}
+                <fieldset>
+                    <legend>Seasons</legend>
+                    <div class="seerr-season-choices">
+                        {% for season in options.seasons %}
+                            <label><input type="checkbox" name="season" value="{{ season }}"{% if season in seasons %} checked{% endif %}> {{ season == 0 ? 'Specials' : 'Season ' ~ season }}</label>
+                        {% endfor %}
+                    </div>
+                </fieldset>
+            {% endif %}
+            {% if options.routes %}
+                {% if options.routes|length > 1 %}
+                    <label class="history-export-field">
+                        <span>Destination</span>
+                        <select name="destination">
+                            {% for key, route in options.routes %}<option value="{{ key }}"{% if key == options.currentRoute %} selected{% endif %}>{{ route.label }}</option>{% endfor %}
+                        </select>
+                    </label>
+                {% else %}
+                    <input type="hidden" name="destination" value="{{ options.currentRoute }}">
+                    <div class="history-export-field">
+                        <span>Destination</span>
+                        {{ options.routes[options.currentRoute].label }}
+                    </div>
+                {% endif %}
+                {% for key, route in options.routes|filter(route => route.profiles) %}
+                    <label class="history-export-field" data-seerr-profile="{{ key }}"{% if key != options.currentRoute %} hidden{% endif %}>
+                        <span>Quality profile</span>
+                        <select name="profile"{% if key != options.currentRoute %} disabled{% endif %}>
+                            {% for id, name in route.profiles %}<option value="{{ id }}"{% if id == (key == options.currentRoute ? options.currentProfile : 'default') %} selected{% endif %}>{{ name }}</option>{% endfor %}
+                        </select>
+                    </label>
+                {% endfor %}
+                <p data-seerr-profile-status role="status" hidden></p>
+            {% endif %}
+        </form>
+    {% else %}
+        {% if stale %}
+            <p>This request changed. Refresh its details before editing.</p>
+            <button class="history-pager-btn" type="button" data-seerr-retry-detail>Refresh details</button>
+        {% else %}
+            <p>{{ pending ? 'No editing options could be verified for this request.' : 'Current pending request details are unavailable.' }}</p>
+        {% endif %}
+    {% endif %}
+    {% if seerr_link %}<p><a class="history-pager-btn seerr-editor-link" href="{{ seerr_link }}" target="_blank" rel="noopener noreferrer">Open in Seerr</a></p>{% endif %}
+</div>

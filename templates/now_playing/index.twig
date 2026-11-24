@@ -10,32 +10,35 @@
         <p><span class="live-dot {{ streams|length > 0 ? 'is-live' : 'is-idle' }}" data-live-dot></span><span data-live-label>{{ is_loading|default(false) ? 'Loading sessions...' : (streams|length > 0 ? streams|length ~ ' ' ~ (streams|length == 1 ? 'stream' : 'streams') ~ ' - ' ~ stats.active_users ~ ' ' ~ (stats.active_users == 1 ? 'user' : 'users') : 'No active sessions') }}</span><span class="now-playing-collection-status" data-collection-status role="status" aria-live="polite" hidden></span></p>
     </div>
     {% if downloads_configured %}<a href="/downloads" data-download-indicator hidden></a>{% endif %}
-    <dl class="now-playing-telemetry" data-now-playing-telemetry aria-label="Playback telemetry">
-        <div class="now-playing-metric">
-            <dt><i class="dot-purple"></i>Today</dt>
-            <dd data-stat="watch_today">{{ stats.watch_today }}</dd>
-        </div>
-        <div class="now-playing-metric">
-            <dt><i class="dot-blue"></i>Bandwidth</dt>
-            <dd data-stat-block="bandwidth">
-                {% if stats.active_streams > 0 %}
-                    <span>{{ stats.bandwidth_mbps }}</span><small>Mbps</small>
-                {% else %}
-                    <span class="stat-placeholder">Idle</span>
-                {% endif %}
-            </dd>
-        </div>
-        <div class="now-playing-metric">
-            <dt><i class="dot-amber"></i>Transcoding</dt>
-            <dd data-stat-block="transcoding">
-                {% if stats.active_streams > 0 %}
-                    <span>{{ stats.transcodes }}</span><small>/ {{ stats.active_streams }}</small>
-                {% else %}
-                    <span class="stat-placeholder">None</span>
-                {% endif %}
-            </dd>
-        </div>
-    </dl>
+    {% embed "_header_metrics.twig" %}
+        {% block metrics_attributes %}data-now-playing-telemetry aria-label="Playback telemetry"{% endblock %}
+        {% block metrics %}
+            <div class="now-playing-metric">
+                <dt><i class="dot-purple"></i>Today</dt>
+                <dd data-stat="watch_today">{{ stats.watch_today }}</dd>
+            </div>
+            <div class="now-playing-metric">
+                <dt><i class="dot-blue"></i>Bandwidth</dt>
+                <dd data-stat-block="bandwidth">
+                    {% if stats.active_streams > 0 %}
+                        <span>{{ stats.bandwidth_mbps }}</span><small>Mbps</small>
+                    {% else %}
+                        <span class="stat-placeholder">Idle</span>
+                    {% endif %}
+                </dd>
+            </div>
+            <div class="now-playing-metric">
+                <dt><i class="dot-amber"></i>Transcoding</dt>
+                <dd data-stat-block="transcoding">
+                    {% if stats.active_streams > 0 %}
+                        <span>{{ stats.transcodes }}</span><small>/ {{ stats.active_streams }}</small>
+                    {% else %}
+                        <span class="stat-placeholder">None</span>
+                    {% endif %}
+                </dd>
+            </div>
+        {% endblock %}
+    {% endembed %}
 {% endblock %}
 
 {% block dashboard_content %}
