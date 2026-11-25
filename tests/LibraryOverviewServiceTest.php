@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Mk\Framework\Jellyfin\JellyfinClient;
 use Mk\Framework\Jellyfin\LibraryHistorySource;
 use Mk\Framework\Jellyfin\LibraryOverviewClient;
 use Mk\Framework\Jellyfin\LibraryOverviewService;
@@ -128,6 +129,34 @@ final class LibraryOverviewServiceTest extends TestCase
             array_column($data['libraries'][0]['breakdown'], 'value', 'label')
         );
         $this->assertSame('9', $data['summary'][1]['value']);
+    }
+
+    public function testVirtualEpisodesAreExcludedFromLibraryCounts(): void
+    {
+        $client = new JellyfinClient(requester: static function (string $path): array {
+            if ($path === '/Library/MediaFolders') {
+                return ['Items' => [
+                    ['Id' => 'mixed', 'Name' => 'Mixed', 'CollectionType' => 'other'],
+                    ['Id' => 'tv', 'Name' => 'TV Shows', 'CollectionType' => 'tvshows'],
+                    ['Id' => 'anime', 'Name' => 'Anime', 'CollectionType' => 'tvshows'],
+                ]];
+            }
+
+            parse_str((string) parse_url($path, PHP_URL_QUERY), $query);
+            $count = match ($query['IncludeItemTypes']) {
+                'Episode' => ($query['ExcludeLocationTypes'] ?? '') === 'Virtual' ? 4 : 40,
+                'Movie', 'Series', 'Season' => 1,
+                default => 0,
+            };
+            return ['Items' => [], 'TotalRecordCount' => $count];
+        });
+        $data = (new LibraryOverviewService($client, new FakeLibraryHistorySource()))->data();
+
+        $this->assertSame(['Mixed' => 5, 'TV Shows' => 4, 'Anime' => 4], array_column($data['libraries'], 'totalFilesRaw', 'name'));
+        foreach ($data['libraries'] as $library) {
+            $this->assertSame('4', array_column($library['breakdown'], 'value', 'label')['Episodes']);
+        }
+        $this->assertSame('13', $data['summary'][1]['value']);
     }
 
     public function testIncompleteRefreshKeepsACompleteStaleCache(): void

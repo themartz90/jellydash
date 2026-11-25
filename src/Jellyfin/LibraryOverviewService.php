@@ -689,11 +689,16 @@ final class LibraryOverviewService
 
     private function countItems(LibraryOverviewClient $client, string $parentId, string $types): int
     {
-        return $client->itemCount([
+        $query = [
             'ParentId' => $parentId,
             'Recursive' => 'true',
             'IncludeItemTypes' => $types,
-        ]);
+        ];
+        if ($types === 'Episode') {
+            $query['ExcludeLocationTypes'] = 'Virtual';
+        }
+
+        return $client->itemCount($query);
     }
 
     /**
