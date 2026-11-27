@@ -205,8 +205,20 @@
             if (signal.aborted) return;
             if (!template.content.querySelector('[data-seerr-detail-result]')) throw new Error('Missing request details');
             detail.replaceChildren(template.content);
+            const library = detail.querySelector('[data-seerr-jellyfin]');
+            if (library) void loadJellyfinLink(library, url, signal);
         } catch (error) {
             if (!signal.aborted) showMessage(detail, 'Could not load this request from Seerr.', 'data-seerr-retry-detail');
+        }
+    }
+
+    async function loadJellyfinLink(library, url, signal) {
+        try {
+            const response = await fragment(url, 'jellyfin', signal);
+            const html = await response.text();
+            if (!signal.aborted) library.innerHTML = html;
+        } catch {
+            // The optional link can fail independently of request details.
         }
     }
 
@@ -246,7 +258,7 @@
     }
 
     function hideDetailActions(source, hidden) {
-        source.querySelectorAll('[data-seerr-detail-controls], [data-seerr-edit-start]')
+        source.querySelectorAll('[data-seerr-detail-controls], [data-seerr-edit-start], [data-seerr-jellyfin]')
             .forEach((element) => { element.hidden = hidden; });
     }
 

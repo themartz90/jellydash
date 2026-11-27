@@ -4,7 +4,7 @@
 {% block page_styles %}
     <link rel="stylesheet" href="/assets/css/recap.css?v={{ asset_revision }}">
     {% if configured %}<link rel="stylesheet" href="/assets/css/downloads.css?v={{ asset_revision }}-compact-widget-1">{% endif %}
-    <link rel="stylesheet" href="/assets/css/seerr-requests.css?v={{ asset_revision }}-file-removal-footer">
+    <link rel="stylesheet" href="/assets/css/seerr-requests.css?v={{ asset_revision }}-jellyfin-link-only">
 {% endblock %}
 
 {% block dashboard_header %}
@@ -70,5 +70,5 @@
 {% endblock %}
 
 {% block page_scripts %}
-    {% if configured %}<script src="/assets/js/seerr-requests.js?v={{ asset_revision }}-delete-feedback"></script>{% endif %}
+    {% if configured %}<script src="/assets/js/seerr-requests.js?v={{ asset_revision }}-jellyfin-link-only"></script>{% endif %}
 {% endblock %}

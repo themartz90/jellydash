@@ -239,6 +239,20 @@
     white-space: normal;
 }
 
+.seerr-jellyfin-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 34px;
+    margin-top: 12px;
+    font-size: 13px;
+    font-weight: 650;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    white-space: nowrap;
+}
+.seerr-jellyfin-link svg { width: 14px; height: 14px; flex: none; }
+
 .seerr-detail-actions {
     margin-top: 18px;
     padding-top: 14px;
@@ -311,6 +325,7 @@
     .seerr-edit-entry { min-height: 44px; }
     .seerr-detail-footer:not([hidden]) { gap: 8px; }
     .seerr-detail-actions .downloads-button { min-height: 44px; padding-inline: 10px; }
+    .seerr-jellyfin-link { min-height: 44px; }
     .seerr-detail-content { gap: 11px; }
     .seerr-detail-fields div { grid-template-columns: 1fr; gap: 2px; }
 }

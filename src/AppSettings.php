@@ -94,7 +94,7 @@ final class AppSettings
             return null;
         }
 
-        return $value === null ? $authEnabled : $value === '1';
+        return $value === null || $value === '1';
     }
 
     public static function seerrFileRemovalKey(bool $authEnabled): string

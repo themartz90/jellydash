@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace Mk\Framework\Pages;
 
 use Mk\Framework\Authorization;
+use Mk\Framework\Config;
 use Mk\Framework\Controller;
+use Mk\Framework\Jellyfin\JellyfinClient;
+use Mk\Framework\Jellyfin\JellyfinLinks;
+use Mk\Framework\Jellyseerr\JellyfinRequestLink;
 use Mk\Framework\Jellyseerr\JellyseerrClient;
 use Mk\Framework\Jellyseerr\LibraryFileRemoval;
 use Mk\Framework\Jellyseerr\RequestBrowser;
@@ -29,12 +33,16 @@ final class JellyseerrController extends Controller
 
         if ($fragment !== null) {
             header('Cache-Control: private, no-store');
-            if (!$configured || !in_array($fragment, ['queue', 'detail', 'counts', 'metadata', 'editor', 'file-removal'], true)) {
+            if (!$configured || !in_array($fragment, ['queue', 'detail', 'counts', 'metadata', 'editor', 'file-removal', 'jellyfin'], true)) {
                 http_response_code(404);
                 return;
             }
             if (session_status() === PHP_SESSION_ACTIVE) {
                 session_write_close();
+            }
+            if ($fragment === 'jellyfin') {
+                $this->jellyfinLink($client, RequestLink::id($_GET['request'] ?? null));
+                return;
             }
             if ($fragment === 'editor') {
                 $id = RequestLink::id($_GET['request'] ?? null);
@@ -54,6 +62,8 @@ final class JellyseerrController extends Controller
                 $detail['can_manage'] = $this->canManageCurrent($client, $detail['state']);
                 $detail['can_remove_files'] = $detail['can_manage'] && $detail['request'] !== null
                     && LibraryFileRemoval::available($detail['request']) && $this->canRemoveFiles($client);
+                $detail['check_jellyfin_link'] = $detail['state'] === 'current' && isset($detail['request']['jellyfinBinding'])
+                    && Config::get('JELLYFIN_URL', '') !== '';
                 $this->render('jellyseerr/_detail', $detail);
             } elseif ($fragment === 'counts') {
                 header('Content-Type: application/json; charset=utf-8');
@@ -84,6 +94,29 @@ final class JellyseerrController extends Controller
             'filter' => $filter,
             'views' => $views,
         ]);
+    }
+
+    private function jellyfinLink(JellyseerrClient $client, ?int $id): void
+    {
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
+            header('Allow: GET');
+            http_response_code(405);
+            return;
+        }
+        $url = null;
+        try {
+            $apiBase = JellyfinLinks::validatedBaseUrl((string) Config::get('JELLYFIN_URL', ''));
+            $linkBase = $apiBase === null ? null : JellyfinLinks::baseUrl($apiBase);
+            if ($id !== null && $apiBase !== null && $linkBase !== null) {
+                $binding = JellyfinRequestLink::binding($client->requestDetail($id));
+                if ($binding !== null) {
+                    $url = (new JellyfinRequestLink(new JellyfinClient($apiBase), $linkBase))->verifiedLink($binding);
+                }
+            }
+        } catch (\RuntimeException | \InvalidArgumentException) {
+            // Unverified targets leave request details usable without a link.
+        }
+        $this->render('jellyseerr/_jellyfin_link', ['url' => $url]);
     }
 
     private function fileRemoval(JellyseerrClient $client, ?int $id): void

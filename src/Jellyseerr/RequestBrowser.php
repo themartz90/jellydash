@@ -161,7 +161,9 @@ final class RequestBrowser
         }
 
         try {
-            $card = self::card($this->client->requestDetail($id));
+            $record = $this->client->requestDetail($id);
+            $card = self::card($record);
+            $card['jellyfinBinding'] = JellyfinRequestLink::binding($record);
             $this->write('detail', $key, $card);
             $cards = $this->withMetadata([$card]);
             if ($cards[0]['metadataPending']) {

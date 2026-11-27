@@ -28,6 +28,9 @@
                 </dl>
             </div>
         </div>
+        {% if check_jellyfin_link %}
+            <div data-seerr-jellyfin></div>
+        {% endif %}
         {% if manageable %}
             <div class="seerr-detail-actions">
                 {% if request.statusKind == 'pending' %}

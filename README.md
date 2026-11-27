@@ -235,10 +235,12 @@ Set `JELLYSEER_URL` and `JELLYSEER_API_TOKEN` in `.env` to connect Seerr or Jell
 
 Open **Seerr** in the sidebar. **All requests**, **Pending approval**, and **Failed** show the queue. Select a poster to see who requested that item, which edition they asked for, and the seasons for a series. Use **Pending approval** for quick approvals and declines, or **Failed** to retry a request. These actions are also available in the request details when they apply. **Delete request** removes that record from Seerr and leaves library files in place.
 
-- With login on, Jellydash owners and admins can manage requests by default. Turn off **Allow owners and admins to manage requests** under **Settings > Seerr** to make the queue view-only for everyone.
-- With login off, the queue is view-only by default. Enable **Allow management on this open dashboard** only if you trust everyone who can reach it. That setting lets any visitor manage requests. Jellydash saves the two preferences separately.
+- Jellydash login is off by default. Once Seerr is configured, anyone who can open the dashboard can manage requests without a Jellydash account. Turn off **Allow management on this open dashboard** under **Settings > Seerr** for a view-only queue.
+- If you enable Jellydash login, owners and admins can manage requests by default. Turn off **Allow owners and admins to manage requests** for a view-only queue. Jellydash remembers your choice separately for each login mode.
 
 New request alerts link to the exact request. Sign in if prompted, then Jellydash opens the request. If a Web Push alert brings an existing Jellydash page forward, use **Open request** to leave that page when you're ready. A link only opens details. If Seerr is temporarily unavailable, Jellydash may show saved details with management disabled. Use **Try again** once Seerr is back.
+
+**Open in Jellyfin** appears in request details when Jellydash verifies the match in your Jellyfin library. Jellyfin checks your access when you follow the link.
 
 For a pending request, **Edit request** shows the seasons, destination, and quality profile choices Jellydash can verify. Saving keeps the request pending approval. Some requests only support a subset of those changes.
 

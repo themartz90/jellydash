@@ -36,6 +36,11 @@ final class SeerrManagementPolicyTest extends TestCase
             putenv('AUTH_ENABLED=false');
             $auth = new Authorization($db);
             self::assertTrue($auth->can(Authorization::CAPABILITY_MANAGE_GLOBAL));
+            self::assertTrue($auth->canManageSeerrRequests($client));
+            self::assertFalse($auth->canRemoveSeerrFiles($client));
+            self::assertFalse($auth->canManageSeerrRequests(new JellyseerrClient('', 'fixture-token')));
+            self::assertFalse($auth->canManageSeerrRequests(new JellyseerrClient('http://127.0.0.1:1', '')));
+            AppSettings::set(self::OPEN, '0');
             self::assertFalse($auth->canManageSeerrRequests($client));
 
             putenv('AUTH_ENABLED=true');
