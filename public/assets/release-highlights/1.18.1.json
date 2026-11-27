@@ -1,0 +1,22 @@
+{
+  "version": "1.18.1",
+  "auto_show": true,
+  "title": "Seerr links and library counts",
+  "summary": "Open matching items in Jellyfin from request details, with fixes for request deletion and library counts.",
+  "highlights": [
+    "On open dashboards, anyone who can reach Jellydash can manage Seerr requests by default. A saved opt-out stays in effect. To make the queue view-only, turn off Allow management on this open dashboard under Settings > Seerr.",
+    "Request details show Open in Jellyfin when Jellydash verifies the library match. Jellyfin checks your access when you follow the link.",
+    "Request details close after a successful Delete request. The library files stay in place. File removal still requires a separate opt-in.",
+    "Libraries leaves virtual episode placeholders out of its episode and total file counts."
+  ],
+  "links": [
+    {
+      "label": "Seerr setup and permissions",
+      "url": "https://github.com/themartz90/jellydash/blob/v1.18.1/README.md#seerr-requests"
+    },
+    {
+      "label": "Full release notes",
+      "url": "https://github.com/themartz90/jellydash/releases/tag/v1.18.1"
+    }
+  ]
+}
