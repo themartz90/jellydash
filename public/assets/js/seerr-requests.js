@@ -463,6 +463,14 @@
             });
             const result = await response.json();
             refresh = result.refresh === true || response.status === 401 || response.status === 403;
+            if (action === 'delete' && response.ok && result.refresh === true && dialog.open && openId === id) {
+                // A card opens a history entry. Wait for Back before refreshing the queue URL.
+                const navigation = history.state?.seerrFromQueue
+                    ? new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }))
+                    : null;
+                closeDetail();
+                if (navigation) await navigation;
+            }
             showActionStatus(id, result.message ?? result.error ?? 'Could not complete the action.', !response.ok, response.ok ? 8000 : 18000);
         } catch (error) {
             showActionStatus(id, 'The outcome is unknown. Check the current request before trying again.', true, 18000);
